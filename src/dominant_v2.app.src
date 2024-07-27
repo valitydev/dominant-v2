@@ -1,11 +1,14 @@
-{application, dominant-v2,
+{application, dominant_v2,
  [{description, "An OTP application"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, {dominant-v2_app, []}},
+  {mod, {dominant_v2_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    epgsql,
+    epgsql_pool,
+    eql
    ]},
   {env,[]},
   {modules, []},

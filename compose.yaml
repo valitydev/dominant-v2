@@ -1,0 +1,37 @@
+services:
+
+  testrunner:
+    image: $DEV_IMAGE_TAG
+    environment:
+      WORK_DIR: $PWD
+      POSTGRES_HOST: db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dmtv2
+    build:
+      dockerfile: Dockerfile.dev
+      context: .
+      args:
+        OTP_VERSION: $OTP_VERSION
+        THRIFT_VERSION: $THRIFT_VERSION
+    volumes:
+      - .:$PWD
+    hostname: akm
+    depends_on:
+      db:
+        condition: service_healthy
+    working_dir: $PWD
+
+  db:
+    image: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dmt_v2
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

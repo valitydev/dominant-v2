@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc dominant-v2 top level supervisor.
+%% @doc dominant_v2 top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(dominant-v2_sup).
+-module(dominant_v2_sup).
 
 -behaviour(supervisor).
 
@@ -26,10 +26,41 @@ start_link() ->
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
 init([]) ->
+    ok = dbinit(),
     SupFlags = #{strategy => one_for_all,
                  intensity => 0,
                  period => 1},
     ChildSpecs = [],
     {ok, {SupFlags, ChildSpecs}}.
+
+get_env_var(Name) ->
+  case os:getenv(Name) of
+    false -> throw({os_env_required, Name});
+    V -> V
+  end.
+
+dbinit() ->
+  WorkDir = get_env_var("WORK_DIR"),
+  _ = set_database_url(),
+  MigrationsPath = WorkDir ++ "/migrations",
+  Cmd = "run",
+  case dominant_v2_db_migration:process(["-d", MigrationsPath, Cmd]) of
+    ok -> ok;
+    {error, Reason} -> throw({migrations_error, Reason})
+  end.
+
+set_database_url() ->
+  {ok, #{
+    host := PgHost,
+    port := PgPort,
+    username := PgUser,
+    password := PgPassword,
+    database := DbName
+  }} = application:get_env(dominant_v2, epsql_connection),
+  %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
+  PgPortStr = erlang:integer_to_list(PgPort),
+  Value =
+    "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++ DbName,
+  true = os:putenv("DATABASE_URL", Value).
 
 %% internal functions
