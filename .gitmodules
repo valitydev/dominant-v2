@@ -1,3 +1,4 @@
 [submodule "psql-migration"]
 	path = psql-migration
-	url = https://github.com/helium/psql-migration.git
+	url = git@github.com:valitydev/psql-migration.git
+	branch = get_rid_of_binary

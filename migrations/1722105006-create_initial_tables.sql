@@ -16,279 +16,310 @@ CREATE TABLE global_version (
 );
 
 CREATE TABLE category (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE currency (
-    id VARCHAR(3) PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE business_schedule (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE calendar (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE payment_method (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE payout_method (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE bank (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE contract_template (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE term_set_hierarchy (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE payment_institution (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE provider (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE terminal (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE inspector (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE system_account_set (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE external_account_set (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE proxy (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE globals (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE cash_register_provider (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE routing_rules (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE bank_card_category (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE criterion (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE document_type (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE payment_service (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE payment_system (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE bank_card_token_service (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE mobile_op_user (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE crypto_currency (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE country (
-    id CHAR(3) PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE trade_bloc (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE identity_provider (
-    id VARCHAR(255) PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)
 );
 
 CREATE TABLE limit_config (
-    id UUID PRIMARY KEY,
-    version INT NOT NULL,
+    id JSONB PRIMARY KEY,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
+    references_to JSONB[] NOT NULL,
+    referenced_by JSONB[] NOT NULL,
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID REFERENCES op_user(id)

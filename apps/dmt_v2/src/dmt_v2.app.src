@@ -1,0 +1,23 @@
+{application, dmt_v2, [
+    {description, "An OTP application"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {dmt_v2_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        epg_connector,
+        epgsql,
+        epgsql_pool,
+        eql,
+        erl_health,
+        opentelemetry_api,
+        opentelemetry_exporter,
+        opentelemetry
+    ]},
+    {env, []},
+    {modules, []},
+
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+]}.

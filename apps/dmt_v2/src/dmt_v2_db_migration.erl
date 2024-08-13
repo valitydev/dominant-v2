@@ -1,4 +1,4 @@
--module(dominant_v2_db_migration).
+-module(dmt_v2_db_migration).
 
 %% API exports
 -export([process/1]).
