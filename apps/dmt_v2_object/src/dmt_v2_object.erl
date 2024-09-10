@@ -3,14 +3,14 @@
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
 -export([new_object/1]).
--export([update_object/1]).
+-export([update_object/2]).
 -export([remove_object/1]).
 -export([just_object/7]).
 
--feature(maybe_expr,enable).
+-feature(maybe_expr, enable).
 
 -export_type([insertable_object/0]).
--export_type([updatable_object/0]).
+-export_type([object_changes/0]).
 
 -type object_type() :: atom().
 -type object_id() :: string().
@@ -20,26 +20,25 @@
     is_id_generatable := boolean(),
     id_generator := string() | undefined,
     forced_id := string() | undefined,
-    references := #{
-        object_type() => object_id()
-    },
+    references := [{object_type(), object_id()}],
     data := binary()
 }.
 
--type updatable_object() :: #{
+-type object_changes() :: #{
     id := object_id(),
     type := object_type(),
-    references => [object_id()],
-    referenced_by => [object_id()],
-    data => binary()
+    references => [{object_type(), object_id()}],
+    referenced_by => [{object_type(), object_id()}],
+    data => binary(),
+    is_active => boolean()
 }.
 
--type just_object() :: #{
+-type object() :: #{
     id := object_id(),
     type := object_type(),
     global_version := string(),
-    references := [object_id()],
-    referenced_by := [object_id()],
+    references := [{object_type(), object_id()}],
+    referenced_by := [{object_type(), object_id()}],
     data := binary(),
     created_at := timestamp(),
     created_by := string()
@@ -62,25 +61,33 @@ new_object(#domain_conf_v2_InsertOp{
             {error, Error}
     end.
 
-update_object(#domain_conf_v2_UpdateOp{
-    targeted_ref = TargetedRef,
-    new_object = NewObject
-}) ->
+update_object(
+    #domain_conf_v2_UpdateOp{
+        targeted_ref = TargetedRef,
+        new_object = NewObject
+    },
+    ExistingUpdate
+) ->
     maybe
         {ok, Type} ?= get_checked_type(TargetedRef, NewObject),
         ok ?= check_domain_object_refs(TargetedRef, NewObject),
-        {ok, #{
+        {ok, ExistingUpdate#{
             id => TargetedRef,
             type => Type,
-%%          NOTE this will just provide all the refs that already exist,
-%%          it doesn't give us diff, but maybe it's not needed
+            %%          NOTE this will just provide all the refs that already exist,
+            %%          it doesn't give us diff, but maybe it's not needed
             references => dmt_v2_object_reference:domain_object_references(NewObject),
             data => binary()
         }}
     end.
 
-remove_object(#domain_conf_v2_RemoveOp{}) ->
-    #{}.
+remove_object(#domain_conf_v2_RemoveOp{ref = Ref}) ->
+    {Type, _} = Ref,
+    {ok, #{
+        id => Ref,
+        type => Type,
+        is_active => false
+    }}.
 
 just_object(
     ID,
@@ -89,7 +96,8 @@ just_object(
     ReferencedBy,
     Data,
     CreatedAt,
-    CreatedBy) ->
+    CreatedBy
+) ->
     {Type, _} = ID,
     #{
         id => ID,
