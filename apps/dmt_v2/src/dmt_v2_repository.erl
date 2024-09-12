@@ -10,20 +10,20 @@
 %%
 
 commit(Version, Commit, Context) ->
-    UpdatedEntities = assemble_operations(Commit, Version),
-    case assemble_transaction(Commit, Version) of
+    Changes = assemble_operations(Commit),
+    case assemble_transaction(Changes) of
         ok ->
             ok
     end.
 
-assemble_operations(Commit, Version) ->
+assemble_operations(Commit) ->
     try
         lists:foldl(
             fun assemble_operations_/2,
             #{
                 inserts => [],
                 updates => #{},
-                version => Version
+                objects_being_updated => []
             },
             Commit#domain_conf_v2_Commit.ops
         )
@@ -37,18 +37,17 @@ assemble_operations_(
     #{
         inserts := InsertsAcc,
         updates := UpdatesAcc,
-        version := Version
+        objects_being_updated := UpdatedObjectsAcc
     } = Acc
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
             #{
-                references := Refers,
-                forced_id := ID
+                tmp_id := TmpID,
+                references := Refers
             } = NewObject = dmt_v2_object:new_object(InsertOp),
 
-            %%          TODO how to deal with us not knowing new object ID for referenced_by?
-            Updates1 = update_objects_added_refs(ID, Refers, UpdatesAcc),
+            Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
 
             Acc#{
                 inserts => [NewObject | InsertsAcc],
@@ -65,19 +64,21 @@ assemble_operations_(
                     Acc#{
                         updates => UpdatesAcc1#{
                             Ref => ObjectUpdate
-                        }
+                        },
+                        objects_being_updated => [Ref | UpdatedObjectsAcc]
                     }
             end;
         {delete, #domain_conf_v2_RemoveOp{ref = Ref} = RemoveOp} ->
             #{
                 references := OriginalReferences
-            } = OG = get_original_object_changes(UpdatesAcc, Ref),
+            } = get_original_object_changes(UpdatesAcc, Ref),
             UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
 
             Acc#{
                 updates => UpdatesAcc1#{
                     Ref => dmt_v2_object:remove_object(RemoveOp)
-                }
+                },
+                objects_being_updated => [Ref | UpdatedObjectsAcc]
             }
     end.
 
@@ -153,92 +154,162 @@ get_original_object_changes(Updates, Ref) ->
                 references => Refers
             }
     end.
-%%
-%%assemble_transaction(Version, Commit) ->
-%%    "BEGIN;\n"
-%%    "\n"
-%%    "DO $$\n"
-%%    "DECLARE\n"
-%%    "    target_global_version BIGINT := $1;\n"
-%%    "    new_entities JSONB := $2;\n"
-%%    "    updated_entities JSONB := $3;\n"
-%%    "    user_id UUID := $4;\n"
-%%    "    new_global_version BIGINT;\n"
-%%    "    changed_entities JSONB := '{}';\n"
-%%    "    entity_type TEXT;\n"
-%%    "    entities JSONB;\n"
-%%    "    entity_id JSONB;\n"
-%%    "    entity_data JSONB;\n"
-%%    "    changed_entity JSONB;\n"
-%%    "BEGIN\n"
-%%    "    -- Проверка версий обновляемых сущностей\n"
-%%    "    FOR entity_type, entities IN SELECT * FROM jsonb_each(updated_entities) LOOP\n"
-%%    "        FOR entity_id, entity_data IN SELECT * FROM jsonb_each(entities) LOOP\n"
-%%    "            EXECUTE format('\n"
-%%    "                SELECT\n"
-%%    "                    CASE WHEN version != ($1->''version'')::INT THEN\n"
-%%    "                        jsonb_build_object(''id'', id, ''current_version'', version, ''data'', data)\n"
-%%    "                    ELSE NULL END\n"
-%%    "                FROM %I\n"
-%%    "                WHERE id = $2 AND global_version <= $3\n"
-%%    "                ORDER BY global_version DESC\n"
-%%    "                LIMIT 1\n"
-%%    "            ', entity_type)\n"
-%%    "            USING entity_data, entity_id, target_global_version\n"
-%%    "            INTO changed_entity;\n"
-%%    "\n"
-%%    "            IF changed_entity IS NOT NULL THEN\n"
-%%    "                changed_entities := changed_entities ||\n"
-%%    "                    jsonb_build_object(entity_type,\n"
-%%    "                        jsonb_build_object(entity_id::text, changed_entity));\n"
-%%    "            END IF;\n"
-%%    "        END LOOP;\n"
-%%    "    END LOOP;\n"
-%%    "\n"
-%%    "    -- Если есть изменения, прерываем транзакцию\n"
-%%    "    IF changed_entities != '{}'::jsonb THEN\n"
-%%    "        RAISE EXCEPTION 'Entities have been modified: %', changed_entities;\n"
-%%    "    END IF;\n"
-%%    "\n"
-%%    "    -- Инкрементируем глобальную версию\n"
-%%    "    INSERT INTO global_version (created_by)\n"
-%%    "    VALUES (user_id)\n"
-%%    "    RETURNING version INTO new_global_version;\n"
-%%    "\n"
-%%    "    -- Добавляем новые сущности\n"
-%%    "    FOR entity_type, entities IN SELECT * FROM jsonb_each(new_entities) LOOP\n"
-%%    "        FOR entity_id, entity_data IN SELECT * FROM jsonb_each(entities) LOOP\n"
-%%    "            EXECUTE format('\n"
-%%    "                INSERT INTO %I (id, version, global_version, references_to, referenced_by, data, created_by)\n"
-%%    "                VALUES ($1, 1, $2, $3->>''references_to'', $3->>''referenced_by'', $3->>''data'', $4)\n"
-%%    "            ', entity_type)\n"
-%%    "            USING entity_id, new_global_version, entity_data, user_id;\n"
-%%    "        END LOOP;\n"
-%%    "    END LOOP;\n"
-%%    "\n"
-%%    "    -- Обновляем существующие сущности\n"
-%%    "    FOR entity_type, entities IN SELECT * FROM jsonb_each(updated_entities) LOOP\n"
-%%    "        FOR entity_id, entity_data IN SELECT * FROM jsonb_each(entities) LOOP\n"
-%%    "            EXECUTE format('\n"
-%%    "                WITH current_entity AS (\n"
-%%    "                    SELECT version\n"
-%%    "                    FROM %I\n"
-%%    "                    WHERE id = $1 AND global_version <= $2\n"
-%%    "                    ORDER BY global_version DESC\n"
-%%    "                    LIMIT 1\n"
-%%    "                )\n"
-%%    "                INSERT INTO %I (id, version, global_version, references_to, referenced_by, data, created_by)\n"
-%%    "                SELECT $1, current_entity.version + 1, $3,\n"
-%%    "                       $4->>''references_to'', $4->>''referenced_by'', $4->>''data'', $5\n"
-%%    "                FROM current_entity\n"
-%%    "            ', entity_type, entity_type)\n"
-%%    "            USING entity_id, target_global_version, new_global_version, entity_data, user_id;\n"
-%%    "        END LOOP;\n"
-%%    "    END LOOP;\n"
-%%    "\n"
-%%    "END $$;\n"
-%%    "\n"
-%%    "COMMIT;".
+
+-define(TABLES, [
+    category, currency, business_schedule, calendar, payment_method, payout_method,
+    bank, contract_template, term_set_hierarchy, payment_institution, provider,
+    terminal, inspector, system_account_set, external_account_set, proxy, globals,
+    cash_register_provider, routing_rules, bank_card_category, criterion,
+    document_type, payment_service, payment_system, bank_card_token_service,
+    mobile_op_user, crypto_currency, country, trade_bloc, identity_provider, limit_config
+]).
+
+commit(Version, Commit, Context) ->
+    Changes = assemble_operations(Commit),
+    {InsertObjects, UpdateObjects} = prepare_changes(Changes),
+    SqlQuery = build_commit_query(?TABLES),
+    case epgsql:equery(Connection, SqlQuery, [
+        ChangedObjectIds,
+        Version,
+        CreatedBy,
+        InsertObjects,
+        UpdateObjects
+    ]) of
+        {ok, _, [{NewGlobalVersion}]} ->
+            {ok, NewGlobalVersion};
+        {error, {error, error, _, conflict_detected, Msg, _}} ->
+            {error, {conflict, Msg}};
+        Error ->
+            {error, Error}
+    end.
+
+build_commit_query(Tables) ->
+    CheckVersionsSql = build_check_versions_sql(Tables),
+    InsertObjectsSql = build_insert_objects_sql(Tables),
+    UpdateObjectsSql = build_update_objects_sql(Tables),
+
+    "DO $$
+    DECLARE
+        new_global_version bigint;
+        conflicting_objects jsonb := '[]'::jsonb;
+        temp_id_mapping jsonb := '{}'::jsonb;
+    BEGIN
+        -- Шаг 1: Проверка версий и поиск конфликтов
+        " ++ CheckVersionsSql ++ "
+
+        IF jsonb_array_length(conflicting_objects) > 0 THEN
+            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;
+        END IF;
+
+        -- Шаг 2: Инкремент глобальной версии
+        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;
+
+        -- Шаг 3: Добавление новых объектов
+        WITH new_objects AS (
+            " ++ InsertObjectsSql ++ "
+        )
+        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;
+
+        -- Шаг 4: Обновление существующих объектов
+        " ++ UpdateObjectsSql ++ "
+
+        -- Возвращаем новую глобальную версию
+        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));
+    END $$;".
+
+build_check_versions_sql(Tables) ->
+    CheckVersions = lists:map(fun(Table) ->
+        io_lib:format(
+            """
+            SELECT id, global_version
+            FROM ~p WHERE id = ANY($1::jsonb[])
+            ORDER BY global_version DESC
+            LIMIT 1
+            """,
+            [atom_to_list(Table)]
+        )
+                              end, Tables),
+    io_lib:format(
+        """
+        WITH object_versions AS (
+            ~p
+        )
+        SELECT jsonb_agg(id)
+        INTO conflicting_objects
+        FROM object_versions
+        WHERE global_version > $2::bigint;
+        """,
+        [string:join(CheckVersions, " UNION ALL ")]
+    ).
+
+build_insert_objects_sql(Tables) ->
+    InsertClauses = lists:map(fun(Table) ->
+        TableStr = atom_to_list(Table),
+        io_lib:format(
+            """
+            INSERT INTO ~p (id, global_version, references_to, referenced_by, data, created_by)
+            SELECT
+                COALESCE(id_generator, id),
+                new_global_version,
+                references_to,
+                referenced_by,
+                data,
+                $3::uuid
+            FROM jsonb_to_recordset($4::jsonb) AS x(
+                tmp_id text,
+                id jsonb,
+                id_generator text,
+                type text,
+                references_to jsonb[],
+                referenced_by jsonb[],
+                data jsonb
+            )
+            WHERE type = '~p'
+            RETURNING tmp_id, id
+            """,
+            [TableStr, TableStr])
+                              end, Tables),
+    string:join(InsertClauses, " UNION ALL ").
+
+build_update_objects_sql(Tables) ->
+    UpdateClauses = lists:map(fun(Table) ->
+        TableStr = atom_to_list(Table),
+        io_lib:format(
+            """
+            UPDATE ~p
+            SET
+                global_version = new_global_version,
+                references_to = x.references_to,
+                referenced_by = (
+                    SELECT jsonb_agg(
+                        CASE
+                            WHEN elem::text LIKE 'temporary:%'
+                            THEN temp_id_mapping->substring(elem::text FROM 'temporary:(.*)')
+                            ELSE elem
+                        END
+                    )
+                    FROM jsonb_array_elements(x.referenced_by) elem
+                ),
+                data = x.data
+            FROM jsonb_to_recordset($5::jsonb) AS x(
+                id jsonb,
+                type text,
+                references_to jsonb[],
+                referenced_by jsonb[],
+                data jsonb
+            )
+            WHERE ~p.id = x.id AND x.type = '~p'
+            """,
+            [TableStr, TableStr, TableStr]
+        )
+                              end, Tables),
+    io_lib:format(
+        """
+        WITH updates AS (~p)
+        SELECT 1;
+        """,
+        [string:join(UpdateClauses, " UNION ALL ")]
+    ).
 
 get_target_object(Ref, Version) ->
     {Type, _} = Ref,

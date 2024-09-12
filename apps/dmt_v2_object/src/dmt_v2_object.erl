@@ -51,11 +51,13 @@ new_object(#domain_conf_v2_InsertOp{
     case get_checked_type(ForcedRef, NewObject) of
         {ok, Type} ->
             {ok, #{
+                tmp_id => uuid:get_v4_urandom(),
                 type => Type,
                 is_id_generatable => dmt_v2_object_id:is_id_generatable(Type),
                 id_generator => dmt_v2_object_id:id_generator(Type),
                 forced_id => ForcedRef,
-                references => dmt_v2_object_reference:refless_object_references(NewObject)
+                references => dmt_v2_object_reference:refless_object_references(NewObject),
+                data => NewObject
             }};
         {error, Error} ->
             {error, Error}
