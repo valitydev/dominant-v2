@@ -10,8 +10,8 @@ handle_function(Function, Args, WoodyContext0, Options) ->
     WoodyContext = dmt_v2_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
-do_handle_function('Commit', {Version, Commit}, Context, _Options) ->
-    case dmt_v2_repository:commit(Version, Commit, Context) of
+do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) ->
+    case dmt_v2_repository:commit(Version, Commit, CreatedBy) of
         {ok, VersionNext} ->
             {ok, VersionNext};
         {error, {operation_error, Error}} ->

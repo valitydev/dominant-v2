@@ -6,15 +6,45 @@
 %% API
 
 -export([commit/3]).
+-export([get_object/2]).
+-export([get_local_versions/3]).
+-export([get_global_versions/2]).
 
 %%
 
-commit(Version, Commit, Context) ->
-    Changes = assemble_operations(Commit),
-    case assemble_transaction(Changes) of
-        ok ->
-            ok
+get_object(ObjectRef, VersionRef) ->
+    Version =
+        case VersionRef of
+            {global_vs, GlobalVS} ->
+                GlobalVS;
+            {local_vs, _LocalVS} ->
+                throw(not_impl)
+        end,
+    case get_target_object(ObjectRef, Version) of
+        {ok,
+            #{
+                global_version => GlobalVersion,
+                data => Data,
+                created_at => CreatedAt
+            }} ->
+            {ok, #domain_conf_v2_VersionedObject{
+                global_version = GlobalVersion,
+                %% TODO implement local versions
+                local_version = 0,
+                object = Data,
+                created_at = CreatedAt
+            }};
+        {error, Reason} ->
+            {error, Reason}
     end.
+
+%% Retrieve local versions with pagination
+get_local_versions(_Ref, _Limit, _ContinuationToken) ->
+    throw(not_impl).
+
+%% Retrieve global versions with pagination
+get_global_versions(_Limit, _ContinuationToken) ->
+    throw(not_impl).
 
 assemble_operations(Commit) ->
     try
@@ -155,26 +185,54 @@ get_original_object_changes(Updates, Ref) ->
             }
     end.
 
+%% NOTE Add new tables here
 -define(TABLES, [
-    category, currency, business_schedule, calendar, payment_method, payout_method,
-    bank, contract_template, term_set_hierarchy, payment_institution, provider,
-    terminal, inspector, system_account_set, external_account_set, proxy, globals,
-    cash_register_provider, routing_rules, bank_card_category, criterion,
-    document_type, payment_service, payment_system, bank_card_token_service,
-    mobile_op_user, crypto_currency, country, trade_bloc, identity_provider, limit_config
+    category,
+    currency,
+    business_schedule,
+    calendar,
+    payment_method,
+    payout_method,
+    bank,
+    contract_template,
+    term_set_hierarchy,
+    payment_institution,
+    provider,
+    terminal,
+    inspector,
+    system_account_set,
+    external_account_set,
+    proxy,
+    globals,
+    cash_register_provider,
+    routing_rules,
+    bank_card_category,
+    criterion,
+    document_type,
+    payment_service,
+    payment_system,
+    bank_card_token_service,
+    mobile_op_user,
+    crypto_currency,
+    country,
+    trade_bloc,
+    identity_provider,
+    limit_config
 ]).
 
-commit(Version, Commit, Context) ->
+commit(Version, Commit, CreatedBy) ->
     Changes = assemble_operations(Commit),
-    {InsertObjects, UpdateObjects} = prepare_changes(Changes),
+    {InsertObjects, UpdateObjects, ChangedObjectIds} = prepare_changes(Changes),
     SqlQuery = build_commit_query(?TABLES),
-    case epgsql:equery(Connection, SqlQuery, [
-        ChangedObjectIds,
-        Version,
-        CreatedBy,
-        InsertObjects,
-        UpdateObjects
-    ]) of
+    case
+        epgsql_pool:query(default_pool, SqlQuery, [
+            ChangedObjectIds,
+            Version,
+            CreatedBy,
+            InsertObjects,
+            UpdateObjects
+        ])
+    of
         {ok, _, [{NewGlobalVersion}]} ->
             {ok, NewGlobalVersion};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
@@ -188,47 +246,53 @@ build_commit_query(Tables) ->
     InsertObjectsSql = build_insert_objects_sql(Tables),
     UpdateObjectsSql = build_update_objects_sql(Tables),
 
-    "DO $$
-    DECLARE
-        new_global_version bigint;
-        conflicting_objects jsonb := '[]'::jsonb;
-        temp_id_mapping jsonb := '{}'::jsonb;
-    BEGIN
-        -- Шаг 1: Проверка версий и поиск конфликтов
-        " ++ CheckVersionsSql ++ "
-
-        IF jsonb_array_length(conflicting_objects) > 0 THEN
-            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;
-        END IF;
-
-        -- Шаг 2: Инкремент глобальной версии
-        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;
-
-        -- Шаг 3: Добавление новых объектов
-        WITH new_objects AS (
-            " ++ InsertObjectsSql ++ "
-        )
-        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;
-
-        -- Шаг 4: Обновление существующих объектов
-        " ++ UpdateObjectsSql ++ "
-
-        -- Возвращаем новую глобальную версию
-        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));
-    END $$;".
+    "DO $$\n"
+    "    DECLARE\n"
+    "        new_global_version bigint;\n"
+    "        conflicting_objects jsonb := '[]'::jsonb;\n"
+    "        temp_id_mapping jsonb := '{}'::jsonb;\n"
+    "    BEGIN\n"
+    "        -- Шаг 1: Проверка версий и поиск конфликтов\n"
+    "        " ++ CheckVersionsSql ++
+        "\n"
+        "\n"
+        "        IF jsonb_array_length(conflicting_objects) > 0 THEN\n"
+        "            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;\n"
+        "        END IF;\n"
+        "\n"
+        "        -- Шаг 2: Инкремент глобальной версии\n"
+        "        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;\n"
+        "\n"
+        "        -- Шаг 3: Добавление новых объектов\n"
+        "        WITH new_objects AS (\n"
+        "            " ++ InsertObjectsSql ++
+        "\n"
+        "        )\n"
+        "        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;\n"
+        "\n"
+        "        -- Шаг 4: Обновление существующих объектов\n"
+        "        " ++ UpdateObjectsSql ++
+        "\n"
+        "\n"
+        "        -- Возвращаем новую глобальную версию\n"
+        "        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));\n"
+        "    END $$;".
 
 build_check_versions_sql(Tables) ->
-    CheckVersions = lists:map(fun(Table) ->
-        io_lib:format(
-            """
-            SELECT id, global_version
-            FROM ~p WHERE id = ANY($1::jsonb[])
-            ORDER BY global_version DESC
-            LIMIT 1
-            """,
-            [atom_to_list(Table)]
-        )
-                              end, Tables),
+    CheckVersions = lists:map(
+        fun(Table) ->
+            io_lib:format(
+                """
+                SELECT id, global_version
+                FROM ~p WHERE id = ANY($1::jsonb[])
+                ORDER BY global_version DESC
+                LIMIT 1
+                """,
+                [atom_to_list(Table)]
+            )
+        end,
+        Tables
+    ),
     io_lib:format(
         """
         WITH object_versions AS (
@@ -243,66 +307,73 @@ build_check_versions_sql(Tables) ->
     ).
 
 build_insert_objects_sql(Tables) ->
-    InsertClauses = lists:map(fun(Table) ->
-        TableStr = atom_to_list(Table),
-        io_lib:format(
-            """
-            INSERT INTO ~p (id, global_version, references_to, referenced_by, data, created_by)
-            SELECT
-                COALESCE(id_generator, id),
-                new_global_version,
-                references_to,
-                referenced_by,
-                data,
-                $3::uuid
-            FROM jsonb_to_recordset($4::jsonb) AS x(
-                tmp_id text,
-                id jsonb,
-                id_generator text,
-                type text,
-                references_to jsonb[],
-                referenced_by jsonb[],
-                data jsonb
+    InsertClauses = lists:map(
+        fun(Table) ->
+            TableStr = atom_to_list(Table),
+            io_lib:format(
+                """
+                INSERT INTO ~p (id, global_version, references_to, referenced_by, data, created_by)
+                SELECT
+                    COALESCE(id_generator, id),
+                    new_global_version,
+                    references_to,
+                    referenced_by,
+                    data,
+                    $3::uuid
+                FROM jsonb_to_recordset($4::jsonb) AS x(
+                    tmp_id text,
+                    id jsonb,
+                    id_generator text,
+                    type text,
+                    references_to jsonb[],
+                    referenced_by jsonb[],
+                    data jsonb
+                )
+                WHERE type = '~p'
+                RETURNING tmp_id, id
+                """,
+                [TableStr, TableStr]
             )
-            WHERE type = '~p'
-            RETURNING tmp_id, id
-            """,
-            [TableStr, TableStr])
-                              end, Tables),
+        end,
+        Tables
+    ),
     string:join(InsertClauses, " UNION ALL ").
 
 build_update_objects_sql(Tables) ->
-    UpdateClauses = lists:map(fun(Table) ->
-        TableStr = atom_to_list(Table),
-        io_lib:format(
-            """
-            UPDATE ~p
-            SET
-                global_version = new_global_version,
-                references_to = x.references_to,
-                referenced_by = (
-                    SELECT jsonb_agg(
-                        CASE
-                            WHEN elem::text LIKE 'temporary:%'
-                            THEN temp_id_mapping->substring(elem::text FROM 'temporary:(.*)')
-                            ELSE elem
-                        END
-                    )
-                    FROM jsonb_array_elements(x.referenced_by) elem
-                ),
-                data = x.data
-            FROM jsonb_to_recordset($5::jsonb) AS x(
-                id jsonb,
-                type text,
-                references_to jsonb[],
-                referenced_by jsonb[],
-                data jsonb
+    UpdateClauses = lists:map(
+        fun(Table) ->
+            TableStr = atom_to_list(Table),
+            io_lib:format(
+                """
+                UPDATE ~p
+                SET
+                    global_version = new_global_version,
+                    references_to = x.references_to,
+                    referenced_by = (
+                        SELECT jsonb_agg(
+                            CASE
+                                WHEN elem::text LIKE 'temporary:%'
+                                THEN temp_id_mapping->substring(elem::text FROM 'temporary:(.*)')
+                                ELSE elem
+                            END
+                        )
+                        FROM jsonb_array_elements(x.referenced_by) elem
+                    ),
+                    data = x.data
+                FROM jsonb_to_recordset($5::jsonb) AS x(
+                    id jsonb,
+                    type text,
+                    references_to jsonb[],
+                    referenced_by jsonb[],
+                    data jsonb
+                )
+                WHERE ~p.id = x.id AND x.type = '~p'
+                """,
+                [TableStr, TableStr, TableStr]
             )
-            WHERE ~p.id = x.id AND x.type = '~p'
-            """,
-            [TableStr, TableStr, TableStr]
-        )
-                              end, Tables),
+        end,
+        Tables
+    ),
     io_lib:format(
         """
         WITH updates AS (~p)
@@ -410,3 +481,10 @@ marshall_object(#{
         CreatedAt,
         CreatedBy
     ).
+
+prepare_changes(#{
+    inserts := InsertsAcc,
+    updates := UpdatesAcc,
+    objects_being_updated := UpdatedObjectsAcc
+}) ->
+    {jsx:encode(InsertsAcc), jsx:encode(UpdatesAcc), jsx:encode(UpdatedObjectsAcc)}.

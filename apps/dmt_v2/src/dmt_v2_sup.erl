@@ -91,15 +91,18 @@ get_env_var(Name) ->
     end.
 
 get_repository_handlers() ->
-    Repository = genlib_app:env(?APP, repository, dmt_v2_repository_handler),
     DefaultTimeout = genlib_app:env(?APP, default_woody_handling_timeout, timer:seconds(30)),
     [
         get_handler(repository, #{
-            repository => Repository,
+            repository => dmt_v2_repository_handler,
             default_handling_timeout => DefaultTimeout
         }),
         get_handler(repository_client, #{
-            repository => Repository,
+            repository => dmt_v2_repository_client_handler,
+            default_handling_timeout => DefaultTimeout
+        }),
+        get_handler(user_op, #{
+            repository => dmt_v2_user_op_handler,
             default_handling_timeout => DefaultTimeout
         })
     ].
@@ -108,12 +111,17 @@ get_repository_handlers() ->
     woody:http_handler(woody:th_handler()).
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
-        {dmsl_domain_conf_thrift, 'Repository'},
+        {dmsl_domain_conf_v2_thrift, 'Repository'},
         {dmt_api_repository_handler, Options}
     }};
 get_handler(repository_client, Options) ->
     {"/v1/domain/repository_client", {
-        {dmsl_domain_conf_thrift, 'RepositoryClient'},
+        {dmsl_domain_conf_v2_thrift, 'RepositoryClient'},
+        {dmt_api_repository_client_handler, Options}
+    }};
+get_handler(user_op, Options) ->
+    {"/v1/domain/user_op", {
+        {dmsl_domain_conf_v2_thrift, 'UserOpManagement'},
         {dmt_api_repository_client_handler, Options}
     }}.
 
