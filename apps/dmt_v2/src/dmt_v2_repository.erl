@@ -23,9 +23,9 @@ get_object(ObjectRef, VersionRef) ->
     case get_target_object(ObjectRef, Version) of
         {ok,
             #{
-                global_version => GlobalVersion,
-                data => Data,
-                created_at => CreatedAt
+                global_version := GlobalVersion,
+                data := Data,
+                created_at := CreatedAt
             }} ->
             {ok, #domain_conf_v2_VersionedObject{
                 global_version = GlobalVersion,

@@ -11,6 +11,8 @@
 
 -export([init/1]).
 
+-export([get_service/1]).
+
 -define(SERVER, ?MODULE).
 -define(APP, dmt_v2).
 -define(DEFAULT_DB, default_db).
@@ -111,19 +113,26 @@ get_repository_handlers() ->
     woody:http_handler(woody:th_handler()).
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
-        {dmsl_domain_conf_v2_thrift, 'Repository'},
+        get_service(repository),
         {dmt_api_repository_handler, Options}
     }};
 get_handler(repository_client, Options) ->
     {"/v1/domain/repository_client", {
-        {dmsl_domain_conf_v2_thrift, 'RepositoryClient'},
+        get_service(repository_client),
         {dmt_api_repository_client_handler, Options}
     }};
 get_handler(user_op, Options) ->
     {"/v1/domain/user_op", {
-        {dmsl_domain_conf_v2_thrift, 'UserOpManagement'},
+        get_service(user_op),
         {dmt_api_repository_client_handler, Options}
     }}.
+
+get_service(repository) ->
+    {dmsl_domain_conf_v2_thrift, 'Repository'};
+get_service(repository_client) ->
+    {dmsl_domain_conf_v2_thrift, 'RepositoryClient'};
+get_service(user_op) ->
+    {dmsl_domain_conf_v2_thrift, 'UserOpManagement'}.
 
 -spec enable_health_logging(erl_health:check()) -> erl_health:check().
 enable_health_logging(Check) ->
