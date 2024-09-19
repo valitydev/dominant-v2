@@ -1,4 +1,4 @@
--module(dmt_history).
+-module(dmt_v2_history).
 
 -export([head/1]).
 -export([head/2]).

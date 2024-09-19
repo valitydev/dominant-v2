@@ -1,4 +1,4 @@
--module(dmt_domain_pt).
+-module(dmt_v2_domain_pt).
 
 -export([parse_transform/2]).
 

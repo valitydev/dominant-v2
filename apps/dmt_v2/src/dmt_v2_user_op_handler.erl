@@ -18,17 +18,10 @@ default_handling_timeout(#{default_handling_timeout := Timeout}) ->
 %% Implement the Create function
 do_handle_function('Create', {Params}, _Context, _Options) ->
     #domain_conf_v2_UserOpParams{email = Email, name = Name} = Params,
-    %% Generate a new UUID for UserOpID
-    UserOpID = generate_uuid(#{
-        email => Email,
-        name => Name
-    }),
     %% Insert into op_user table
-    case dmt_v2_user_op:insert_user(UserOpID, Name, Email) of
-        ok ->
-            {ok, #domain_conf_v2_UserOp{id = UserOpID, email = Email, name = Name}};
-        {error, already_exists} ->
-            {ok, #domain_conf_v2_UserOp{id = UserOpID, email = Email, name = Name}};
+    case dmt_v2_user_op:insert_user(Name, Email) of
+        {ok, ID} ->
+            {ok, #domain_conf_v2_UserOp{id = ID, email = Email, name = Name}};
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end;

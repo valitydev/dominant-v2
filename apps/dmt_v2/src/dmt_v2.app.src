@@ -6,11 +6,18 @@
     {applications, [
         kernel,
         stdlib,
+        damsel,
         epg_connector,
         epgsql,
         epgsql_pool,
         eql,
         erl_health,
+        getopt,
+        envloader,
+        woody_user_identity,
+        jsx,
+        dmt_v2_core,
+        dmt_v2_object,
         opentelemetry_api,
         opentelemetry_exporter,
         opentelemetry

@@ -9,6 +9,8 @@
 -export([create_client/0]).
 -export([create_client/1]).
 
+-export([cleanup_db/0]).
+
 -include_lib("damsel/include/dmsl_base_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
 
@@ -38,6 +40,8 @@ start_app(woody = AppName) ->
 start_app(dmt_v2 = AppName) ->
     {
         start_app(AppName, [
+            {host, <<"dominant-v2">>},
+            {port, 8022},
             {scoper_event_handler_options, #{
                 event_handler_opts => #{
                     formatter_opts => #{
@@ -46,9 +50,40 @@ start_app(dmt_v2 = AppName) ->
                 }
             }},
             {services, #{
-                repository => <<"http://dominant-v2:8022/v1/domain/repository">>,
-                repository_client => <<"http://dominant-v2:8022/v1/domain/repository_client">>,
-                user_op => <<"http://dominant-v2:8022/v1/domain/user_op">>
+                repository => #{
+                    url => <<"http://dominant-v2:8022/v1/domain/repository">>
+                },
+                repository_client => #{
+                    url => <<"http://dominant-v2:8022/v1/domain/repository_client">>
+                },
+                user_op => #{
+                    url => <<"http://dominant-v2:8022/v1/domain/user_op">>
+                }
+            }}
+        ]),
+        #{}
+    };
+start_app(epg_connector = AppName) ->
+    {
+        start_app(AppName, [
+            {databases, #{
+                default_db => #{
+                    host => "db",
+                    port => 5432,
+                    username => "postgres",
+                    password => "postgres",
+                    database => "dmt_v2"
+                }
+            }},
+            {pools, #{
+                default_pool => #{
+                    database => default_db,
+                    size => 10
+                },
+                user_op_pool => #{
+                    database => default_db,
+                    size => 10
+                }
             }}
         ]),
         #{}
@@ -96,13 +131,22 @@ cfg(Key, Config) ->
 
 %%
 
+-define(ROOT_URL, "http://dominant-v2:8022").
+
 -spec create_client() -> dmt_v2_client_api:t().
 create_client() ->
     create_client_w_context(woody_context:new()).
+%%    {?ROOT_URL, create_client_w_context(woody_context:new())}.
 
 -spec create_client(woody:trace_id()) -> dmt_v2_client_api:t().
 create_client(TraceID) ->
     create_client_w_context(woody_context:new(TraceID)).
+%%    {?ROOT_URL, create_client_w_context(woody_context:new(TraceID))}.
 
 create_client_w_context(WoodyCtx) ->
     dmt_v2_client_api:new(WoodyCtx).
+
+-spec cleanup_db() -> ok.
+cleanup_db() ->
+    {ok, _, _} = epgsql_pool:query(default_pool, "TRUNCATE category, currency, op_user CASCADE;"),
+    ok.

@@ -7,20 +7,18 @@
 -define(POOL_NAME, user_op_pool).
 
 -export([
-    insert_user/3,
+    insert_user/2,
     get_user/1,
     delete_user/1
 ]).
 
 %% Insert a new user
-insert_user(UserOpID, Name, Email) ->
-    Sql = "INSERT INTO op_user (id, name, email) VALUES ($1::uuid, $2, $3)",
-    Params = [UserOpID, Name, Email],
+insert_user(Name, Email) ->
+    Sql = "INSERT INTO op_user (name, email) VALUES ($1, $2) returning id",
+    Params = [Name, Email],
     case epgsql_pool:query(?POOL_NAME, Sql, Params) of
-        {ok, _, _} ->
-            ok;
-        {error, {error, constraint_violation, _, "op_user_id_key", _}} ->
-            {error, already_exists};
+        {ok, 1, _Columns, [{ID}]} ->
+            {ok, ID};
         {error, Reason} ->
             {error, Reason}
     end.

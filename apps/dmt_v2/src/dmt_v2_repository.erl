@@ -21,12 +21,11 @@ get_object(ObjectRef, VersionRef) ->
                 throw(not_impl)
         end,
     case get_target_object(ObjectRef, Version) of
-        {ok,
-            #{
-                global_version := GlobalVersion,
-                data := Data,
-                created_at := CreatedAt
-            }} ->
+        {ok, #{
+            global_version := GlobalVersion,
+            data := Data,
+            created_at := CreatedAt
+        }} ->
             {ok, #domain_conf_v2_VersionedObject{
                 global_version = GlobalVersion,
                 %% TODO implement local versions
@@ -40,11 +39,11 @@ get_object(ObjectRef, VersionRef) ->
 
 %% Retrieve local versions with pagination
 get_local_versions(_Ref, _Limit, _ContinuationToken) ->
-    throw(not_impl).
+    not_impl.
 
 %% Retrieve global versions with pagination
 get_global_versions(_Limit, _ContinuationToken) ->
-    throw(not_impl).
+    not_impl.
 
 assemble_operations(Commit) ->
     try
@@ -72,10 +71,11 @@ assemble_operations_(
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
+            {ok, NewObject} = dmt_v2_object:new_object(InsertOp),
             #{
                 tmp_id := TmpID,
                 references := Refers
-            } = NewObject = dmt_v2_object:new_object(InsertOp),
+            } = NewObject,
 
             Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
 
@@ -402,7 +402,8 @@ get_target_object(Ref, Version) ->
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref, Version}};
         {ok, Columns, Rows} ->
-            to_marshalled_maps(Columns, Rows)
+            [Result | _] = to_marshalled_maps(Columns, Rows),
+            {ok, Result}
     end.
 
 get_latest_target_object(Ref) ->
@@ -425,7 +426,8 @@ get_latest_target_object(Ref) ->
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
-            to_marshalled_maps(Columns, Rows)
+            [Result | _] = to_marshalled_maps(Columns, Rows),
+            {ok, Result}
     end.
 
 to_marshalled_maps(Columns, Rows) ->
@@ -487,4 +489,7 @@ prepare_changes(#{
     updates := UpdatesAcc,
     objects_being_updated := UpdatedObjectsAcc
 }) ->
+    io:format("InsertsAcc: ~p~n", [InsertsAcc]),
+    io:format("UpdatesAcc: ~p~n", [UpdatesAcc]),
+    io:format("UpdatedObjectsAcc: ~p~n", [UpdatedObjectsAcc]),
     {jsx:encode(InsertsAcc), jsx:encode(UpdatesAcc), jsx:encode(UpdatedObjectsAcc)}.

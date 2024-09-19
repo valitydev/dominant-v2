@@ -114,17 +114,17 @@ get_repository_handlers() ->
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
         get_service(repository),
-        {dmt_api_repository_handler, Options}
+        {dmt_v2_repository_handler, Options}
     }};
 get_handler(repository_client, Options) ->
     {"/v1/domain/repository_client", {
         get_service(repository_client),
-        {dmt_api_repository_client_handler, Options}
+        {dmt_v2_repository_client_handler, Options}
     }};
 get_handler(user_op, Options) ->
     {"/v1/domain/user_op", {
         get_service(user_op),
-        {dmt_api_repository_client_handler, Options}
+        {dmt_v2_user_op_handler, Options}
     }}.
 
 get_service(repository) ->

@@ -18,8 +18,8 @@ do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) -
             woody_error:raise(business, handle_operation_error(Error));
         {error, version_not_found} ->
             woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
-        {error, head_mismatch} ->
-            woody_error:raise(business, #domain_conf_v2_ObsoleteCommitVersion{});
+        {error, {head_mismatch, LatestVersion}} ->
+            woody_error:raise(business, #domain_conf_v2_ObsoleteCommitVersion{latest_version = LatestVersion});
         {error, migration_in_progress} ->
             woody_error:raise(system, {internal, resource_unavailable, <<"Migration in progress. Please, stand by.">>})
     end.

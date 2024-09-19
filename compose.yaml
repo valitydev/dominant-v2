@@ -16,7 +16,7 @@ services:
         THRIFT_VERSION: $THRIFT_VERSION
     volumes:
       - .:$PWD
-    hostname: akm
+    hostname: dominant-v2
     depends_on:
       db:
         condition: service_healthy

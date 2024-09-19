@@ -1,5 +1,7 @@
 -module(dmt_v2_object).
 
+-feature(maybe_expr, enable).
+
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
 -export([new_object/1]).
@@ -7,13 +9,13 @@
 -export([remove_object/1]).
 -export([just_object/7]).
 
--feature(maybe_expr, enable).
-
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
+-export_type([object/0]).
 
 -type object_type() :: atom().
 -type object_id() :: string().
+-type timestamp() :: string().
 
 -type insertable_object() :: #{
     type := object_type(),
@@ -55,9 +57,9 @@ new_object(#domain_conf_v2_InsertOp{
                 type => Type,
                 is_id_generatable => dmt_v2_object_id:is_id_generatable(Type),
                 id_generator => dmt_v2_object_id:id_generator(Type),
-                forced_id => ForcedRef,
-                references => dmt_v2_object_reference:refless_object_references(NewObject),
-                data => NewObject
+                forced_id => term_to_binary(ForcedRef),
+                references => list_term_to_binary(dmt_v2_object_reference:refless_object_references(NewObject)),
+                data => term_to_binary(NewObject)
             }};
         {error, Error} ->
             {error, Error}
@@ -79,7 +81,7 @@ update_object(
             %%          NOTE this will just provide all the refs that already exist,
             %%          it doesn't give us diff, but maybe it's not needed
             references => dmt_v2_object_reference:domain_object_references(NewObject),
-            data => binary()
+            data => jsx:encode(NewObject)
         }}
     end.
 
@@ -126,3 +128,6 @@ check_domain_object_refs(Ref, Object) ->
         _ ->
             {error, {reference_mismatch, Ref, Object}}
     end.
+
+list_term_to_binary(Terms) ->
+    lists:map(fun (Term) -> term_to_binary(Term) end, Terms).
