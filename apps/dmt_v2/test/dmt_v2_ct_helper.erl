@@ -148,5 +148,17 @@ create_client_w_context(WoodyCtx) ->
 
 -spec cleanup_db() -> ok.
 cleanup_db() ->
-    {ok, _, _} = epgsql_pool:query(default_pool, "TRUNCATE category, currency, op_user CASCADE;"),
+    Query = """
+    DO $$
+    DECLARE
+        r RECORD;
+    BEGIN
+        -- Loop through all tables in the current schema
+        FOR r IN (SELECT table_name FROM information_schema.tables WHERE table_schema='public') LOOP
+            -- Execute the TRUNCATE command on each table
+            EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.table_name) || ' RESTART IDENTITY CASCADE';
+        END LOOP;
+    END $$;
+    """,
+    {ok, _, _} = epgsql_pool:query(default_pool, Query),
     ok.

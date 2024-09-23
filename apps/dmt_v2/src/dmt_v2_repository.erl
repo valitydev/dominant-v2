@@ -223,15 +223,14 @@ get_original_object_changes(Updates, Ref) ->
 commit(Version, Commit, CreatedBy) ->
     Changes = assemble_operations(Commit),
     {InsertObjects, UpdateObjects, ChangedObjectIds} = prepare_changes(Changes),
-    SqlQuery = build_commit_query(?TABLES),
+%%    SqlQuery = build_commit_query(?TABLES),
     case
-        epgsql_pool:query(default_pool, SqlQuery, [
-            ChangedObjectIds,
-            Version,
-            CreatedBy,
-            InsertObjects,
-            UpdateObjects
-        ])
+        epgsql_pool:transaction(default_pool,
+            fun(Worker) ->
+                ok = check_versions_sql(Worker, ChangedObjectIds, Version),
+                NewVersion = get_new_version(Worker, CreatedBy),
+                PernamentIDsMaps = insert_objects(InsertObjects, NewVersion)
+            end)
     of
         {ok, _, [{NewGlobalVersion}]} ->
             {ok, NewGlobalVersion};
@@ -241,76 +240,109 @@ commit(Version, Commit, CreatedBy) ->
             {error, Error}
     end.
 
-build_commit_query(Tables) ->
-    CheckVersionsSql = build_check_versions_sql(Tables),
-    InsertObjectsSql = build_insert_objects_sql(Tables),
-    UpdateObjectsSql = build_update_objects_sql(Tables),
+%%build_commit_query(Tables) ->
+%%    CheckVersionsSql = build_check_versions_sql(Tables),
+%%    InsertObjectsSql = build_insert_objects_sql(Tables),
+%%    UpdateObjectsSql = build_update_objects_sql(Tables),
+%%
+%%    io_lib:format("""
+%%    DO $$
+%%    DECLARE
+%%        new_global_version bigint;
+%%        conflicting_objects jsonb := '[]'::jsonb;
+%%        temp_id_mapping jsonb := '{}'::jsonb;
+%%    BEGIN
+%%        -- Шаг 1: Проверка версий и поиск конфликтов
+%%
+%%        ~p
+%%
+%%        IF jsonb_array_length(conflicting_objects) > 0 THEN
+%%            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;
+%%        END IF;
+%%
+%%        -- Шаг 2: Инкремент глобальной версии
+%%        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;
+%%
+%%        -- Шаг 3: Добавление новых объектов
+%%        WITH new_objects AS (
+%%            ~p
+%%        )
+%%        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;
+%%
+%%        -- Шаг 4: Обновление существующих объектов
+%%
+%%        ~p
+%%
+%%        -- Возвращаем новую глобальную версию
+%%        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));
+%%        END $$;
+%%    """, [CheckVersionsSql, InsertObjectsSql, UpdateObjectsSql]).
 
-    "DO $$\n"
-    "    DECLARE\n"
-    "        new_global_version bigint;\n"
-    "        conflicting_objects jsonb := '[]'::jsonb;\n"
-    "        temp_id_mapping jsonb := '{}'::jsonb;\n"
-    "    BEGIN\n"
-    "        -- Шаг 1: Проверка версий и поиск конфликтов\n"
-    "        " ++ CheckVersionsSql ++
-        "\n"
-        "\n"
-        "        IF jsonb_array_length(conflicting_objects) > 0 THEN\n"
-        "            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;\n"
-        "        END IF;\n"
-        "\n"
-        "        -- Шаг 2: Инкремент глобальной версии\n"
-        "        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;\n"
-        "\n"
-        "        -- Шаг 3: Добавление новых объектов\n"
-        "        WITH new_objects AS (\n"
-        "            " ++ InsertObjectsSql ++
-        "\n"
-        "        )\n"
-        "        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;\n"
-        "\n"
-        "        -- Шаг 4: Обновление существующих объектов\n"
-        "        " ++ UpdateObjectsSql ++
-        "\n"
-        "\n"
-        "        -- Возвращаем новую глобальную версию\n"
-        "        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));\n"
-        "    END $$;".
 
-build_check_versions_sql(Tables) ->
-    CheckVersions = lists:map(
-        fun(Table) ->
-            io_lib:format(
+check_versions_sql(Worker, ChangedObjectIds, Version) ->
+    lists:foreach(
+        fun ({ChangedObjectType, ChangedObjectRef} = ChangedObjectId) ->
+            Query0 =
                 """
                 SELECT id, global_version
-                FROM ~p WHERE id = ANY($1::jsonb[])
+                FROM $1 WHERE id = ANY($1::jsonb[])
                 ORDER BY global_version DESC
                 LIMIT 1
                 """,
-                [atom_to_list(Table)]
-            )
+            case epgsql_pool:query(Worker, Query0, [ChangedObjectType, ChangedObjectRef]) of
+                {ok, _Columns, []} ->
+                    throw({unknown_object_update, ChangedObjectId});
+                {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
+                    throw({object_update_too_old, {ChangedObjectRef, MostRecentVersion}});
+                {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} ->
+                    ok;
+                {error, Reason} ->
+                    throw({error, Reason})
+            end
         end,
-        Tables
+        ChangedObjectIds
     ),
-    io_lib:format(
+    ok.
+
+get_new_version(Worker, CreatedBy) ->
+    Query1 =
         """
-        WITH object_versions AS (
-            ~p
-        )
-        SELECT jsonb_agg(id)
-        INTO conflicting_objects
-        FROM object_versions
-        WHERE global_version > $2::bigint;
+        INSERT INTO GLOBAL_VERSION (CREATED_BY)
+        VALUES ($1::uuid) RETURNING version;
         """,
-        [string:join(CheckVersions, " UNION ALL ")]
-    ).
+    case epgsql_pool:query(Worker, Query1, [CreatedBy]) of
+        {ok, 1, _Columns, [{NewVersion}]} ->
+            NewVersion;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+%%get_new_version(Version) ->
+%%    Query0 =
+%%        """
+%%                SELECT id, global_version
+%%                FROM $1 WHERE id = ANY($1::jsonb[])
+%%                ORDER BY global_version DESC
+%%                LIMIT 1
+%%                """,
+%%    case epgsql_pool:query(Worker, Query0, [ChangedObjectType, ChangedObjectRef]) of
+%%        {ok, _Columns, []} ->
+%%            throw({unknown_object_update, ChangedObjectId});
+%%        {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
+%%            throw({object_update_too_old, {ChangedObjectRef, MostRecentVersion}});
+%%        {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} ->
+%%            ok;
+%%        {error, Reason} ->
+%%            throw({error, Reason})
+%%    end.
+
+
 
 build_insert_objects_sql(Tables) ->
     InsertClauses = lists:map(
         fun(Table) ->
             TableStr = atom_to_list(Table),
-            io_lib:format(
+            Res = io_lib:format(
                 """
                 INSERT INTO ~p (id, global_version, references_to, referenced_by, data, created_by)
                 SELECT
@@ -333,17 +365,19 @@ build_insert_objects_sql(Tables) ->
                 RETURNING tmp_id, id
                 """,
                 [TableStr, TableStr]
-            )
+            ),
+            io:format("~p", [Res]),
+            Res
         end,
         Tables
     ),
-    string:join(InsertClauses, " UNION ALL ").
+    lists:join(InsertClauses, " UNION ALL ").
 
 build_update_objects_sql(Tables) ->
     UpdateClauses = lists:map(
         fun(Table) ->
             TableStr = atom_to_list(Table),
-            io_lib:format(
+            Res = io_lib:format(
                 """
                 UPDATE ~p
                 SET
@@ -370,7 +404,9 @@ build_update_objects_sql(Tables) ->
                 WHERE ~p.id = x.id AND x.type = '~p'
                 """,
                 [TableStr, TableStr, TableStr]
-            )
+            ),
+            io:format("~p", [Res]),
+            Res
         end,
         Tables
     ),
@@ -379,7 +415,7 @@ build_update_objects_sql(Tables) ->
         WITH updates AS (~p)
         SELECT 1;
         """,
-        [string:join(UpdateClauses, " UNION ALL ")]
+        [lists:join(UpdateClauses, " UNION ALL ")]
     ).
 
 get_target_object(Ref, Version) ->
@@ -492,4 +528,4 @@ prepare_changes(#{
     io:format("InsertsAcc: ~p~n", [InsertsAcc]),
     io:format("UpdatesAcc: ~p~n", [UpdatesAcc]),
     io:format("UpdatedObjectsAcc: ~p~n", [UpdatedObjectsAcc]),
-    {jsx:encode(InsertsAcc), jsx:encode(UpdatesAcc), jsx:encode(UpdatedObjectsAcc)}.
+    {InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}.
