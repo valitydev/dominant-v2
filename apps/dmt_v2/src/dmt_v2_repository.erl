@@ -223,13 +223,13 @@ get_original_object_changes(Updates, Ref) ->
 commit(Version, Commit, CreatedBy) ->
     Changes = assemble_operations(Commit),
     {InsertObjects, UpdateObjects, ChangedObjectIds} = prepare_changes(Changes),
-%%    SqlQuery = build_commit_query(?TABLES),
     case
         epgsql_pool:transaction(default_pool,
             fun(Worker) ->
                 ok = check_versions_sql(Worker, ChangedObjectIds, Version),
                 NewVersion = get_new_version(Worker, CreatedBy),
-                PernamentIDsMaps = insert_objects(InsertObjects, NewVersion)
+                PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
+                ok = update_objects(Worker, UpdateObjects, NewVersion)
             end)
     of
         {ok, _, [{NewGlobalVersion}]} ->
@@ -336,6 +336,133 @@ get_new_version(Worker, CreatedBy) ->
 %%            throw({error, Reason})
 %%    end.
 
+insert_objects(Worker, InsertObjects, Version) ->
+    lists:foldl(
+        fun(InsertObject, Acc) ->
+            #{
+                tmp_id := TmpID,
+                type := Type,
+                forced_id := ForcedID,
+                references := References,
+                data := Data
+            } = InsertObject,
+            {ID, Sequence} = get_insert_object_id(Worker, ForcedID, Type),
+            ID = insert_object(Worker, Type, ID, Sequence, Version, References, Data),
+            Acc#{TmpID => ID}
+        end,
+        #{},
+        InsertObjects
+    ).
+
+insert_object(Worker, Type, ID, Sequence, Version, References, Data) ->
+    {Query, Params} = case check_if_force_id_required(Worker, Type) of
+        true ->
+            Query0 =
+                """
+            INSERT INTO $1 (id, global_version, references_to, data)
+                VALUES ($2, $3, $4, $5)
+            """,
+            Params0 = [Type, ID, Version, References, Data],
+            {Query0, Params0};
+        false ->
+            Query1 =
+                """
+            INSERT INTO $1 (id, sequence, global_version, references_to, data)
+                VALUES ($2, $3, $4, $5, $6)
+            """,
+            Params1 = [Type, ID, Sequence, Version, References, Data],
+            {Query1, Params1}
+    end,
+    case epgsql_pool:query(Worker, Query, Params) of
+        {ok, _Columns, _Rows} ->
+            ID;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+get_insert_object_id(Worker, undefined, Type) ->
+%%  Check if sequence column exists in table
+%%  -- if it doesn't, then raise exception
+    case check_if_force_id_required(Worker, Type) of
+        true ->
+            throw({error, {object_type_requires_forced_id, Type}});
+        false ->
+            {ok, LastSequenceInType} = get_last_sequence(Worker, Type),
+            case get_new_object_id(Worker, LastSequenceInType, Type) of
+                {undefined, Seq} ->
+                    throw({error, {free_id_not_found, Seq, Type}});
+                {NewID, NewSequence} ->
+                    {NewID, NewSequence}
+            end
+    end;
+get_insert_object_id(Worker, ForcedID, Type) ->
+    case check_if_id_exists(Worker, ForcedID, Type) of
+        true ->
+            throw({error, {forced_id_exists, ForcedID}});
+        false ->
+            {ForcedID, null}
+    end.
+
+
+check_if_force_id_required(Worker, Type) ->
+    Query = """
+    SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = $1 AND column_name = 'sequence';
+    """,
+    case epgsql_pool:query(Worker, Query, [Type]) of
+        {ok, _Columns, []} ->
+            true;
+        {ok, _Columns, [{"sequence"}]} ->
+            false;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+get_last_sequence(Worker, Type) ->
+    Query = """
+    SELECT MAX(sequence)
+    FROM $1;
+    """,
+    case epgsql_pool:query(Worker, Query, [Type]) of
+        {ok, _Columns, [{null}]} ->
+            {ok, 0};
+        {ok, _Columns, [{LastID}]} ->
+            {ok, LastID};
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+get_new_object_id(Worker, LastSequenceInType, Type) ->
+    genlib_list:foldl_while(
+        fun(_I, {ID, Sequence}) ->
+            NextSequence = Sequence + 1,
+            NewID = dmt_v2_object_id:get_object_id(Type, NextSequence),
+            case check_if_id_exists(Worker, ID, Type) of
+                false ->
+                    {halt, {NewID, NextSequence}};
+                true ->
+                    {cont, {ID, NextSequence}}
+            end
+        end,
+        {undefined, LastSequenceInType},
+        lists:seq(1, 100)
+    ).
+
+check_if_id_exists(Worker, ID, Type) ->
+    Query = """
+            SELECT id
+            FROM $1
+            WHERE id = $2::text
+            """,
+    case epgsql_pool:query(Worker, Query, [Type, ID]) of
+        {ok, _Columns, []} ->
+            false;
+        {ok, _Columns, [{ID}]} ->
+            true;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
 
 
 build_insert_objects_sql(Tables) ->

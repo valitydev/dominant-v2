@@ -19,7 +19,6 @@
 
 -type insertable_object() :: #{
     type := object_type(),
-    is_id_generatable := boolean(),
     id_generator := string() | undefined,
     forced_id := string() | undefined,
     references := [{object_type(), object_id()}],
@@ -55,7 +54,6 @@ new_object(#domain_conf_v2_InsertOp{
             {ok, #{
                 tmp_id => uuid:get_v4_urandom(),
                 type => Type,
-                is_id_generatable => dmt_v2_object_id:is_id_generatable(Type),
                 id_generator => dmt_v2_object_id:id_generator(Type),
                 forced_id => term_to_binary(ForcedRef),
                 references => list_term_to_binary(dmt_v2_object_reference:refless_object_references(NewObject)),
