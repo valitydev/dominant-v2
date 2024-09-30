@@ -48,7 +48,6 @@ handle_command({ok, {Args, ["run"]}}) ->
             ToApply = lists:filter(fun({Mig, _}) -> not lists:member(Mig, Applied) end, Available),
             Results = apply_migrations(up, ToApply, Conn),
 
-            io:format("Results: ~p", [Results]),
             report_migrations(up, Results)
         end
     ),

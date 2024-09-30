@@ -12,15 +12,25 @@
 
 %%
 
-get_object(ObjectRef, VersionRef) ->
-    Version =
-        case VersionRef of
-            {global_vs, GlobalVS} ->
-                GlobalVS;
-            {local_vs, _LocalVS} ->
-                throw(not_impl)
-        end,
-    case get_target_object(ObjectRef, Version) of
+get_object({version, V}, ObjectRef) ->
+    case get_target_object(ObjectRef, V) of
+        {ok, #{
+            global_version := GlobalVersion,
+            data := Data,
+            created_at := CreatedAt
+        }} ->
+            {ok, #domain_conf_v2_VersionedObject{
+                global_version = GlobalVersion,
+                %% TODO implement local versions
+                local_version = 0,
+                object = Data,
+                created_at = CreatedAt
+            }};
+        {error, Reason} ->
+            {error, Reason}
+    end;
+get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
+    case get_latest_target_object(ObjectRef) of
         {ok, #{
             global_version := GlobalVersion,
             data := Data,
@@ -49,11 +59,7 @@ assemble_operations(Commit) ->
     try
         lists:foldl(
             fun assemble_operations_/2,
-            #{
-                inserts => [],
-                updates => #{},
-                objects_being_updated => []
-            },
+            {[], #{}, []},
             Commit#domain_conf_v2_Commit.ops
         )
     catch
@@ -63,11 +69,7 @@ assemble_operations(Commit) ->
 
 assemble_operations_(
     Operation,
-    #{
-        inserts := InsertsAcc,
-        updates := UpdatesAcc,
-        objects_being_updated := UpdatedObjectsAcc
-    } = Acc
+    {InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
@@ -79,10 +81,7 @@ assemble_operations_(
 
             Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
 
-            Acc#{
-                inserts => [NewObject | InsertsAcc],
-                updates => Updates1
-            };
+            {[NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
         {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
             ExistingUpdates = maps:get(Ref, UpdatesAcc, #{}),
             case get_original_object_changes(UpdatesAcc, Ref) of
@@ -91,12 +90,7 @@ assemble_operations_(
                 Changes ->
                     ObjectUpdate = dmt_v2_object:update_object(UpdateOp, ExistingUpdates),
                     UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
-                    Acc#{
-                        updates => UpdatesAcc1#{
-                            Ref => ObjectUpdate
-                        },
-                        objects_being_updated => [Ref | UpdatedObjectsAcc]
-                    }
+                    {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]}
             end;
         {delete, #domain_conf_v2_RemoveOp{ref = Ref} = RemoveOp} ->
             #{
@@ -104,12 +98,7 @@ assemble_operations_(
             } = get_original_object_changes(UpdatesAcc, Ref),
             UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
 
-            Acc#{
-                updates => UpdatesAcc1#{
-                    Ref => dmt_v2_object:remove_object(RemoveOp)
-                },
-                objects_being_updated => [Ref | UpdatedObjectsAcc]
-            }
+            {InsertsAcc, UpdatesAcc1#{Ref => dmt_v2_object:remove_object(RemoveOp)}, [Ref | UpdatedObjectsAcc]}
     end.
 
 update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
@@ -221,80 +210,72 @@ get_original_object_changes(Updates, Ref) ->
 ]).
 
 commit(Version, Commit, CreatedBy) ->
-    Changes = assemble_operations(Commit),
-    {InsertObjects, UpdateObjects, ChangedObjectIds} = prepare_changes(Changes),
+    {InsertObjects, UpdateObjects0, ChangedObjectIds} = assemble_operations(Commit),
     case
-        epgsql_pool:transaction(default_pool,
+        epgsql_pool:transaction(
+            default_pool,
             fun(Worker) ->
                 ok = check_versions_sql(Worker, ChangedObjectIds, Version),
                 NewVersion = get_new_version(Worker, CreatedBy),
                 PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
-                ok = update_objects(Worker, UpdateObjects, NewVersion)
-            end)
+                UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
+                ok = update_objects(Worker, UpdateObjects1, NewVersion),
+                {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            end
+        )
     of
-        {ok, _, [{NewGlobalVersion}]} ->
-            {ok, NewGlobalVersion};
+        {ok, ResVersion, NewObjectsIDs} ->
+            NewObjects = lists:map(
+                fun(#{data := Data}) ->
+                    Data
+                end,
+                get_target_objects(NewObjectsIDs, ResVersion)
+            ),
+            {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
-        Error ->
+        {error, Error} ->
             {error, Error}
     end.
 
-%%build_commit_query(Tables) ->
-%%    CheckVersionsSql = build_check_versions_sql(Tables),
-%%    InsertObjectsSql = build_insert_objects_sql(Tables),
-%%    UpdateObjectsSql = build_update_objects_sql(Tables),
-%%
-%%    io_lib:format("""
-%%    DO $$
-%%    DECLARE
-%%        new_global_version bigint;
-%%        conflicting_objects jsonb := '[]'::jsonb;
-%%        temp_id_mapping jsonb := '{}'::jsonb;
-%%    BEGIN
-%%        -- Шаг 1: Проверка версий и поиск конфликтов
-%%
-%%        ~p
-%%
-%%        IF jsonb_array_length(conflicting_objects) > 0 THEN
-%%            RAISE EXCEPTION 'Conflict detected for objects: %', conflicting_objects;
-%%        END IF;
-%%
-%%        -- Шаг 2: Инкремент глобальной версии
-%%        INSERT INTO global_version (created_by) VALUES ($3::uuid) RETURNING version INTO new_global_version;
-%%
-%%        -- Шаг 3: Добавление новых объектов
-%%        WITH new_objects AS (
-%%            ~p
-%%        )
-%%        SELECT jsonb_object_agg(tmp_id, id) INTO temp_id_mapping FROM new_objects;
-%%
-%%        -- Шаг 4: Обновление существующих объектов
-%%
-%%        ~p
-%%
-%%        -- Возвращаем новую глобальную версию
-%%        PERFORM pg_advisory_xact_lock(cast((-1) as int), cast(new_global_version as int));
-%%        END $$;
-%%    """, [CheckVersionsSql, InsertObjectsSql, UpdateObjectsSql]).
-
+replace_tmp_ids_in_updates(UpdateObjects, PermanentIDsMaps) ->
+    maps:map(
+        fun(_ID, UpdateObject) ->
+            #{
+                referenced_by := ReferencedBy
+            } = UpdateObject,
+            lists:map(
+                fun(Ref) ->
+                    case Ref of
+                        {temporary, TmpID} ->
+                            maps:get(TmpID, PermanentIDsMaps);
+                        _ ->
+                            Ref
+                    end
+                end,
+                ReferencedBy
+            )
+        end,
+        UpdateObjects
+    ).
 
 check_versions_sql(Worker, ChangedObjectIds, Version) ->
     lists:foreach(
-        fun ({ChangedObjectType, ChangedObjectRef} = ChangedObjectId) ->
+        fun({ChangedObjectType, ChangedObjectRef0} = ChangedObjectId) ->
+            ChangedObjectRef1 = to_string(ChangedObjectRef0),
             Query0 =
-                """
+                io_lib:format("""
                 SELECT id, global_version
-                FROM $1 WHERE id = ANY($1::jsonb[])
+                FROM ~p WHERE id = ANY($1)
                 ORDER BY global_version DESC
                 LIMIT 1
-                """,
-            case epgsql_pool:query(Worker, Query0, [ChangedObjectType, ChangedObjectRef]) of
+                """, [ChangedObjectType]),
+            case epgsql_pool:query(Worker, Query0, [ChangedObjectRef1]) of
                 {ok, _Columns, []} ->
                     throw({unknown_object_update, ChangedObjectId});
                 {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
                     throw({object_update_too_old, {ChangedObjectRef, MostRecentVersion}});
-                {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} ->
+                {ok, _Columns, [{_ChangedObjectRef, _MostRecentVersion}]} ->
                     ok;
                 {error, Reason} ->
                     throw({error, Reason})
@@ -317,25 +298,6 @@ get_new_version(Worker, CreatedBy) ->
             throw({error, Reason})
     end.
 
-%%get_new_version(Version) ->
-%%    Query0 =
-%%        """
-%%                SELECT id, global_version
-%%                FROM $1 WHERE id = ANY($1::jsonb[])
-%%                ORDER BY global_version DESC
-%%                LIMIT 1
-%%                """,
-%%    case epgsql_pool:query(Worker, Query0, [ChangedObjectType, ChangedObjectRef]) of
-%%        {ok, _Columns, []} ->
-%%            throw({unknown_object_update, ChangedObjectId});
-%%        {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
-%%            throw({object_update_too_old, {ChangedObjectRef, MostRecentVersion}});
-%%        {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} ->
-%%            ok;
-%%        {error, Reason} ->
-%%            throw({error, Reason})
-%%    end.
-
 insert_objects(Worker, InsertObjects, Version) ->
     lists:foldl(
         fun(InsertObject, Acc) ->
@@ -344,45 +306,117 @@ insert_objects(Worker, InsertObjects, Version) ->
                 type := Type,
                 forced_id := ForcedID,
                 references := References,
-                data := Data
+                data := Data0
             } = InsertObject,
             {ID, Sequence} = get_insert_object_id(Worker, ForcedID, Type),
-            ID = insert_object(Worker, Type, ID, Sequence, Version, References, Data),
+            Data1 = give_data_id(Data0, ID),
+            ID = insert_object(Worker, Type, ID, Sequence, Version, References, Data1),
             Acc#{TmpID => ID}
         end,
         #{},
         InsertObjects
     ).
 
-insert_object(Worker, Type, ID, Sequence, Version, References, Data) ->
-    {Query, Params} = case check_if_force_id_required(Worker, Type) of
-        true ->
-            Query0 =
-                """
-            INSERT INTO $1 (id, global_version, references_to, data)
-                VALUES ($2, $3, $4, $5)
-            """,
-            Params0 = [Type, ID, Version, References, Data],
-            {Query0, Params0};
-        false ->
-            Query1 =
-                """
-            INSERT INTO $1 (id, sequence, global_version, references_to, data)
-                VALUES ($2, $3, $4, $5, $6)
-            """,
-            Params1 = [Type, ID, Sequence, Version, References, Data],
-            {Query1, Params1}
-    end,
+insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
+    ID1 = to_string(ID0),
+    Data1 = to_string(Data0),
+    References1 = lists:map(fun to_string/1, References0),
+    {Query, Params} =
+        case check_if_force_id_required(Worker, Type) of
+            true ->
+                Query0 =
+                    io_lib:format("""
+                    INSERT INTO ~p (id, global_version, references_to, referenced_by, data)
+                        VALUES ($1, $2, $3, $4, $5)
+                    """, [Type]),
+                Params0 = [ID1, Version, References1, [], Data1],
+                {Query0, Params0};
+            false ->
+                Query1 =
+                    io_lib:format("""
+                    INSERT INTO ~p (id, sequence, global_version, references_to, referenced_by, data)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                    """, [Type]),
+                Params1 = [ID1, Sequence, Version, References1, [], Data1],
+                {Query1, Params1}
+        end,
+    case epgsql_pool:query(Worker, Query, Params) of
+        {ok, 1} ->
+            ID0;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+give_data_id({Tag, Data}, {Tag, Ref}) ->
+    {struct, union, DomainObjects} = dmsl_domain_thrift:struct_info('DomainObject'),
+    {value, {_, _, {_, _, {_, ObjectName}}, Tag, _}} = lists:search(
+        fun({_, _, _, T, _}) ->
+            case T of
+                Tag ->
+                    true;
+                _ ->
+                    false
+            end
+        end,
+        DomainObjects
+    ),
+    RecordName = dmsl_domain_thrift:record_name(ObjectName),
+    {_, _, [
+        FirstField,
+        SecondField
+    ]} = dmsl_domain_thrift:struct_info(ObjectName),
+    First = get_object_field(FirstField, Data, Ref),
+    Second = get_object_field(SecondField, Data, Ref),
+    {Tag, {RecordName, First, Second}}.
+
+get_object_field({_, _, _, ref, _}, _Data, Ref) ->
+    Ref;
+get_object_field({_, _, _, data, _}, Data, _Ref) ->
+    Data.
+
+update_objects(Worker, UpdateObjects, Version) ->
+    maps:foreach(
+        fun(_ID, UpdateObject) ->
+            #{
+                id := ID,
+                type := Type,
+                references := References,
+                referenced_by := ReferencedBy,
+                data := Data,
+                is_active := IsActive
+            } = UpdateObject,
+            ok = update_object(Worker, Type, ID, References, ReferencedBy, IsActive, Data, Version)
+        end,
+        UpdateObjects
+    ).
+
+update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Version) ->
+    Data1 = to_string(Data0),
+    ID1 = to_string(ID0),
+    References1 = lists:map(fun to_string/1, References0),
+    ReferencedBy1 = lists:map(fun to_string/1, ReferencedBy0),
+    Query =
+        io_lib:format("""
+        UPDATE ~p
+        SET
+            references_to = $2,
+            referenced_by = $3,
+            data = $4,
+            global_version = $5,
+            is_active = $6
+        WHERE id = $1;
+        """, [Type]),
+    Params = [ID1, References1, ReferencedBy1, Data1, Version, IsActive],
     case epgsql_pool:query(Worker, Query, Params) of
         {ok, _Columns, _Rows} ->
-            ID;
+            ok;
         {error, Reason} ->
             throw({error, Reason})
     end.
 
 get_insert_object_id(Worker, undefined, Type) ->
-%%  Check if sequence column exists in table
-%%  -- if it doesn't, then raise exception
+    %%  Check if sequence column exists in table
+    %%  -- if it doesn't, then raise exception
     case check_if_force_id_required(Worker, Type) of
         true ->
             throw({error, {object_type_requires_forced_id, Type}});
@@ -403,7 +437,6 @@ get_insert_object_id(Worker, ForcedID, Type) ->
             {ForcedID, null}
     end.
 
-
 check_if_force_id_required(Worker, Type) ->
     Query = """
     SELECT column_name
@@ -413,18 +446,28 @@ check_if_force_id_required(Worker, Type) ->
     case epgsql_pool:query(Worker, Query, [Type]) of
         {ok, _Columns, []} ->
             true;
-        {ok, _Columns, [{"sequence"}]} ->
-            false;
+        {ok, _Columns, Rows} ->
+            lists:all(
+                fun(Row) ->
+                    case Row of
+                        {<<"sequence">>} ->
+                            false;
+                        _ ->
+                            true
+                    end
+                end,
+                Rows
+            );
         {error, Reason} ->
             throw({error, Reason})
     end.
 
 get_last_sequence(Worker, Type) ->
-    Query = """
+    Query = io_lib:format("""
     SELECT MAX(sequence)
-    FROM $1;
-    """,
-    case epgsql_pool:query(Worker, Query, [Type]) of
+    FROM ~p;
+    """, [Type]),
+    case epgsql_pool:query(Worker, Query) of
         {ok, _Columns, [{null}]} ->
             {ok, 0};
         {ok, _Columns, [{LastID}]} ->
@@ -437,7 +480,7 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
     genlib_list:foldl_while(
         fun(_I, {ID, Sequence}) ->
             NextSequence = Sequence + 1,
-            NewID = dmt_v2_object_id:get_object_id(Type, NextSequence),
+            NewID = dmt_v2_object_id:get_numerical_object_id(Type, NextSequence),
             case check_if_id_exists(Worker, ID, Type) of
                 false ->
                     {halt, {NewID, NextSequence}};
@@ -449,119 +492,48 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
         lists:seq(1, 100)
     ).
 
-check_if_id_exists(Worker, ID, Type) ->
-    Query = """
-            SELECT id
-            FROM $1
-            WHERE id = $2::text
-            """,
-    case epgsql_pool:query(Worker, Query, [Type, ID]) of
+check_if_id_exists(Worker, ID0, Type0) ->
+    %%    Type1 = atom_to_list(Type0),
+    Query = io_lib:format("""
+    SELECT id
+    FROM ~p
+    WHERE id = $1;
+    """, [Type0]),
+    ID1 = to_string(ID0),
+    case epgsql_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
-        {ok, _Columns, [{ID}]} ->
+        {ok, _Columns, [{ID1}]} ->
             true;
         {error, Reason} ->
             throw({error, Reason})
     end.
 
-
-build_insert_objects_sql(Tables) ->
-    InsertClauses = lists:map(
-        fun(Table) ->
-            TableStr = atom_to_list(Table),
-            Res = io_lib:format(
-                """
-                INSERT INTO ~p (id, global_version, references_to, referenced_by, data, created_by)
-                SELECT
-                    COALESCE(id_generator, id),
-                    new_global_version,
-                    references_to,
-                    referenced_by,
-                    data,
-                    $3::uuid
-                FROM jsonb_to_recordset($4::jsonb) AS x(
-                    tmp_id text,
-                    id jsonb,
-                    id_generator text,
-                    type text,
-                    references_to jsonb[],
-                    referenced_by jsonb[],
-                    data jsonb
-                )
-                WHERE type = '~p'
-                RETURNING tmp_id, id
-                """,
-                [TableStr, TableStr]
-            ),
-            io:format("~p", [Res]),
-            Res
+get_target_objects(Refs, Version) ->
+    lists:map(
+        fun(Ref) ->
+            {ok, Obj} = get_target_object(Ref, Version),
+            Obj
         end,
-        Tables
-    ),
-    lists:join(InsertClauses, " UNION ALL ").
-
-build_update_objects_sql(Tables) ->
-    UpdateClauses = lists:map(
-        fun(Table) ->
-            TableStr = atom_to_list(Table),
-            Res = io_lib:format(
-                """
-                UPDATE ~p
-                SET
-                    global_version = new_global_version,
-                    references_to = x.references_to,
-                    referenced_by = (
-                        SELECT jsonb_agg(
-                            CASE
-                                WHEN elem::text LIKE 'temporary:%'
-                                THEN temp_id_mapping->substring(elem::text FROM 'temporary:(.*)')
-                                ELSE elem
-                            END
-                        )
-                        FROM jsonb_array_elements(x.referenced_by) elem
-                    ),
-                    data = x.data
-                FROM jsonb_to_recordset($5::jsonb) AS x(
-                    id jsonb,
-                    type text,
-                    references_to jsonb[],
-                    referenced_by jsonb[],
-                    data jsonb
-                )
-                WHERE ~p.id = x.id AND x.type = '~p'
-                """,
-                [TableStr, TableStr, TableStr]
-            ),
-            io:format("~p", [Res]),
-            Res
-        end,
-        Tables
-    ),
-    io_lib:format(
-        """
-        WITH updates AS (~p)
-        SELECT 1;
-        """,
-        [lists:join(UpdateClauses, " UNION ALL ")]
+        Refs
     ).
 
 get_target_object(Ref, Version) ->
     {Type, _} = Ref,
-    Request = """
-    SELECT tt.id,
-           tt.global_version,
-           tt.references_to,
-           tt.referenced_by,
-           tt.data,
-           tt.created_at,
-           tt.created_by
-    FROM $1 as tt
+    Ref0 = to_string(Ref),
+    Request = io_lib:format("""
+    SELECT id,
+           global_version,
+           references_to,
+           referenced_by,
+           data,
+           created_at
+    FROM ~p
+    WHERE id = $1 AND global_version <= $2
     ORDER BY global_version DESC
-    WHERE pm.id = $2::jsonb AND pm.global_version <= $3
     LIMIT 1
-    """,
-    Result = epgsql_pool:query(default_pool, Request, [Type, Ref, Version]),
-    case Result of
+    """, [Type]),
+    case epgsql_pool:query(default_pool, Request, [Ref0, Version]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref, Version}};
         {ok, Columns, Rows} ->
@@ -571,20 +543,19 @@ get_target_object(Ref, Version) ->
 
 get_latest_target_object(Ref) ->
     {Type, _} = Ref,
-    Request = """
-    SELECT tt.id,
-           tt.global_version,
-           tt.references_to,
-           tt.referenced_by,
-           tt.data,
-           tt.created_at,
-           tt.created_by
-    FROM $1 as tt
+    Request = io_lib:format("""
+    SELECT id,
+           global_version,
+           references_to,
+           referenced_by,
+           data,
+           created_at
+    FROM ~p as tt
     ORDER BY global_version DESC
-    WHERE pm.id = $2::jsonb
+    WHERE id = $1
     LIMIT 1
-    """,
-    Result = epgsql_pool:query(default_pool, Request, [Type, Ref]),
+    """, [Type]),
+    Result = epgsql_pool:query(default_pool, Request, [Ref]),
     case Result of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
@@ -634,25 +605,21 @@ marshall_object(#{
     <<"references_to">> := ReferencesTo,
     <<"referenced_by">> := ReferencedBy,
     <<"data">> := Data,
-    <<"created_at">> := CreatedAt,
-    <<"created_by">> := CreatedBy
+    <<"created_at">> := CreatedAt
 }) ->
     dmt_v2_object:just_object(
-        ID,
+        from_string(ID),
         Version,
-        ReferencesTo,
-        ReferencedBy,
-        Data,
-        CreatedAt,
-        CreatedBy
+        lists:map(fun from_string/1, ReferencesTo),
+        lists:map(fun from_string/1, ReferencedBy),
+        from_string(Data),
+        CreatedAt
     ).
 
-prepare_changes(#{
-    inserts := InsertsAcc,
-    updates := UpdatesAcc,
-    objects_being_updated := UpdatedObjectsAcc
-}) ->
-    io:format("InsertsAcc: ~p~n", [InsertsAcc]),
-    io:format("UpdatesAcc: ~p~n", [UpdatesAcc]),
-    io:format("UpdatedObjectsAcc: ~p~n", [UpdatedObjectsAcc]),
-    {InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}.
+to_string(A0) ->
+    A1 = term_to_binary(A0),
+    base64:encode_to_string(A1).
+
+from_string(B0) ->
+    B1 = base64:decode(B0),
+    binary_to_term(B1).

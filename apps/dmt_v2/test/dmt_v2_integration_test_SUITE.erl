@@ -67,21 +67,38 @@ test_checkout_object_success(Config) ->
 
     %% Insert a test object
     Revision = 0,
-    ForcedRef = {category, #domain_CategoryRef{id = 1}},
+    CategoryRef = #domain_CategoryRef{id = 1337},
+    ForcedRef = {category, CategoryRef},
+    Category = #domain_Category{
+        name = <<"name">>,
+        description = <<"description">>
+    },
     Commit = #domain_conf_v2_Commit{
         ops = [
             {insert, #domain_conf_v2_InsertOp{
                 object =
-                    {category, #domain_Category{
-                        name = <<"name">>,
-                        description = <<"description">>
-                    }},
+                    {category, Category},
                 force_ref = ForcedRef
             }}
         ]
     },
 
-    {ok, NewRevision} = dmt_v2_client:commit(Revision, Commit, UserOpID, Client),
+    {ok, #domain_conf_v2_CommitResponse{
+        version = NewRevision,
+        new_objects = NewObjectsSet
+    }} = dmt_v2_client:commit(Revision, Commit, UserOpID, Client),
+
+    [
+        {category, #domain_CategoryObject{
+            ref = Ref,
+            data = Category
+        }} = CategoryObject
+    ] = ordsets:to_list(NewObjectsSet),
+    ?assertMatch(CategoryRef, Ref),
 
     %%  Check that it was added
-    {ok} = dmt_v2_client:checkout_object(NewRevision, ForcedRef, Client).
+    {ok,
+        #domain_conf_v2_VersionedObject{
+            global_version = NewRevision,
+            object = CategoryObject
+        }} = dmt_v2_client:checkout_object({version, NewRevision}, ForcedRef, Client).

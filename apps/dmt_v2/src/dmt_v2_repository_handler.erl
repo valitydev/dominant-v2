@@ -12,8 +12,11 @@ handle_function(Function, Args, WoodyContext0, Options) ->
 
 do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) ->
     case dmt_v2_repository:commit(Version, Commit, CreatedBy) of
-        {ok, VersionNext} ->
-            {ok, VersionNext};
+        {ok, NextVersion, NewObjects} ->
+            {ok, #domain_conf_v2_CommitResponse{
+                version = NextVersion,
+                new_objects = ordsets:from_list(NewObjects)
+            }};
         {error, {operation_error, Error}} ->
             woody_error:raise(business, handle_operation_error(Error));
         {error, version_not_found} ->

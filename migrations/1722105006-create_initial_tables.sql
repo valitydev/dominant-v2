@@ -22,7 +22,8 @@ CREATE TABLE category (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE currency (
@@ -31,7 +32,8 @@ CREATE TABLE currency (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE business_schedule (
@@ -41,7 +43,8 @@ CREATE TABLE business_schedule (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE calendar (
@@ -51,7 +54,8 @@ CREATE TABLE calendar (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE payment_method (
@@ -60,7 +64,8 @@ CREATE TABLE payment_method (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE payout_method (
@@ -69,7 +74,8 @@ CREATE TABLE payout_method (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE bank (
@@ -79,7 +85,8 @@ CREATE TABLE bank (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE contract_template (
@@ -89,7 +96,8 @@ CREATE TABLE contract_template (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE term_set_hierarchy (
@@ -99,7 +107,8 @@ CREATE TABLE term_set_hierarchy (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE payment_institution (
@@ -109,7 +118,8 @@ CREATE TABLE payment_institution (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE provider (
@@ -119,7 +129,8 @@ CREATE TABLE provider (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE terminal (
@@ -129,7 +140,8 @@ CREATE TABLE terminal (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE inspector (
@@ -139,7 +151,8 @@ CREATE TABLE inspector (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE system_account_set (
@@ -149,7 +162,8 @@ CREATE TABLE system_account_set (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE external_account_set (
@@ -159,7 +173,8 @@ CREATE TABLE external_account_set (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE proxy (
@@ -169,7 +184,8 @@ CREATE TABLE proxy (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE globals (
@@ -178,7 +194,8 @@ CREATE TABLE globals (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE cash_register_provider (
@@ -188,7 +205,8 @@ CREATE TABLE cash_register_provider (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE routing_rules (
@@ -198,7 +216,8 @@ CREATE TABLE routing_rules (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE bank_card_category (
@@ -208,7 +227,8 @@ CREATE TABLE bank_card_category (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE criterion (
@@ -218,7 +238,8 @@ CREATE TABLE criterion (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE document_type (
@@ -228,7 +249,8 @@ CREATE TABLE document_type (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE payment_service (
@@ -237,7 +259,8 @@ CREATE TABLE payment_service (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE payment_system (
@@ -246,7 +269,8 @@ CREATE TABLE payment_system (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE bank_card_token_service (
@@ -255,7 +279,8 @@ CREATE TABLE bank_card_token_service (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE mobile_operator (
@@ -264,7 +289,8 @@ CREATE TABLE mobile_operator (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE crypto_currency (
@@ -273,7 +299,8 @@ CREATE TABLE crypto_currency (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE country (
@@ -282,7 +309,8 @@ CREATE TABLE country (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE trade_bloc (
@@ -291,7 +319,8 @@ CREATE TABLE trade_bloc (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE identity_provider (
@@ -300,7 +329,8 @@ CREATE TABLE identity_provider (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE limit_config (
@@ -309,7 +339,8 @@ CREATE TABLE limit_config (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE INDEX idx_category_global_version ON category(global_version);

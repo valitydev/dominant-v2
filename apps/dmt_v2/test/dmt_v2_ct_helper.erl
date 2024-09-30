@@ -154,7 +154,12 @@ cleanup_db() ->
         r RECORD;
     BEGIN
         -- Loop through all tables in the current schema
-        FOR r IN (SELECT table_name FROM information_schema.tables WHERE table_schema='public') LOOP
+        FOR r IN (
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema='public'
+            AND NOT table_name = '__migrations'
+            ) LOOP
             -- Execute the TRUNCATE command on each table
             EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.table_name) || ' RESTART IDENTITY CASCADE';
         END LOOP;

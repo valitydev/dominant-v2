@@ -7,7 +7,7 @@
 -export([new_object/1]).
 -export([update_object/2]).
 -export([remove_object/1]).
--export([just_object/7]).
+-export([just_object/6]).
 
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
@@ -19,7 +19,7 @@
 
 -type insertable_object() :: #{
     type := object_type(),
-    id_generator := string() | undefined,
+    tmp_id := object_id(),
     forced_id := string() | undefined,
     references := [{object_type(), object_id()}],
     data := binary()
@@ -54,10 +54,9 @@ new_object(#domain_conf_v2_InsertOp{
             {ok, #{
                 tmp_id => uuid:get_v4_urandom(),
                 type => Type,
-                id_generator => dmt_v2_object_id:id_generator(Type),
-                forced_id => term_to_binary(ForcedRef),
+                forced_id => ForcedRef,
                 references => list_term_to_binary(dmt_v2_object_reference:refless_object_references(NewObject)),
-                data => term_to_binary(NewObject)
+                data => NewObject
             }};
         {error, Error} ->
             {error, Error}
@@ -97,8 +96,7 @@ just_object(
     ReferencesTo,
     ReferencedBy,
     Data,
-    CreatedAt,
-    CreatedBy
+    CreatedAt
 ) ->
     {Type, _} = ID,
     #{
@@ -108,8 +106,7 @@ just_object(
         references => ReferencesTo,
         referenced_by => ReferencedBy,
         data => Data,
-        created_at => CreatedAt,
-        created_by => CreatedBy
+        created_at => CreatedAt
     }.
 
 get_checked_type(undefined, {Type, _}) ->
@@ -128,4 +125,4 @@ check_domain_object_refs(Ref, Object) ->
     end.
 
 list_term_to_binary(Terms) ->
-    lists:map(fun (Term) -> term_to_binary(Term) end, Terms).
+    lists:map(fun(Term) -> term_to_binary(Term) end, Terms).

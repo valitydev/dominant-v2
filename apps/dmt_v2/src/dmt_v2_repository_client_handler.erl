@@ -14,7 +14,7 @@ default_handling_timeout(#{default_handling_timeout := Timeout}) ->
 
 do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options) ->
     %% Fetch the object based on VersionReference and Reference
-    case dmt_v2_repository:get_object(ObjectRef, VersionRef) of
+    case dmt_v2_repository:get_object(VersionRef, ObjectRef) of
         {ok, Object} ->
             {ok, Object};
         {error, global_version_not_found} ->
