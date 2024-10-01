@@ -43,7 +43,7 @@ delete_user(UserOpID) ->
     case epgsql_pool:query(?POOL_NAME, Sql, Params) of
         {ok, _, Result} when Result =:= [] ->
             {error, user_not_found};
-        {ok, _, _} ->
+        {ok, 1} ->
             ok;
         {error, Reason} ->
             {error, Reason}

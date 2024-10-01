@@ -37,15 +37,9 @@ do_handle_function('Get', {UserOpID}, _Context, _Options) ->
 do_handle_function('Delete', {UserOpID}, _Context, _Options) ->
     case dmt_v2_user_op:delete_user(UserOpID) of
         ok ->
-            ok;
+            {ok, ok};
         {error, user_not_found} ->
             woody_error:raise(business, #domain_conf_v2_UserOpNotFound{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end.
-
-%% Helper Functions
-
-generate_uuid(Data) ->
-    %% Use a UUID generation library or function
-    uuid:get_v5(jsx:encode(Data)).
