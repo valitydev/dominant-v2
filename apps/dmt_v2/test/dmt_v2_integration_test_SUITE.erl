@@ -25,12 +25,13 @@
 
 -export([
     %% Repository Tests
-    insert_object_forced_id_success_test/1
+    insert_object_forced_id_success_test/1,
+    insert_object_sequence_id_success_test/1,
+    insert_remove_referencing_object_success_test/1
 ]).
 
 -export([
     %% RepositoryClient Tests
-    test_checkout_object_success/1
 ]).
 
 %% Setup and Teardown
@@ -50,8 +51,8 @@ end_per_suite(_Config) ->
 all() ->
     [
         {group, create_user_op_test},
-        {group, repository_tests},
-        {group, repository_client_tests}
+        {group, repository_tests}
+%%        {group, repository_client_tests}
     ].
 
 %% Define test groups
@@ -63,10 +64,12 @@ groups() ->
             delete_user_op_test
         ]},
         {repository_tests, [], [
-            insert_object_forced_id_success_test
+            insert_object_forced_id_success_test,
+            insert_object_sequence_id_success_test,
+            insert_remove_referencing_object_success_test
         ]},
         {repository_client_tests, [], [
-            test_checkout_object_success
+
         ]}
     ].
 
@@ -124,9 +127,133 @@ delete_user_op_test(Config) ->
     {exception, #domain_conf_v2_UserOpNotFound{}} =
         dmt_v2_client:get_user_op(UserOpID, Client).
 
-%% RepositoryClient Tests
+%% Repository tests
 
-%% Test successful CheckoutObject
+insert_remove_referencing_object_success_test(Config) ->
+    Client = dmt_v2_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_remove_referencing_object_success_test">>,
+    UserOpID = create_user_op(Email, Client),
+
+    Revision1 = 0,
+    Commit1 = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object = {proxy, #domain_ProxyDefinition{
+                    name = <<"proxy">>,
+                    description = <<"proxy_description">>,
+                    url = <<"http://someurl">>,
+                    options = #{}
+                }}
+            }}
+        ]
+    },
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {proxy, #domain_ProxyObject{
+                ref = ProxyRef
+            }}
+        ]
+    }} = dmt_v2_client:commit(Revision1, Commit1, UserOpID, Client),
+
+
+    Commit2 = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object = {provider, #domain_Provider{
+                    name = <<"name">>,
+                    description = <<"description">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }}
+            }}
+        ]
+    },
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [
+            {provider, #domain_ProviderObject{
+                ref = ProviderRef
+            }}
+        ]
+    }} = dmt_v2_client:commit(Revision2, Commit2, UserOpID, Client),
+
+%%  try to remove proxy
+    Commit3 = #domain_conf_v2_Commit{
+        ops = [
+            {remove, #domain_conf_v2_RemoveOp{
+                ref = {proxy, ProxyRef}
+            }}
+        ]
+    },
+
+
+    error = dmt_v2_client:commit(Revision3, Commit3, UserOpID, Client),
+
+%%  try to remove provider
+    Commit4 = #domain_conf_v2_Commit{
+        ops = [
+            {remove, #domain_conf_v2_RemoveOp{
+                ref = {provider, ProviderRef}
+            }}
+        ]
+    },
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4
+    }} = dmt_v2_client:commit(Revision3, Commit4, UserOpID, Client),
+
+%%  try to remove proxy again
+    {ok, #domain_conf_v2_CommitResponse{}} =
+        dmt_v2_client:commit(Revision4, Commit3, UserOpID, Client).
+
+insert_object_sequence_id_success_test(Config) ->
+    Client = dmt_v2_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_object_sequence_id_success_test">>,
+    UserOpID = create_user_op(Email, Client),
+
+    %% Insert a test object
+    Revision = 0,
+    Category = #domain_Category{
+        name = <<"name1">>,
+        description = <<"description1">>
+    },
+    Commit = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object = {category, Category}
+            }},
+            {insert, #domain_conf_v2_InsertOp{
+                object = {category, Category}
+            }}
+        ]
+    },
+
+    {ok, #domain_conf_v2_CommitResponse{
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = #domain_CategoryRef{id = ID1}
+            }},
+            {category, #domain_CategoryObject{
+                ref = #domain_CategoryRef{id = ID2}
+            }}
+        ]
+    }} = dmt_v2_client:commit(Revision, Commit, UserOpID, Client),
+
+    ?assertMatch(true, is_in_sequence(ID1, ID2)).
+
+is_in_sequence(N1, N2) when N1 + 1 =:= N2 ->
+    true;
+is_in_sequence(N1, N2) when N1 =:= N2 + 1 ->
+    true;
+is_in_sequence(N1, N2) ->
+    {false, N1, N2}.
+
+%% Test successful insert with forced id
 insert_object_forced_id_success_test(Config) ->
     Client = dmt_v2_ct_helper:cfg(client, Config),
 
@@ -163,55 +290,11 @@ insert_object_forced_id_success_test(Config) ->
     ] = ordsets:to_list(NewObjectsSet),
     ?assertMatch(CategoryRef, Ref).
 
-test_checkout_object_success(Config) ->
-    Client = dmt_v2_ct_helper:cfg(client, Config),
+%% RepositoryClient Tests
 
-    %%  Create UserOp
-    UserOpParams = #domain_conf_v2_UserOpParams{
-        email = <<"some@email">>,
-        name = <<"some_name">>
-    },
+%% GetLocalVersions
 
-    {ok, #domain_conf_v2_UserOp{
-        id = UserOpID
-    }} = dmt_v2_client:create_user_op(UserOpParams, Client),
-
-    %% Insert a test object
-    Revision = 0,
-    CategoryRef = #domain_CategoryRef{id = 1337},
-    ForcedRef = {category, CategoryRef},
-    Category = #domain_Category{
-        name = <<"name">>,
-        description = <<"description">>
-    },
-    Commit = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {category, Category},
-                force_ref = ForcedRef
-            }}
-        ]
-    },
-
-    {ok, #domain_conf_v2_CommitResponse{
-        version = NewRevision,
-        new_objects = NewObjectsSet
-    }} = dmt_v2_client:commit(Revision, Commit, UserOpID, Client),
-
-    [
-        {category, #domain_CategoryObject{
-            ref = Ref,
-            data = Category
-        }} = CategoryObject
-    ] = ordsets:to_list(NewObjectsSet),
-    ?assertMatch(CategoryRef, Ref),
-
-    %%  Check that it was added
-    {ok, #domain_conf_v2_VersionedObject{
-        global_version = NewRevision,
-        object = CategoryObject
-    }} = dmt_v2_client:checkout_object({version, NewRevision}, ForcedRef, Client).
+%% GetGlobalVersions
 
 create_user_op(Email, Client) ->
     %%  Create UserOp

@@ -92,7 +92,7 @@ assemble_operations_(
                     UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
                     {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]}
             end;
-        {delete, #domain_conf_v2_RemoveOp{ref = Ref} = RemoveOp} ->
+        {remove, #domain_conf_v2_RemoveOp{ref = Ref} = RemoveOp} ->
             #{
                 references := OriginalReferences
             } = get_original_object_changes(UpdatesAcc, Ref),
@@ -159,12 +159,12 @@ get_original_object_changes(Updates, Ref) ->
         #{Ref := Object} ->
             Object;
         _ ->
-            #{
+            {ok, #{
                 id := ID,
                 type := Type,
                 referenced_by := RefdBy,
                 references := Refers
-            } = get_latest_target_object(Ref),
+            }} = get_latest_target_object(Ref),
             %%          NOTE this is done in order to decouple object type from object change type
             #{
                 id => ID,
@@ -262,11 +262,13 @@ replace_tmp_ids_in_updates(UpdateObjects, PermanentIDsMaps) ->
 check_versions_sql(Worker, ChangedObjectIds, Version) ->
     lists:foreach(
         fun({ChangedObjectType, ChangedObjectRef0} = ChangedObjectId) ->
+            io:format("ChangedObjectRef0 ~p~n", [ChangedObjectRef0]),
             ChangedObjectRef1 = to_string(ChangedObjectRef0),
             Query0 =
                 io_lib:format("""
                 SELECT id, global_version
-                FROM ~p WHERE id = ANY($1)
+                FROM ~p
+                WHERE id = $1
                 ORDER BY global_version DESC
                 LIMIT 1
                 """, [ChangedObjectType]),
@@ -347,7 +349,7 @@ insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
             throw({error, Reason})
     end.
 
-give_data_id({Tag, Data}, {Tag, Ref}) ->
+give_data_id({Tag, Data}, Ref) ->
     {struct, union, DomainObjects} = dmsl_domain_thrift:struct_info('DomainObject'),
     {value, {_, _, {_, _, {_, ObjectName}}, Tag, _}} = lists:search(
         fun({_, _, _, T, _}) ->
@@ -429,7 +431,7 @@ get_insert_object_id(Worker, undefined, Type) ->
                     {NewID, NewSequence}
             end
     end;
-get_insert_object_id(Worker, ForcedID, Type) ->
+get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
             throw({error, {forced_id_exists, ForcedID}});
@@ -481,7 +483,7 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
         fun(_I, {ID, Sequence}) ->
             NextSequence = Sequence + 1,
             NewID = dmt_v2_object_id:get_numerical_object_id(Type, NextSequence),
-            case check_if_id_exists(Worker, ID, Type) of
+            case check_if_id_exists(Worker, NewID, Type) of
                 false ->
                     {halt, {NewID, NextSequence}};
                 true ->
@@ -543,6 +545,7 @@ get_target_object(Ref, Version) ->
 
 get_latest_target_object(Ref) ->
     {Type, _} = Ref,
+    Ref0 = to_string(Ref),
     Request = io_lib:format("""
     SELECT id,
            global_version,
@@ -550,13 +553,12 @@ get_latest_target_object(Ref) ->
            referenced_by,
            data,
            created_at
-    FROM ~p as tt
-    ORDER BY global_version DESC
+    FROM ~p
     WHERE id = $1
+    ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    Result = epgsql_pool:query(default_pool, Request, [Ref]),
-    case Result of
+    case epgsql_pool:query(default_pool, Request, [Ref0]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
