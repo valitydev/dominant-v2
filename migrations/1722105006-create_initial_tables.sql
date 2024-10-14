@@ -16,331 +16,362 @@ CREATE TABLE global_version (
 );
 
 CREATE TABLE category (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE currency (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE business_schedule (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE calendar (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE payment_method (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE payout_method (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE bank (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE contract_template (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE term_set_hierarchy (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE payment_institution (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE provider (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE terminal (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE inspector (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE system_account_set (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE external_account_set (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE proxy (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE globals (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE cash_register_provider (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE routing_rules (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE bank_card_category (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE criterion (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE document_type (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     sequence BIGINT,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE payment_service (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE payment_system (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE bank_card_token_service (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE mobile_operator (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE crypto_currency (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE country (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE trade_bloc (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE identity_provider (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE TABLE limit_config (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    PRIMARY KEY (id, global_version)
 );
 
 CREATE INDEX idx_category_global_version ON category(global_version);

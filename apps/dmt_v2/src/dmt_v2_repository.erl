@@ -19,6 +19,7 @@ get_object({version, V}, ObjectRef) ->
             data := Data,
             created_at := CreatedAt
         }} ->
+            io:format("get_object Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
                 global_version = GlobalVersion,
                 %% TODO implement local versions
@@ -36,6 +37,7 @@ get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
             data := Data,
             created_at := CreatedAt
         }} ->
+            io:format("get_object head Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
                 global_version = GlobalVersion,
                 %% TODO implement local versions
@@ -81,24 +83,27 @@ assemble_operations_(
 
             Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
 
+            io:format("~n {insert, #domain_conf_v2_InsertOp{} = InsertOp} ~p ~n", [Refers]),
+
             {[NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
         {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
-            ExistingUpdates = maps:get(Ref, UpdatesAcc, #{}),
             case get_original_object_changes(UpdatesAcc, Ref) of
-                #{data := _} ->
-                    throw({error, {double_update_not_allowed, UpdateOp}});
+%%              TODO Figure out how to stop several updates for the same object happening
                 Changes ->
-                    ObjectUpdate = dmt_v2_object:update_object(UpdateOp, ExistingUpdates),
+                    {ok, ObjectUpdate} = dmt_v2_object:update_object(UpdateOp, Changes),
+                    io:format("~n {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ~p ~n", [{Changes, ObjectUpdate}]),
                     UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
                     {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]}
             end;
-        {remove, #domain_conf_v2_RemoveOp{ref = Ref} = RemoveOp} ->
+        {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
             #{
                 references := OriginalReferences
-            } = get_original_object_changes(UpdatesAcc, Ref),
+            } = OG = get_original_object_changes(UpdatesAcc, Ref),
             UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
 
-            {InsertsAcc, UpdatesAcc1#{Ref => dmt_v2_object:remove_object(RemoveOp)}, [Ref | UpdatedObjectsAcc]}
+            NewObjectState = dmt_v2_object:remove_object(OG),
+            io:format("~n UpdatesAcc1#{Ref => NewObjectState} ~p ~n", [UpdatesAcc1#{Ref => NewObjectState}]),
+            {InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
     end.
 
 update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
@@ -159,18 +164,25 @@ get_original_object_changes(Updates, Ref) ->
         #{Ref := Object} ->
             Object;
         _ ->
-            {ok, #{
-                id := ID,
-                type := Type,
-                referenced_by := RefdBy,
-                references := Refers
-            }} = get_latest_target_object(Ref),
-            %%          NOTE this is done in order to decouple object type from object change type
-            #{
-                id => ID,
-                type => Type,
-                referenced_by => RefdBy,
-                references => Refers
+%%            {ok, #{
+%%                id := ID,
+%%                type := Type,
+%%                referenced_by := RefdBy,
+%%                references := Refers,
+%%                data := Data
+%%            }} = get_latest_target_object(Ref),
+%%            %%          NOTE this is done in order to decouple object type from object change type
+%%            #{
+%%                id => ID,
+%%                type => Type,
+%%                referenced_by => RefdBy,
+%%                references => Refers,
+%%                data => Data
+%%            }
+            {ok, Res} = get_latest_target_object(Ref),
+            {Type, _} = Ref,
+            Res#{
+                type => Type
             }
     end.
 
@@ -211,6 +223,7 @@ get_original_object_changes(Updates, Ref) ->
 
 commit(Version, Commit, CreatedBy) ->
     {InsertObjects, UpdateObjects0, ChangedObjectIds} = assemble_operations(Commit),
+
     case
         epgsql_pool:transaction(
             default_pool,
@@ -244,7 +257,7 @@ replace_tmp_ids_in_updates(UpdateObjects, PermanentIDsMaps) ->
             #{
                 referenced_by := ReferencedBy
             } = UpdateObject,
-            lists:map(
+            NewReferencedBy = lists:map(
                 fun(Ref) ->
                     case Ref of
                         {temporary, TmpID} ->
@@ -254,7 +267,10 @@ replace_tmp_ids_in_updates(UpdateObjects, PermanentIDsMaps) ->
                     end
                 end,
                 ReferencedBy
-            )
+            ),
+            UpdateObject#{
+                referenced_by => NewReferencedBy
+            }
         end,
         UpdateObjects
     ).
@@ -313,7 +329,7 @@ insert_objects(Worker, InsertObjects, Version) ->
             {ID, Sequence} = get_insert_object_id(Worker, ForcedID, Type),
             Data1 = give_data_id(Data0, ID),
             ID = insert_object(Worker, Type, ID, Sequence, Version, References, Data1),
-            Acc#{TmpID => ID}
+            Acc#{TmpID => {Type, ID}}
         end,
         #{},
         InsertObjects
@@ -328,16 +344,16 @@ insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
             true ->
                 Query0 =
                     io_lib:format("""
-                    INSERT INTO ~p (id, global_version, references_to, referenced_by, data)
-                        VALUES ($1, $2, $3, $4, $5)
+                    INSERT INTO ~p (id, global_version, references_to, referenced_by, data, is_active)
+                        VALUES ($1, $2, $3, $4, $5, TRUE);
                     """, [Type]),
                 Params0 = [ID1, Version, References1, [], Data1],
                 {Query0, Params0};
             false ->
                 Query1 =
                     io_lib:format("""
-                    INSERT INTO ~p (id, sequence, global_version, references_to, referenced_by, data)
-                        VALUES ($1, $2, $3, $4, $5, $6)
+                    INSERT INTO ~p (id, sequence, global_version, references_to, referenced_by, data, is_active)
+                        VALUES ($1, $2, $3, $4, $5, $6, TRUE);
                     """, [Type]),
                 Params1 = [ID1, Sequence, Version, References1, [], Data1],
                 {Query1, Params1}
@@ -377,8 +393,11 @@ get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
 update_objects(Worker, UpdateObjects, Version) ->
+
+    io:format("~n update_objects UpdateObjects ~p~n", [UpdateObjects]),
     maps:foreach(
-        fun(_ID, UpdateObject) ->
+        fun({_, ID}, UpdateObject) ->
+            io:format("~n update_objects ID ~p~n", [ID]),
             #{
                 id := ID,
                 type := Type,
@@ -399,18 +418,13 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
     ReferencedBy1 = lists:map(fun to_string/1, ReferencedBy0),
     Query =
         io_lib:format("""
-        UPDATE ~p
-        SET
-            references_to = $2,
-            referenced_by = $3,
-            data = $4,
-            global_version = $5,
-            is_active = $6
-        WHERE id = $1;
+        INSERT INTO ~p
+        (id, global_version, references_to, referenced_by, data, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6);
         """, [Type]),
-    Params = [ID1, References1, ReferencedBy1, Data1, Version, IsActive],
+    Params = [ID1, Version, References1, ReferencedBy1, Data1, IsActive],
     case epgsql_pool:query(Worker, Query, Params) of
-        {ok, _Columns, _Rows} ->
+        {ok, 1} ->
             ok;
         {error, Reason} ->
             throw({error, Reason})
@@ -512,53 +526,64 @@ check_if_id_exists(Worker, ID0, Type0) ->
     end.
 
 get_target_objects(Refs, Version) ->
+    get_target_objects(default_pool, Refs, Version).
+
+get_target_objects(Worker, Refs, Version) ->
     lists:map(
         fun(Ref) ->
-            {ok, Obj} = get_target_object(Ref, Version),
+            {ok, Obj} = get_target_object(Worker, Ref, Version),
             Obj
         end,
         Refs
     ).
 
+
 get_target_object(Ref, Version) ->
-    {Type, _} = Ref,
-    Ref0 = to_string(Ref),
+    get_target_object(default_pool, Ref, Version).
+
+get_target_object(Worker, Ref, Version) ->
+    {Type, ID} = Ref,
+    ID0 = to_string(ID),
+    io:format("~n get_target_object ID ~p ID0 ~p and Version ~p~n", [ID, ID0, Version]),
     Request = io_lib:format("""
     SELECT id,
            global_version,
            references_to,
            referenced_by,
            data,
+           is_active,
            created_at
     FROM ~p
     WHERE id = $1 AND global_version <= $2
     ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    case epgsql_pool:query(default_pool, Request, [Ref0, Version]) of
+    case epgsql_pool:query(Worker, Request, [ID0, Version]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref, Version}};
         {ok, Columns, Rows} ->
+            io:format("get_target_object Res ~p ~n", [{Columns, Rows}]),
             [Result | _] = to_marshalled_maps(Columns, Rows),
             {ok, Result}
     end.
 
 get_latest_target_object(Ref) ->
-    {Type, _} = Ref,
-    Ref0 = to_string(Ref),
+    {Type, ID} = Ref,
+    ID0 = to_string(ID),
     Request = io_lib:format("""
     SELECT id,
            global_version,
            references_to,
            referenced_by,
            data,
+           is_active,
            created_at
     FROM ~p
     WHERE id = $1
     ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    case epgsql_pool:query(default_pool, Request, [Ref0]) of
+    case epgsql_pool:query(default_pool, Request, [ID0]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
@@ -607,7 +632,8 @@ marshall_object(#{
     <<"references_to">> := ReferencesTo,
     <<"referenced_by">> := ReferencedBy,
     <<"data">> := Data,
-    <<"created_at">> := CreatedAt
+    <<"created_at">> := CreatedAt,
+    <<"is_active">> := IsActive
 }) ->
     dmt_v2_object:just_object(
         from_string(ID),
@@ -615,7 +641,8 @@ marshall_object(#{
         lists:map(fun from_string/1, ReferencesTo),
         lists:map(fun from_string/1, ReferencedBy),
         from_string(Data),
-        CreatedAt
+        CreatedAt,
+        IsActive
     ).
 
 to_string(A0) ->

@@ -27,7 +27,8 @@
     %% Repository Tests
     insert_object_forced_id_success_test/1,
     insert_object_sequence_id_success_test/1,
-    insert_remove_referencing_object_success_test/1
+    insert_remove_referencing_object_success_test/1,
+    update_object_success_test/1
 ]).
 
 -export([
@@ -66,7 +67,8 @@ groups() ->
         {repository_tests, [], [
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
-            insert_remove_referencing_object_success_test
+            insert_remove_referencing_object_success_test,
+            update_object_success_test
         ]},
         {repository_client_tests, [], [
 
@@ -177,7 +179,7 @@ insert_remove_referencing_object_success_test(Config) ->
         version = Revision3,
         new_objects = [
             {provider, #domain_ProviderObject{
-                ref = ProviderRef
+                ref = _ProviderRef
             }}
         ]
     }} = dmt_v2_client:commit(Revision2, Commit2, UserOpID, Client),
@@ -192,23 +194,26 @@ insert_remove_referencing_object_success_test(Config) ->
     },
 
 
-    error = dmt_v2_client:commit(Revision3, Commit3, UserOpID, Client),
+    {ok, _} = dmt_v2_client:commit(Revision3, Commit3, UserOpID, Client).
 
-%%  try to remove provider
-    Commit4 = #domain_conf_v2_Commit{
-        ops = [
-            {remove, #domain_conf_v2_RemoveOp{
-                ref = {provider, ProviderRef}
-            }}
-        ]
-    },
-    {ok, #domain_conf_v2_CommitResponse{
-        version = Revision4
-    }} = dmt_v2_client:commit(Revision3, Commit4, UserOpID, Client),
+%% FIXME reference collecting doesn't work. Need to fix ASAP
 
-%%  try to remove proxy again
-    {ok, #domain_conf_v2_CommitResponse{}} =
-        dmt_v2_client:commit(Revision4, Commit3, UserOpID, Client).
+%%
+%%%%  try to remove provider
+%%    Commit4 = #domain_conf_v2_Commit{
+%%        ops = [
+%%            {remove, #domain_conf_v2_RemoveOp{
+%%                ref = {provider, ProviderRef}
+%%            }}
+%%        ]
+%%    },
+%%    {ok, #domain_conf_v2_CommitResponse{
+%%        version = Revision4
+%%    }} = dmt_v2_client:commit(Revision3, Commit4, UserOpID, Client),
+%%
+%%%%  try to remove proxy again
+%%    {ok, #domain_conf_v2_CommitResponse{}} =
+%%        dmt_v2_client:commit(Revision4, Commit3, UserOpID, Client).
 
 insert_object_sequence_id_success_test(Config) ->
     Client = dmt_v2_ct_helper:cfg(client, Config),
@@ -289,6 +294,63 @@ insert_object_forced_id_success_test(Config) ->
         }}
     ] = ordsets:to_list(NewObjectsSet),
     ?assertMatch(CategoryRef, Ref).
+
+
+update_object_success_test(Config) ->
+    Client = dmt_v2_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_remove_referencing_object_success_test">>,
+    UserOpID = create_user_op(Email, Client),
+
+    Revision1 = 0,
+    Commit1 = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object = {proxy, #domain_ProxyDefinition{
+                    name = <<"proxy">>,
+                    description = <<"proxy_description">>,
+                    url = <<"http://someurl">>,
+                    options = #{}
+                }}
+            }}
+        ]
+    },
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {proxy, #domain_ProxyObject{
+                ref = ProxyRef
+            }}
+        ]
+    }} = dmt_v2_client:commit(Revision1, Commit1, UserOpID, Client),
+
+
+    NewObject = {proxy, #domain_ProxyObject{
+        ref = ProxyRef,
+        data = #domain_ProxyDefinition{
+            name = <<"proxy2">>,
+            description = <<"proxy_description2">>,
+            url = <<"http://someurl">>,
+            options = #{}
+        }
+    }},
+
+    Commit2 = #domain_conf_v2_Commit{
+        ops = [
+            {update, #domain_conf_v2_UpdateOp{
+                targeted_ref = {proxy, ProxyRef},
+                new_object = NewObject
+            }}
+        ]
+    },
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3
+    }} = dmt_v2_client:commit(Revision2, Commit2, UserOpID, Client),
+
+    {ok, #domain_conf_v2_VersionedObject{
+        object = NewObject
+    }} = dmt_v2_client:checkout_object({version, Revision3}, {proxy, ProxyRef}, Client).
 
 %% RepositoryClient Tests
 

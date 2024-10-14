@@ -7,7 +7,7 @@
 -export([new_object/1]).
 -export([update_object/2]).
 -export([remove_object/1]).
--export([just_object/6]).
+-export([just_object/7]).
 
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
@@ -64,7 +64,7 @@ new_object(#domain_conf_v2_InsertOp{
 
 update_object(
     #domain_conf_v2_UpdateOp{
-        targeted_ref = TargetedRef,
+        targeted_ref = {_, ID} = TargetedRef,
         new_object = NewObject
     },
     ExistingUpdate
@@ -73,22 +73,20 @@ update_object(
         {ok, Type} ?= get_checked_type(TargetedRef, NewObject),
         ok ?= check_domain_object_refs(TargetedRef, NewObject),
         {ok, ExistingUpdate#{
-            id => TargetedRef,
+            id => ID,
             type => Type,
             %%          NOTE this will just provide all the refs that already exist,
             %%          it doesn't give us diff, but maybe it's not needed
             references => dmt_v2_object_reference:domain_object_references(NewObject),
-            data => jsx:encode(NewObject)
+            data => NewObject
         }}
     end.
 
-remove_object(#domain_conf_v2_RemoveOp{ref = Ref}) ->
-    {Type, _} = Ref,
-    {ok, #{
-        id => Ref,
-        type => Type,
+remove_object(OG) ->
+    OG#{
+        referenced_by => [],
         is_active => false
-    }}.
+    }.
 
 just_object(
     ID,
@@ -96,7 +94,8 @@ just_object(
     ReferencesTo,
     ReferencedBy,
     Data,
-    CreatedAt
+    CreatedAt,
+    IsActive
 ) ->
     {Type, _} = ID,
     #{
@@ -106,7 +105,8 @@ just_object(
         references => ReferencesTo,
         referenced_by => ReferencedBy,
         data => Data,
-        created_at => CreatedAt
+        created_at => CreatedAt,
+        is_active => IsActive
     }.
 
 get_checked_type(undefined, {Type, _}) ->
@@ -116,13 +116,10 @@ get_checked_type({Type, _}, {Type, _}) ->
 get_checked_type(Ref, Object) ->
     {error, {type_mismatch, Ref, Object}}.
 
+check_domain_object_refs({Type, Ref}, {Type, {_Object, Ref, _Data}}) ->
+    ok;
 check_domain_object_refs(Ref, Object) ->
-    case dmt_v2_object_reference:get_domain_object_ref(Object) of
-        Ref ->
-            ok;
-        _ ->
-            {error, {reference_mismatch, Ref, Object}}
-    end.
+    {error, {reference_mismatch, Ref, Object}}.
 
 list_term_to_binary(Terms) ->
     lists:map(fun(Term) -> term_to_binary(Term) end, Terms).

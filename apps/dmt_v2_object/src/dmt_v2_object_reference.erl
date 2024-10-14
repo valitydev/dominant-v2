@@ -14,6 +14,7 @@ get_domain_object_ref(DomainObject = {Tag, _Struct}) ->
 
 %% RefflessObject ZONE
 
+%% FIXME doesn't work
 refless_object_references(DomainObject) ->
     {Data, DataType} = get_refless_data(DomainObject),
     references(Data, DataType).
