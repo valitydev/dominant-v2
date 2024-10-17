@@ -1,4 +1,4 @@
--module(dmt_v2_api_woody_utils).
+-module(dmt_api_woody_utils).
 
 -export([get_woody_client/1]).
 -export([ensure_woody_deadline_set/2]).

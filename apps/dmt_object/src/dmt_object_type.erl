@@ -1,4 +1,4 @@
--module(dmt_v2_object_type).
+-module(dmt_object_type).
 
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
 

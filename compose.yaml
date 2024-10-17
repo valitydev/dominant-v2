@@ -27,7 +27,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: dmt_v2
+      POSTGRES_DB: dmt
     ports:
       - 5432:5432
     healthcheck:

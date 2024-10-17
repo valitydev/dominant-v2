@@ -1,4 +1,4 @@
-{application, dmt_v2_core, [
+{application, dmt_object, [
     {description, "An OTP application"},
     {vsn, "0.1.0"},
     {registered, []},

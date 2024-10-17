@@ -1,4 +1,4 @@
--module(dmt_v2_ct_helper).
+-module(dmt_ct_helper).
 
 -export([start_app/1]).
 -export([start_app/2]).
@@ -37,7 +37,7 @@ start_app(woody = AppName) ->
         ]),
         #{}
     };
-start_app(dmt_v2 = AppName) ->
+start_app(dmt = AppName) ->
     {
         start_app(AppName, [
             {host, <<"dominant-v2">>},
@@ -72,7 +72,7 @@ start_app(epg_connector = AppName) ->
                     port => 5432,
                     username => "postgres",
                     password => "postgres",
-                    database => "dmt_v2"
+                    database => "dmt"
                 }
             }},
             {pools, #{
@@ -133,18 +133,18 @@ cfg(Key, Config) ->
 
 -define(ROOT_URL, "http://dominant-v2:8022").
 
--spec create_client() -> dmt_v2_client_api:t().
+-spec create_client() -> dmt_client_api:t().
 create_client() ->
     create_client_w_context(woody_context:new()).
 %%    {?ROOT_URL, create_client_w_context(woody_context:new())}.
 
--spec create_client(woody:trace_id()) -> dmt_v2_client_api:t().
+-spec create_client(woody:trace_id()) -> dmt_client_api:t().
 create_client(TraceID) ->
     create_client_w_context(woody_context:new(TraceID)).
 %%    {?ROOT_URL, create_client_w_context(woody_context:new(TraceID))}.
 
 create_client_w_context(WoodyCtx) ->
-    dmt_v2_client_api:new(WoodyCtx).
+    dmt_client_api:new(WoodyCtx).
 
 -spec cleanup_db() -> ok.
 cleanup_db() ->

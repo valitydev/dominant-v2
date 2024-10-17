@@ -1,4 +1,4 @@
--module(dmt_v2_repository).
+-module(dmt_repository).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("epgsql/include/epgsql.hrl").
@@ -75,7 +75,7 @@ assemble_operations_(
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
-            {ok, NewObject} = dmt_v2_object:new_object(InsertOp),
+            {ok, NewObject} = dmt_object:new_object(InsertOp),
             #{
                 tmp_id := TmpID,
                 references := Refers
@@ -90,7 +90,7 @@ assemble_operations_(
             case get_original_object_changes(UpdatesAcc, Ref) of
 %%              TODO Figure out how to stop several updates for the same object happening
                 Changes ->
-                    {ok, ObjectUpdate} = dmt_v2_object:update_object(UpdateOp, Changes),
+                    {ok, ObjectUpdate} = dmt_object:update_object(UpdateOp, Changes),
                     io:format("~n {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ~p ~n", [{Changes, ObjectUpdate}]),
                     UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
                     {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]}
@@ -101,7 +101,7 @@ assemble_operations_(
             } = OG = get_original_object_changes(UpdatesAcc, Ref),
             UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
 
-            NewObjectState = dmt_v2_object:remove_object(OG),
+            NewObjectState = dmt_object:remove_object(OG),
             io:format("~n UpdatesAcc1#{Ref => NewObjectState} ~p ~n", [UpdatesAcc1#{Ref => NewObjectState}]),
             {InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
     end.
@@ -496,7 +496,7 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
     genlib_list:foldl_while(
         fun(_I, {ID, Sequence}) ->
             NextSequence = Sequence + 1,
-            NewID = dmt_v2_object_id:get_numerical_object_id(Type, NextSequence),
+            NewID = dmt_object_id:get_numerical_object_id(Type, NextSequence),
             case check_if_id_exists(Worker, NewID, Type) of
                 false ->
                     {halt, {NewID, NextSequence}};
@@ -635,7 +635,7 @@ marshall_object(#{
     <<"created_at">> := CreatedAt,
     <<"is_active">> := IsActive
 }) ->
-    dmt_v2_object:just_object(
+    dmt_object:just_object(
         from_string(ID),
         Version,
         lists:map(fun from_string/1, ReferencesTo),

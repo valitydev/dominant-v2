@@ -1,4 +1,4 @@
--module(dmt_v2_repository_handler).
+-module(dmt_repository_handler).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
@@ -7,11 +7,11 @@
 
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
-    WoodyContext = dmt_v2_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
+    WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
 do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) ->
-    case dmt_v2_repository:commit(Version, Commit, CreatedBy) of
+    case dmt_repository:commit(Version, Commit, CreatedBy) of
         {ok, NextVersion, NewObjects} ->
             {ok, #domain_conf_v2_CommitResponse{
                 version = NextVersion,

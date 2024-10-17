@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc dmt_v2 top level supervisor.
+%% @doc dmt top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(dmt_v2_sup).
+-module(dmt_sup).
 
 -behaviour(supervisor).
 
@@ -14,7 +14,7 @@
 -export([get_service/1]).
 
 -define(SERVER, ?MODULE).
--define(APP, dmt_v2).
+-define(APP, dmt).
 -define(DEFAULT_DB, default_db).
 
 start_link() ->
@@ -63,7 +63,7 @@ dbinit() ->
     _ = set_database_url(),
     MigrationsPath = WorkDir ++ "/migrations",
     Cmd = "run",
-    case dmt_v2_db_migration:process(["-d", MigrationsPath, Cmd]) of
+    case dmt_db_migration:process(["-d", MigrationsPath, Cmd]) of
         ok -> ok;
         {error, Reason} -> throw({migrations_error, Reason})
     end.
@@ -96,15 +96,15 @@ get_repository_handlers() ->
     DefaultTimeout = genlib_app:env(?APP, default_woody_handling_timeout, timer:seconds(30)),
     [
         get_handler(repository, #{
-            repository => dmt_v2_repository_handler,
+            repository => dmt_repository_handler,
             default_handling_timeout => DefaultTimeout
         }),
         get_handler(repository_client, #{
-            repository => dmt_v2_repository_client_handler,
+            repository => dmt_repository_client_handler,
             default_handling_timeout => DefaultTimeout
         }),
         get_handler(user_op, #{
-            repository => dmt_v2_user_op_handler,
+            repository => dmt_user_op_handler,
             default_handling_timeout => DefaultTimeout
         })
     ].
@@ -114,17 +114,17 @@ get_repository_handlers() ->
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
         get_service(repository),
-        {dmt_v2_repository_handler, Options}
+        {dmt_repository_handler, Options}
     }};
 get_handler(repository_client, Options) ->
     {"/v1/domain/repository_client", {
         get_service(repository_client),
-        {dmt_v2_repository_client_handler, Options}
+        {dmt_repository_client_handler, Options}
     }};
 get_handler(user_op, Options) ->
     {"/v1/domain/user_op", {
         get_service(user_op),
-        {dmt_v2_user_op_handler, Options}
+        {dmt_user_op_handler, Options}
     }}.
 
 get_service(repository) ->

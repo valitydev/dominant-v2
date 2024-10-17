@@ -1,8 +1,8 @@
-{application, dmt_v2, [
+{application, dmt, [
     {description, "An OTP application"},
     {vsn, "0.1.0"},
     {registered, []},
-    {mod, {dmt_v2_app, []}},
+    {mod, {dmt_app, []}},
     {applications, [
         kernel,
         stdlib,
@@ -16,8 +16,8 @@
         envloader,
         woody_user_identity,
         jsx,
-        dmt_v2_core,
-        dmt_v2_object,
+        dmt_core,
+        dmt_object,
         opentelemetry_api,
         opentelemetry_exporter,
         opentelemetry

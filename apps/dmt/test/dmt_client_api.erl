@@ -1,4 +1,4 @@
--module(dmt_v2_client_api).
+-module(dmt_client_api).
 
 -export([new/1]).
 -export([call/4]).
@@ -15,7 +15,7 @@ new(Context) ->
 
 -spec call(Name :: atom(), woody:func(), [any()], t()) -> {ok, _Response} | {exception, _} | {error, _}.
 call(ServiceName, Function, Args, Context) ->
-    Service = dmt_v2_sup:get_service(ServiceName),
+    Service = dmt_sup:get_service(ServiceName),
     Request = {Service, Function, list_to_tuple(Args)},
     Opts = get_opts(ServiceName),
     try
@@ -26,11 +26,11 @@ call(ServiceName, Function, Args, Context) ->
     end.
 
 get_opts(ServiceName) ->
-    EventHandlerOpts = genlib_app:env(dmt_v2, scoper_event_handler_options, #{}),
+    EventHandlerOpts = genlib_app:env(dmt, scoper_event_handler_options, #{}),
     Opts0 = #{
         event_handler => {scoper_woody_event_handler, EventHandlerOpts}
     },
-    case maps:get(ServiceName, genlib_app:env(dmt_v2, services), undefined) of
+    case maps:get(ServiceName, genlib_app:env(dmt, services), undefined) of
         #{} = Opts ->
             maps:merge(Opts, Opts0);
         _ ->

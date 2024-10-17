@@ -1,4 +1,4 @@
--module(dmt_v2_user_op).
+-module(dmt_user_op).
 
 %% Existing includes and exports
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
