@@ -1,16 +1,16 @@
 %%%-------------------------------------------------------------------
-%% @doc dominant-v2 public API
+%% @doc dmt public API
 %% @end
 %%%-------------------------------------------------------------------
 
--module(dominant-v2_app).
+-module(dmt_app).
 
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    dominant-v2_sup:start_link().
+    dmt_sup:start_link().
 
 stop(_State) ->
     ok.

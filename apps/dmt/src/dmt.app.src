@@ -1,0 +1,30 @@
+{application, dmt, [
+    {description, "An OTP application"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {dmt_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        damsel,
+        epg_connector,
+        epgsql,
+        epgsql_pool,
+        eql,
+        erl_health,
+        getopt,
+        envloader,
+        woody_user_identity,
+        jsx,
+        dmt_core,
+        dmt_object,
+        opentelemetry_api,
+        opentelemetry_exporter,
+        opentelemetry
+    ]},
+    {env, []},
+    {modules, []},
+
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+]}.
