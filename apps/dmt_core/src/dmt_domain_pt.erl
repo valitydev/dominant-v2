@@ -2,7 +2,7 @@
 
 -export([parse_transform/2]).
 
--spec parse_transform(Forms, [compile:option()]) -> Forms when
+-spec parse_transform(Forms, term()) -> Forms when
     Forms :: [erl_parse:abstract_form() | erl_parse:form_info()].
 parse_transform(Forms, _Options) ->
     [
@@ -22,7 +22,7 @@ transform(Form) ->
             Form
     end.
 
-transform_function(Name = is_reference_type, 1, FormWas) ->
+transform_function(is_reference_type = Name, 1, FormWas) ->
     % NOTE
     % Replacing `dmt_domain:is_reference_type/1` with a code which does something similar to:
     % ```
@@ -57,7 +57,7 @@ transform_function(Name = is_reference_type, 1, FormWas) ->
         )
     ),
     Form;
-transform_function(_Name = is_reference_type, 2, _FormWas) ->
+transform_function(is_reference_type, 2, _FormWas) ->
     % NOTE
     % We need to make `is_reference_type/2` disappear, otherwise it will trigger _unused function_
     % warning.

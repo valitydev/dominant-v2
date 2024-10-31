@@ -8,7 +8,7 @@
 
 -define(DOMAIN, dmsl_domain_thrift).
 
-get_domain_object_ref(DomainObject = {Tag, _Struct}) ->
+get_domain_object_ref({Tag, _Struct} = DomainObject) ->
     {_Type, Ref} = get_domain_object_field(ref, DomainObject),
     {Tag, Ref}.
 
@@ -24,8 +24,12 @@ get_refless_data({Tag, Struct}) ->
 
 get_refless_object_schema(Tag) ->
     SchemaInfo = get_struct_info('ReflessDomainObject'),
-    {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
-    {ObjectStructName, get_struct_info(ObjectStructName)}.
+    case get_field_info(Tag, SchemaInfo) of
+        {_, _, {struct, _, {_, ObjectStructName}}, _, _} ->
+            {ObjectStructName, get_struct_info(ObjectStructName)};
+        false ->
+            erlang:error({field_info_not_found, Tag, SchemaInfo})
+    end.
 
 %% DomainObject ZONE
 
@@ -70,7 +74,7 @@ references(Object, DataType) ->
 
 references(undefined, _StructInfo, Refs) ->
     Refs;
-references({Tag, Object}, StructInfo = {struct, union, FieldsInfo}, Refs) when is_list(FieldsInfo) ->
+references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when is_list(FieldsInfo) ->
     case get_field_info(Tag, StructInfo) of
         false ->
             erlang:error({<<"field info not found">>, Tag, StructInfo});

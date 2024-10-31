@@ -7,7 +7,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: dmtv2
+      POSTGRES_DB: dmt
     build:
       dockerfile: Dockerfile.dev
       context: .

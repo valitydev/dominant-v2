@@ -246,16 +246,16 @@ report_migrations(down, Results) ->
 -define(DRIVER, epgsql).
 
 record_migration(up, Conn, V) ->
-    ?DRIVER:equery(Conn, "INSERT INTO __migrations (id) VALUES ($1)", [V]);
+    epgsql:equery(Conn, "INSERT INTO __migrations (id) VALUES ($1)", [V]);
 record_migration(down, Conn, V) ->
-    ?DRIVER:equery(Conn, "DELETE FROM __migrations WHERE id = $1", [V]).
+    epgsql:equery(Conn, "DELETE FROM __migrations WHERE id = $1", [V]).
 
 apply_migrations(Type, Migrations, Conn) ->
     Results = lists:foldl(
         fun
             (_, [{_, {error, _}} | _] = Acc) ->
                 Acc;
-            (Migration = {Version, _}, Acc) ->
+            ({Version, _} = Migration, Acc) ->
                 case apply_migration(Type, Migration, Conn) of
                     ok -> [{Version, ok} | Acc];
                     {error, Error} -> [{Version, {error, Error}}]
@@ -269,7 +269,7 @@ apply_migrations(Type, Migrations, Conn) ->
 apply_migration(Type, {Version, Migration}, Conn) ->
     case eql:get_query(Type, Migration) of
         {ok, Query} ->
-            case if_ok(?DRIVER:squery(Conn, Query)) of
+            case if_ok(epgsql:squery(Conn, Query)) of
                 ok ->
                     _ = record_migration(Type, Conn, Version),
                     ok;
@@ -317,12 +317,12 @@ applied_migrations(Args) when is_list(Args) ->
         end
     );
 applied_migrations(Conn) when is_pid(Conn) ->
-    case ?DRIVER:squery(Conn, "SELECT id FROM __migrations ORDER by id ASC") of
+    case epgsql:squery(Conn, "SELECT id FROM __migrations ORDER by id ASC") of
         {ok, _, Migs} ->
             [binary_to_list(Mig) || {Mig} <- Migs];
         {error, {error, error, <<"42P01">>, _, _, _}} ->
             %% init migrations and restart
-            {ok, _, _} = ?DRIVER:squery(
+            {ok, _, _} = epgsql:squery(
                 Conn,
                 "CREATE TABLE __migrations ("
                 "id VARCHAR(255) PRIMARY KEY,"

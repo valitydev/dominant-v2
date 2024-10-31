@@ -16,6 +16,7 @@
         envloader,
         woody_user_identity,
         jsx,
+        uuid,
         dmt_core,
         dmt_object,
         opentelemetry_api,

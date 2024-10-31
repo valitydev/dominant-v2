@@ -13,7 +13,6 @@
 
 -export([get_service/1]).
 
--define(SERVER, ?MODULE).
 -define(APP, dmt).
 -define(DEFAULT_DB, default_db).
 
@@ -109,7 +108,7 @@ get_repository_handlers() ->
         })
     ].
 
--spec get_handler(repository | repository_client | state_processor, woody:options()) ->
+-spec get_handler(repository | repository_client | user_op, woody:options()) ->
     woody:http_handler(woody:th_handler()).
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
@@ -137,7 +136,7 @@ get_service(user_op) ->
 -spec enable_health_logging(erl_health:check()) -> erl_health:check().
 enable_health_logging(Check) ->
     EvHandler = {erl_health_event_handler, []},
-    maps:map(fun(_, V = {_, _, _}) -> #{runner => V, event_handler => EvHandler} end, Check).
+    maps:map(fun(_, {_, _, _} = V) -> #{runner => V, event_handler => EvHandler} end, Check).
 
 -spec get_prometheus_route() -> {iodata(), module(), _Opts :: any()}.
 get_prometheus_route() ->
