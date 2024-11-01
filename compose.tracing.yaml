@@ -4,7 +4,7 @@ services:
       jaeger:
         condition: service_healthy
     environment:
-      - OTEL_SERVICE_NAME=dominant-v2
+      - OTEL_SERVICE_NAME=dmt
       - OTEL_TRACES_EXPORTER=otlp
       - OTEL_TRACES_SAMPLER=parentbased_always_on
       - OTEL_EXPORTER_OTLP_PROTOCOL=http_protobuf

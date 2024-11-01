@@ -11,12 +11,13 @@ services:
     build:
       dockerfile: Dockerfile.dev
       context: .
-      args:
+      
+args:
         OTP_VERSION: $OTP_VERSION
         THRIFT_VERSION: $THRIFT_VERSION
     volumes:
       - .:$PWD
-    hostname: dominant-v2
+    hostname: dmt
     depends_on:
       db:
         condition: service_healthy
