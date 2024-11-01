@@ -1,5 +1,4 @@
 services:
-
   testrunner:
     image: $DEV_IMAGE_TAG
     environment:
@@ -11,8 +10,7 @@ services:
     build:
       dockerfile: Dockerfile.dev
       context: .
-      
-args:
+      args:
         OTP_VERSION: $OTP_VERSION
         THRIFT_VERSION: $THRIFT_VERSION
     volumes:
