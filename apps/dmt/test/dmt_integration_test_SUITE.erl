@@ -2,8 +2,7 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
--include_lib("common_test/include/ct.hrl").
--include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 %% API
 -export([
@@ -53,7 +52,7 @@ all() ->
     [
         {group, create_user_op_test},
         {group, repository_tests}
-%%        {group, repository_client_tests}
+        %%        {group, repository_client_tests}
     ].
 
 %% Define test groups
@@ -70,9 +69,7 @@ groups() ->
             insert_remove_referencing_object_success_test,
             update_object_success_test
         ]},
-        {repository_client_tests, [], [
-
-        ]}
+        {repository_client_tests, [], []}
     ].
 
 init_per_group(repository_client_tests, C) ->
@@ -141,12 +138,13 @@ insert_remove_referencing_object_success_test(Config) ->
     Commit1 = #domain_conf_v2_Commit{
         ops = [
             {insert, #domain_conf_v2_InsertOp{
-                object = {proxy, #domain_ProxyDefinition{
-                    name = <<"proxy">>,
-                    description = <<"proxy_description">>,
-                    url = <<"http://someurl">>,
-                    options = #{}
-                }}
+                object =
+                    {proxy, #domain_ProxyDefinition{
+                        name = <<"proxy">>,
+                        description = <<"proxy_description">>,
+                        url = <<"http://someurl">>,
+                        options = #{}
+                    }}
             }}
         ]
     },
@@ -159,18 +157,18 @@ insert_remove_referencing_object_success_test(Config) ->
         ]
     }} = dmt_client:commit(Revision1, Commit1, UserOpID, Client),
 
-
     Commit2 = #domain_conf_v2_Commit{
         ops = [
             {insert, #domain_conf_v2_InsertOp{
-                object = {provider, #domain_Provider{
-                    name = <<"name">>,
-                    description = <<"description">>,
-                    proxy = #domain_Proxy{
-                        ref = ProxyRef,
-                        additional = #{}
-                    }
-                }}
+                object =
+                    {provider, #domain_Provider{
+                        name = <<"name">>,
+                        description = <<"description">>,
+                        proxy = #domain_Proxy{
+                            ref = ProxyRef,
+                            additional = #{}
+                        }
+                    }}
             }}
         ]
     },
@@ -184,7 +182,7 @@ insert_remove_referencing_object_success_test(Config) ->
         ]
     }} = dmt_client:commit(Revision2, Commit2, UserOpID, Client),
 
-%%  try to remove proxy
+    %%  try to remove proxy
     Commit3 = #domain_conf_v2_Commit{
         ops = [
             {remove, #domain_conf_v2_RemoveOp{
@@ -192,7 +190,6 @@ insert_remove_referencing_object_success_test(Config) ->
             }}
         ]
     },
-
 
     {ok, _} = dmt_client:commit(Revision3, Commit3, UserOpID, Client).
 
@@ -295,7 +292,6 @@ insert_object_forced_id_success_test(Config) ->
     ] = ordsets:to_list(NewObjectsSet),
     ?assertMatch(CategoryRef, Ref).
 
-
 update_object_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
@@ -306,12 +302,13 @@ update_object_success_test(Config) ->
     Commit1 = #domain_conf_v2_Commit{
         ops = [
             {insert, #domain_conf_v2_InsertOp{
-                object = {proxy, #domain_ProxyDefinition{
-                    name = <<"proxy">>,
-                    description = <<"proxy_description">>,
-                    url = <<"http://someurl">>,
-                    options = #{}
-                }}
+                object =
+                    {proxy, #domain_ProxyDefinition{
+                        name = <<"proxy">>,
+                        description = <<"proxy_description">>,
+                        url = <<"http://someurl">>,
+                        options = #{}
+                    }}
             }}
         ]
     },
@@ -324,16 +321,16 @@ update_object_success_test(Config) ->
         ]
     }} = dmt_client:commit(Revision1, Commit1, UserOpID, Client),
 
-
-    NewObject = {proxy, #domain_ProxyObject{
-        ref = ProxyRef,
-        data = #domain_ProxyDefinition{
-            name = <<"proxy2">>,
-            description = <<"proxy_description2">>,
-            url = <<"http://someurl">>,
-            options = #{}
-        }
-    }},
+    NewObject =
+        {proxy, #domain_ProxyObject{
+            ref = ProxyRef,
+            data = #domain_ProxyDefinition{
+                name = <<"proxy2">>,
+                description = <<"proxy_description2">>,
+                url = <<"http://someurl">>,
+                options = #{}
+            }
+        }},
 
     Commit2 = #domain_conf_v2_Commit{
         ops = [

@@ -11,9 +11,6 @@
 
 -export([cleanup_db/0]).
 
--include_lib("damsel/include/dmsl_base_thrift.hrl").
--include_lib("damsel/include/dmsl_domain_thrift.hrl").
-
 -export_type([config/0]).
 -export_type([test_case_name/0]).
 -export_type([group_name/0]).
@@ -21,6 +18,7 @@
 %%
 
 -type app_name() :: atom().
+-export_type([app_name/0]).
 
 -spec start_app(app_name()) -> {[app_name()], map()}.
 start_app(scoper = AppName) ->
@@ -51,13 +49,13 @@ start_app(dmt = AppName) ->
             }},
             {services, #{
                 repository => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/repository">>
+                    url => <<"http://dmt:8022/v1/domain/repository">>
                 },
                 repository_client => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/repository_client">>
+                    url => <<"http://dmt:8022/v1/domain/repository_client">>
                 },
                 user_op => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/user_op">>
+                    url => <<"http://dmt:8022/v1/domain/user_op">>
                 }
             }}
         ]),
@@ -131,17 +129,13 @@ cfg(Key, Config) ->
 
 %%
 
--define(ROOT_URL, "http://dominant-v2:8022").
-
 -spec create_client() -> dmt_client_api:t().
 create_client() ->
     create_client_w_context(woody_context:new()).
-%%    {?ROOT_URL, create_client_w_context(woody_context:new())}.
 
 -spec create_client(woody:trace_id()) -> dmt_client_api:t().
 create_client(TraceID) ->
     create_client_w_context(woody_context:new(TraceID)).
-%%    {?ROOT_URL, create_client_w_context(woody_context:new(TraceID))}.
 
 create_client_w_context(WoodyCtx) ->
     dmt_client_api:new(WoodyCtx).
@@ -165,5 +159,5 @@ cleanup_db() ->
         END LOOP;
     END $$;
     """,
-    {ok, _, _} = epgsql_pool:query(default_pool, Query),
+    {ok, _, _} = epg_pool:query(default_pool, Query),
     ok.

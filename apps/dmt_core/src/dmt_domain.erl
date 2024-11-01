@@ -40,7 +40,7 @@ references(Object, DataType) ->
 
 references(undefined, _StructInfo, Refs) ->
     Refs;
-references({Tag, Object}, StructInfo = {struct, union, FieldsInfo}, Refs) when is_list(FieldsInfo) ->
+references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when is_list(FieldsInfo) ->
     case get_field_info(Tag, StructInfo) of
         false ->
             erlang:error({<<"field info not found">>, Tag, StructInfo});

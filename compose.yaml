@@ -1,5 +1,4 @@
 services:
-
   testrunner:
     image: $DEV_IMAGE_TAG
     environment:
@@ -7,7 +6,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: dmtv2
+      POSTGRES_DB: dmt
     build:
       dockerfile: Dockerfile.dev
       context: .
@@ -16,7 +15,7 @@ services:
         THRIFT_VERSION: $THRIFT_VERSION
     volumes:
       - .:$PWD
-    hostname: dominant-v2
+    hostname: dmt
     depends_on:
       db:
         condition: service_healthy
