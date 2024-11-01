@@ -159,5 +159,5 @@ cleanup_db() ->
         END LOOP;
     END $$;
     """,
-    {ok, _, _} = epgsql_pool:query(default_pool, Query),
+    {ok, _, _} = epg_pool:query(default_pool, Query),
     ok.

@@ -165,7 +165,7 @@ get_original_object_changes(Updates, Ref) ->
 commit(Version, Commit, CreatedBy) ->
     {InsertObjects, UpdateObjects0, ChangedObjectIds} = assemble_operations(Commit),
 
-    Result = epgsql_pool:transaction(
+    Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
             ok = check_versions_sql(Worker, ChangedObjectIds, Version),
@@ -230,7 +230,7 @@ check_versions_sql(Worker, ChangedObjectIds, Version) ->
                 ORDER BY global_version DESC
                 LIMIT 1
                 """, [ChangedObjectType]),
-            case epgsql_pool:query(Worker, Query0, [ChangedObjectRef1]) of
+            case epg_pool:query(Worker, Query0, [ChangedObjectRef1]) of
                 {ok, _Columns, []} ->
                     throw({unknown_object_update, ChangedObjectId});
                 {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
@@ -251,7 +251,7 @@ get_new_version(Worker, CreatedBy) ->
         INSERT INTO GLOBAL_VERSION (CREATED_BY)
         VALUES ($1::uuid) RETURNING version;
         """,
-    case epgsql_pool:query(Worker, Query1, [CreatedBy]) of
+    case epg_pool:query(Worker, Query1, [CreatedBy]) of
         {ok, 1, _Columns, [{NewVersion}]} ->
             NewVersion;
         {error, Reason} ->
@@ -299,7 +299,7 @@ insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
                     """, [Type]),
                 {Query1, [ID1, Sequence | Params0]}
         end,
-    case epgsql_pool:query(Worker, Query, Params1) of
+    case epg_pool:query(Worker, Query, Params1) of
         {ok, 1} ->
             ID0;
         {error, Reason} ->
@@ -361,7 +361,7 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
             VALUES ($1, $2, $3, $4, $5, $6);
         """, [Type]),
     Params = [ID1, Version, References1, ReferencedBy1, Data1, IsActive],
-    case epgsql_pool:query(Worker, Query, Params) of
+    case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
             ok;
         {error, Reason} ->
@@ -397,7 +397,7 @@ check_if_force_id_required(Worker, Type) ->
         FROM information_schema.columns
         WHERE table_name = $1 AND column_name = 'sequence';
     """,
-    case epgsql_pool:query(Worker, Query, [Type]) of
+    case epg_pool:query(Worker, Query, [Type]) of
         {ok, _Columns, []} ->
             true;
         {ok, _Columns, Rows} ->
@@ -424,7 +424,7 @@ get_last_sequence(Worker, Type) ->
     SELECT MAX(sequence)
     FROM ~p;
     """, [Type]),
-    case epgsql_pool:query(Worker, Query) of
+    case epg_pool:query(Worker, Query) of
         {ok, _Columns, [{null}]} ->
             {ok, 0};
         {ok, _Columns, [{LastID}]} ->
@@ -457,7 +457,7 @@ check_if_id_exists(Worker, ID0, Type0) ->
     WHERE id = $1;
     """, [Type0]),
     ID1 = to_string(ID0),
-    case epgsql_pool:query(Worker, Query, [ID1]) of
+    case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
         {ok, _Columns, [{ID1}]} ->
@@ -499,7 +499,7 @@ check_version_exists(Worker, Version) ->
     WHERE version = $1
     LIMIT 1
     """,
-    case epgsql_pool:query(Worker, VersionRequest, [Version]) of
+    case epg_pool:query(Worker, VersionRequest, [Version]) of
         {ok, _Columns, []} ->
             {ok, not_exists};
         {ok, _Columns, [_Row]} ->
@@ -524,7 +524,7 @@ fetch_object(Worker, Ref, Version) ->
     ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    case epgsql_pool:query(Worker, Request, [ID0, Version]) of
+    case epg_pool:query(Worker, Request, [ID0, Version]) of
         {ok, _Columns, []} ->
             {error, object_not_found};
         {ok, Columns, Rows} ->
@@ -548,7 +548,7 @@ get_latest_target_object(Ref) ->
     ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    case epgsql_pool:query(default_pool, Request, [ID0]) of
+    case epg_pool:query(default_pool, Request, [ID0]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
