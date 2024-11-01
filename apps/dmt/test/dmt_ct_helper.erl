@@ -49,13 +49,13 @@ start_app(dmt = AppName) ->
             }},
             {services, #{
                 repository => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/repository">>
+                    url => <<"http://dmt:8022/v1/domain/repository">>
                 },
                 repository_client => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/repository_client">>
+                    url => <<"http://dmt:8022/v1/domain/repository_client">>
                 },
                 user_op => #{
-                    url => <<"http://dominant-v2:8022/v1/domain/user_op">>
+                    url => <<"http://dmt:8022/v1/domain/user_op">>
                 }
             }}
         ]),
