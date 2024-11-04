@@ -38,7 +38,7 @@ start_app(woody = AppName) ->
 start_app(dmt = AppName) ->
     {
         start_app(AppName, [
-            {host, <<"dominant-v2">>},
+            {host, <<"dmt">>},
             {port, 8022},
             {scoper_event_handler_options, #{
                 event_handler_opts => #{
