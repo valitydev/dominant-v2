@@ -22,6 +22,8 @@ do_handle_function('Create', {Params}, _Context, _Options) ->
     case dmt_user_op:insert_user(Name, Email) of
         {ok, ID} ->
             {ok, #domain_conf_v2_UserOp{id = ID, email = Email, name = Name}};
+        {error, already_exists} ->
+            woody_error:raise(business, #domain_conf_v2_UserAlreadyExists{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end;

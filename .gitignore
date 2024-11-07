@@ -1,6 +1,5 @@
 # general
 log
-/_build/
 /_checkouts/
 *~
 erl_crash.dump
@@ -18,3 +17,8 @@ tags
 bin
 
 .codestract
+
+/_build/default/lib/dmt
+/_build/default/lib/dmt_core
+/_build/default/lib/dmt_object
+/_build/test

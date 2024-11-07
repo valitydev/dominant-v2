@@ -19,7 +19,9 @@
     %%    UserOpManagement Tests
     create_user_op_test/1,
     get_user_op_test/1,
-    delete_user_op_test/1
+    delete_user_op_test/1,
+    delete_nonexistant_user_op_test/1,
+    create_user_op_email_duplicate_test/1
 ]).
 
 -export([
@@ -50,7 +52,7 @@ end_per_suite(_Config) ->
 %% Define all test cases
 all() ->
     [
-        {group, create_user_op_test},
+        {group, user_op_tests},
         {group, repository_tests}
         %%        {group, repository_client_tests}
     ].
@@ -58,10 +60,12 @@ all() ->
 %% Define test groups
 groups() ->
     [
-        {create_user_op_test, [parallel], [
+        {user_op_tests, [parallel], [
             create_user_op_test,
             get_user_op_test,
-            delete_user_op_test
+            delete_user_op_test,
+            delete_nonexistant_user_op_test,
+            create_user_op_email_duplicate_test
         ]},
         {repository_tests, [], [
             insert_object_forced_id_success_test,
@@ -104,11 +108,8 @@ create_user_op_test(Config) ->
 
 get_user_op_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-
     Email = <<"get_user_op_test">>,
-
     UserOpID = create_user_op(Email, Client),
-
     {ok, #domain_conf_v2_UserOp{
         email = Email1
     }} = dmt_client:get_user_op(UserOpID, Client),
@@ -116,15 +117,39 @@ get_user_op_test(Config) ->
 
 delete_user_op_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-
     Email = <<"delete_user_op_test">>,
-
     UserOpID = create_user_op(Email, Client),
-
+    ct:pal("delete_user_op_test: ~p", [UserOpID]),
     {ok, ok} = dmt_client:delete_user_op(UserOpID, Client),
-
     {exception, #domain_conf_v2_UserOpNotFound{}} =
         dmt_client:get_user_op(UserOpID, Client).
+
+delete_nonexistant_user_op_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % some string
+    {exception, #domain_conf_v2_UserOpNotFound{}} =
+        dmt_client:delete_user_op(<<"nonexistant_id">>, Client),
+    % unknown uuid
+    {exception, #domain_conf_v2_UserOpNotFound{}} =
+        dmt_client:delete_user_op(uuid:get_v4(), Client).
+
+create_user_op_email_duplicate_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    UserOpParams1 = #domain_conf_v2_UserOpParams{
+        email = <<"create_user_op_email_duplicate_test@test">>,
+        name = <<"some_name">>
+    },
+
+    UserOpParams2 = #domain_conf_v2_UserOpParams{
+        email = <<"create_user_op_email_duplicate_test@test">>,
+        name = <<"different name">>
+    },
+
+    {ok, _} = dmt_client:create_user_op(UserOpParams1, Client),
+    {exception, #domain_conf_v2_UserAlreadyExists{}} =
+        dmt_client:create_user_op(UserOpParams2, Client).
 
 %% Repository tests
 

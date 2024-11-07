@@ -19,12 +19,23 @@ insert_user(Name, Email) ->
     case epg_pool:query(?POOL_NAME, Sql, Params) of
         {ok, 1, _Columns, [{ID}]} ->
             {ok, ID};
-        {error, Reason} ->
-            {error, Reason}
+        {error, #error{code = <<"23505">>}} ->
+            {error, already_exists};
+        {error, Error} ->
+            logger:error("Insert UserOp error Name: ~p Email ~p Error ~p", [Name, Email, Error]),
+            {error, unknown}
     end.
 
 %% Retrieve a user by ID
 get_user(UserOpID) ->
+    case is_uuid(UserOpID) of
+        true ->
+            get_user_(UserOpID);
+        false ->
+            {error, user_not_found}
+    end.
+
+get_user_(UserOpID) ->
     Sql = "SELECT id, name, email FROM op_user WHERE id = $1::uuid",
     Params = [UserOpID],
     case epg_pool:query(?POOL_NAME, Sql, Params) of
@@ -38,6 +49,14 @@ get_user(UserOpID) ->
 
 %% Delete a user by ID
 delete_user(UserOpID) ->
+    case is_uuid(UserOpID) of
+        true ->
+            delete_user_(UserOpID);
+        false ->
+            {error, user_not_found}
+    end.
+
+delete_user_(UserOpID) ->
     Sql = "DELETE FROM op_user WHERE id = $1::uuid",
     Params = [UserOpID],
     case epg_pool:query(?POOL_NAME, Sql, Params) of
@@ -47,4 +66,13 @@ delete_user(UserOpID) ->
             ok;
         {error, Reason} ->
             {error, Reason}
+    end.
+
+is_uuid(UUID) ->
+    try uuid:string_to_uuid(UUID) of
+        _UUID ->
+            true
+    catch
+        exit:badarg ->
+            false
     end.
