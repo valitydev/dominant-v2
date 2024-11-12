@@ -461,6 +461,11 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
     ).
 
 check_if_id_exists(Worker, ID0, Type0) ->
+    % A = {
+    %     ok,
+    %     [{column, <<"id">>, text, 25, -1, -1, 1, 16414, 1}],
+    %     [{<<"g2gCdxJkb21haW5fQ2F0ZWdvcnlSZWZiAAAaeQ==">>}]
+    % },
     %%    Type1 = atom_to_list(Type0),
     Query = io_lib:format("""
     SELECT id
@@ -468,6 +473,7 @@ check_if_id_exists(Worker, ID0, Type0) ->
     WHERE id = $1;
     """, [Type0]),
     ID1 = to_string(ID0),
+    logger:info("check_if_id_exists ID0: ~p ID1 ~p", [ID0, ID1]),
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
