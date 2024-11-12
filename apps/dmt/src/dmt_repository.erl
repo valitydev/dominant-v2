@@ -196,7 +196,7 @@ commit(Version, Commit, CreatedBy) ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
-        {rollback, {error, {confict, _} = Error}} ->
+        {rollback, {error, {conflict, _} = Error}} ->
             {error, {operation_error, Error}};
         {rollback, {error, {invalid, _} = Error}} ->
             {error, {operation_error, Error}};
