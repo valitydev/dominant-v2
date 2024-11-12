@@ -168,12 +168,21 @@ commit(Version, Commit, CreatedBy) ->
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
-            ok = check_versions_sql(Worker, ChangedObjectIds, Version),
-            NewVersion = get_new_version(Worker, CreatedBy),
-            PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
-            UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
-            ok = update_objects(Worker, UpdateObjects1, NewVersion),
-            {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            try
+                ok = check_versions_sql(Worker, ChangedObjectIds, Version),
+                NewVersion = get_new_version(Worker, CreatedBy),
+                PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
+                UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
+                ok = update_objects(Worker, UpdateObjects1, NewVersion),
+                {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            catch
+                Class:ExceptionPattern:Stacktrace ->
+                    logger:error(
+                        "Class:ExceptionPattern:Stacktrace ~p:~p:~p~n",
+                        [Class, ExceptionPattern, Stacktrace]
+                    ),
+                    error(ExceptionPattern)
+            end
         end
     ),
     case Result of
@@ -187,6 +196,8 @@ commit(Version, Commit, CreatedBy) ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
+        {rollback, Error} ->
+            {error, {rollback, Error}};
         {error, Error} ->
             {error, Error}
     end.
