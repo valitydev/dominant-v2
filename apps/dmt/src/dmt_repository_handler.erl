@@ -41,6 +41,8 @@ handle_operation_error({invalid, Invalid}) ->
 
 handle_operation_conflict({object_already_exists, Ref}) ->
     {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = Ref}};
+handle_operation_conflict({forced_id_exists, Ref}) ->
+    {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{object_ref = Ref}};
 handle_operation_conflict({object_not_found, Ref}) ->
     {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{object_ref = Ref}};
 handle_operation_conflict({object_reference_mismatch, Ref}) ->

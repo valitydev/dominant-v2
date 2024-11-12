@@ -196,8 +196,10 @@ commit(Version, Commit, CreatedBy) ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
-        {rollback, Error} ->
-            {error, {rollback, Error}};
+        {rollback, {error, {confict, _} = Error}} ->
+            {error, {operation_error, Error}};
+        {rollback, {error, {invalid, _} = Error}} ->
+            {error, {operation_error, Error}};
         {error, Error} ->
             {error, Error}
     end.
@@ -397,7 +399,7 @@ get_insert_object_id(Worker, undefined, Type) ->
 get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
-            throw({error, {forced_id_exists, ForcedID}});
+            throw({error, {conflict, {forced_id_exists, ForcedID}}});
         false ->
             {ForcedID, null}
     end.
