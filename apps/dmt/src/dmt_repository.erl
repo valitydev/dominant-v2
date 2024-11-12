@@ -477,7 +477,8 @@ check_if_id_exists(Worker, ID0, Type0) ->
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
-        {ok, _Columns, [{ID1}]} ->
+        {ok, _Columns, [{ReturnID}]} ->
+            ID1 = binary_to_list(ReturnID),
             true;
         {error, Reason} ->
             throw({error, Reason})
