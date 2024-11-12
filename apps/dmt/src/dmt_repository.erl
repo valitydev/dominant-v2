@@ -399,7 +399,7 @@ get_insert_object_id(Worker, undefined, Type) ->
 get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
-            throw({error, {conflict, {forced_id_exists, ForcedID}}});
+            throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}});
         false ->
             {ForcedID, null}
     end.
