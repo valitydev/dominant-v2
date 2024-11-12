@@ -526,7 +526,7 @@ fetch_object(Worker, Ref, Version) ->
     """, [Type]),
     case epg_pool:query(Worker, Request, [ID0, Version]) of
         {ok, _Columns, []} ->
-            {error, object_not_found};
+            {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
             [Result | _] = to_marshalled_maps(Columns, Rows),
             {ok, Result}
