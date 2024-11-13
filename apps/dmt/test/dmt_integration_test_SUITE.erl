@@ -119,7 +119,6 @@ delete_user_op_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
     Email = <<"delete_user_op_test">>,
     UserOpID = create_user_op(Email, Client),
-    ct:pal("delete_user_op_test: ~p", [UserOpID]),
     {ok, ok} = dmt_client:delete_user_op(UserOpID, Client),
     {exception, #domain_conf_v2_UserOpNotFound{}} =
         dmt_client:get_user_op(UserOpID, Client).

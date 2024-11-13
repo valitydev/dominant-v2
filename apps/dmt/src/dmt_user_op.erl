@@ -64,6 +64,8 @@ delete_user_(UserOpID) ->
             {error, user_not_found};
         {ok, 1} ->
             ok;
+        {ok, 0} ->
+            {error, user_not_found};
         {error, Reason} ->
             {error, Reason}
     end.
