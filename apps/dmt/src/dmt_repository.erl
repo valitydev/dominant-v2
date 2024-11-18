@@ -7,6 +7,7 @@
 
 -export([commit/3]).
 -export([get_object/2]).
+-export([get_latest_global_version/0]).
 -export([get_local_versions/3]).
 -export([get_global_versions/2]).
 
@@ -44,6 +45,20 @@ get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
                 object = Data,
                 created_at = CreatedAt
             }};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+get_latest_global_version() ->
+    Query1 =
+        """
+        SELECT MAX(version) FROM global_version;
+        """,
+    case epg_pool:query(default_pool, Query1) of
+        {ok, _Columns, [{null}]} ->
+            {ok, 0};
+        {ok, _Columns, [{Version}]} ->
+            {ok, Version};
         {error, Reason} ->
             {error, Reason}
     end.

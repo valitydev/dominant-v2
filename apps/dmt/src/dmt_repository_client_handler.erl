@@ -23,6 +23,14 @@ do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options
             woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
+    end;
+do_handle_function('GetLatestGlobalVersion', _, _Context, _Options) ->
+    %% Fetch the object based on VersionReference and Reference
+    case dmt_repository:get_latest_global_version() of
+        {ok, Version} ->
+            {ok, Version};
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
     end.
 % TODO
 % do_handle_function('GetLocalVersions', {Request}, _Context, _Options) ->

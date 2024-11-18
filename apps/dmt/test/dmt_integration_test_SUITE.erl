@@ -29,7 +29,8 @@
     insert_object_forced_id_success_test/1,
     insert_object_sequence_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
-    update_object_success_test/1
+    update_object_success_test/1,
+    get_latest_global_version_test/1
 ]).
 
 -export([
@@ -71,7 +72,8 @@ groups() ->
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
             insert_remove_referencing_object_success_test,
-            update_object_success_test
+            update_object_success_test,
+            get_latest_global_version_test
         ]},
         {repository_client_tests, [], []}
     ].
@@ -374,6 +376,34 @@ update_object_success_test(Config) ->
     }} = dmt_client:checkout_object({version, Revision3}, {proxy, ProxyRef}, Client).
 
 %% RepositoryClient Tests
+
+get_latest_global_version_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_latest_global_version_test">>,
+    UserOpID = create_user_op(Email, Client),
+
+    {ok, Revision0} = dmt_client:get_latest_global_version(Client),
+    ?assertEqual(0, Revision0),
+
+    Commit = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object =
+                    {category, #domain_Category{
+                        name = <<"name">>,
+                        description = <<"description">>
+                    }}
+            }}
+        ]
+    },
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1
+    }} = dmt_client:commit(Revision0, Commit, UserOpID, Client),
+
+    {ok, Revision2} = dmt_client:get_latest_global_version(Client),
+    ?assertEqual(Revision2, Revision1),
+    ?assertEqual(1, Revision1).
 
 %% GetLocalVersions
 
