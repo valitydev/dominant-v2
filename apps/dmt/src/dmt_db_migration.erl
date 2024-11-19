@@ -154,7 +154,7 @@ with_connection(Args, Fun) ->
         {ok, Conn} ->
             Fun(Conn);
         {error, Error} ->
-            {error, "Failed to connect to database: ~p~n", [Error]}
+            {error, io_lib:format("Failed to connect to database: ~p~n", [Args]), [Error]}
     end.
 
 connection_opts(Args) ->
