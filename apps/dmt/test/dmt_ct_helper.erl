@@ -66,7 +66,7 @@ start_app(epg_connector = AppName) ->
         start_app(AppName, [
             {databases, #{
                 default_db => #{
-                    host => "db",
+                    host => "dmt_db",
                     port => 5432,
                     username => "postgres",
                     password => "postgres",

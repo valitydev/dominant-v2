@@ -3,7 +3,7 @@ services:
     image: $DEV_IMAGE_TAG
     environment:
       WORK_DIR: $PWD
-      POSTGRES_HOST: db
+      POSTGRES_HOST: dmt_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: dmt
@@ -17,11 +17,11 @@ services:
       - .:$PWD
     hostname: dmt
     depends_on:
-      db:
+      dmt_db:
         condition: service_healthy
     working_dir: $PWD
 
-  db:
+  dmt_db:
     image: postgres
     environment:
       POSTGRES_USER: postgres
