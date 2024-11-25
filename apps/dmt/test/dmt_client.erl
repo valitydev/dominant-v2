@@ -8,6 +8,7 @@
     checkout_object/3,
     get_local_versions/2,
     get_global_versions/2,
+    get_latest_global_version/1,
     commit/4
 ]).
 
@@ -28,6 +29,9 @@ get_local_versions(Request, Client) ->
 get_global_versions(Request, Client) ->
     Args = [Request],
     dmt_client_api:call(repository_client, 'GetGlobalVersions', Args, Client).
+
+get_latest_global_version(Client) ->
+    dmt_client_api:call(repository_client, 'GetLatestGlobalVersion', [], Client).
 
 commit(Version, Commit, Author, Client) ->
     Args = [Version, Commit, Author],

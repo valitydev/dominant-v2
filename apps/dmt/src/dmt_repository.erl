@@ -7,6 +7,7 @@
 
 -export([commit/3]).
 -export([get_object/2]).
+-export([get_latest_global_version/0]).
 -export([get_local_versions/3]).
 -export([get_global_versions/2]).
 
@@ -44,6 +45,20 @@ get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
                 object = Data,
                 created_at = CreatedAt
             }};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+get_latest_global_version() ->
+    Query1 =
+        """
+        SELECT MAX(version) FROM global_version;
+        """,
+    case epg_pool:query(default_pool, Query1) of
+        {ok, _Columns, [{null}]} ->
+            {ok, 0};
+        {ok, _Columns, [{Version}]} ->
+            {ok, Version};
         {error, Reason} ->
             {error, Reason}
     end.
@@ -168,12 +183,21 @@ commit(Version, Commit, CreatedBy) ->
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
-            ok = check_versions_sql(Worker, ChangedObjectIds, Version),
-            NewVersion = get_new_version(Worker, CreatedBy),
-            PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
-            UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
-            ok = update_objects(Worker, UpdateObjects1, NewVersion),
-            {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            try
+                ok = check_versions_sql(Worker, ChangedObjectIds, Version),
+                NewVersion = get_new_version(Worker, CreatedBy),
+                PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
+                UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
+                ok = update_objects(Worker, UpdateObjects1, NewVersion),
+                {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            catch
+                Class:ExceptionPattern:Stacktrace ->
+                    logger:error(
+                        "Class:ExceptionPattern:Stacktrace ~p:~p:~p~n",
+                        [Class, ExceptionPattern, Stacktrace]
+                    ),
+                    error(ExceptionPattern)
+            end
         end
     ),
     case Result of
@@ -187,6 +211,10 @@ commit(Version, Commit, CreatedBy) ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
+        {rollback, {error, {conflict, _} = Error}} ->
+            {error, {operation_error, Error}};
+        {rollback, {error, {invalid, _} = Error}} ->
+            {error, {operation_error, Error}};
         {error, Error} ->
             {error, Error}
     end.
@@ -386,7 +414,7 @@ get_insert_object_id(Worker, undefined, Type) ->
 get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
-            throw({error, {forced_id_exists, ForcedID}});
+            throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}});
         false ->
             {ForcedID, null}
     end.
@@ -450,6 +478,11 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
     ).
 
 check_if_id_exists(Worker, ID0, Type0) ->
+    % A = {
+    %     ok,
+    %     [{column, <<"id">>, text, 25, -1, -1, 1, 16414, 1}],
+    %     [{<<"g2gCdxJkb21haW5fQ2F0ZWdvcnlSZWZiAAAaeQ==">>}]
+    % },
     %%    Type1 = atom_to_list(Type0),
     Query = io_lib:format("""
     SELECT id
@@ -457,10 +490,12 @@ check_if_id_exists(Worker, ID0, Type0) ->
     WHERE id = $1;
     """, [Type0]),
     ID1 = to_string(ID0),
+    logger:error("check_if_id_exists ID0: ~p ID1 ~p", [ID0, ID1]),
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
-        {ok, _Columns, [{ID1}]} ->
+        {ok, _Columns, [{ReturnID}]} ->
+            ID1 = binary_to_list(ReturnID),
             true;
         {error, Reason} ->
             throw({error, Reason})
@@ -526,7 +561,7 @@ fetch_object(Worker, Ref, Version) ->
     """, [Type]),
     case epg_pool:query(Worker, Request, [ID0, Version]) of
         {ok, _Columns, []} ->
-            {error, object_not_found};
+            {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
             [Result | _] = to_marshalled_maps(Columns, Rows),
             {ok, Result}

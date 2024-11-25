@@ -19,7 +19,9 @@
     %%    UserOpManagement Tests
     create_user_op_test/1,
     get_user_op_test/1,
-    delete_user_op_test/1
+    delete_user_op_test/1,
+    delete_nonexistant_user_op_test/1,
+    create_user_op_email_duplicate_test/1
 ]).
 
 -export([
@@ -27,7 +29,8 @@
     insert_object_forced_id_success_test/1,
     insert_object_sequence_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
-    update_object_success_test/1
+    update_object_success_test/1,
+    get_latest_global_version_test/1
 ]).
 
 -export([
@@ -50,7 +53,7 @@ end_per_suite(_Config) ->
 %% Define all test cases
 all() ->
     [
-        {group, create_user_op_test},
+        {group, user_op_tests},
         {group, repository_tests}
         %%        {group, repository_client_tests}
     ].
@@ -58,16 +61,19 @@ all() ->
 %% Define test groups
 groups() ->
     [
-        {create_user_op_test, [parallel], [
+        {user_op_tests, [parallel], [
             create_user_op_test,
             get_user_op_test,
-            delete_user_op_test
+            delete_user_op_test,
+            delete_nonexistant_user_op_test,
+            create_user_op_email_duplicate_test
         ]},
         {repository_tests, [], [
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
             insert_remove_referencing_object_success_test,
-            update_object_success_test
+            update_object_success_test,
+            get_latest_global_version_test
         ]},
         {repository_client_tests, [], []}
     ].
@@ -104,11 +110,8 @@ create_user_op_test(Config) ->
 
 get_user_op_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-
     Email = <<"get_user_op_test">>,
-
     UserOpID = create_user_op(Email, Client),
-
     {ok, #domain_conf_v2_UserOp{
         email = Email1
     }} = dmt_client:get_user_op(UserOpID, Client),
@@ -116,15 +119,38 @@ get_user_op_test(Config) ->
 
 delete_user_op_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-
     Email = <<"delete_user_op_test">>,
-
     UserOpID = create_user_op(Email, Client),
-
     {ok, ok} = dmt_client:delete_user_op(UserOpID, Client),
-
     {exception, #domain_conf_v2_UserOpNotFound{}} =
         dmt_client:get_user_op(UserOpID, Client).
+
+delete_nonexistant_user_op_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % some string
+    {exception, #domain_conf_v2_UserOpNotFound{}} =
+        dmt_client:delete_user_op(<<"nonexistant_id">>, Client),
+    % unknown uuid
+    {exception, #domain_conf_v2_UserOpNotFound{}} =
+        dmt_client:delete_user_op(uuid:get_v4(), Client).
+
+create_user_op_email_duplicate_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    UserOpParams1 = #domain_conf_v2_UserOpParams{
+        email = <<"create_user_op_email_duplicate_test@test">>,
+        name = <<"some_name">>
+    },
+
+    UserOpParams2 = #domain_conf_v2_UserOpParams{
+        email = <<"create_user_op_email_duplicate_test@test">>,
+        name = <<"different name">>
+    },
+
+    {ok, _} = dmt_client:create_user_op(UserOpParams1, Client),
+    {exception, #domain_conf_v2_UserAlreadyExists{}} =
+        dmt_client:create_user_op(UserOpParams2, Client).
 
 %% Repository tests
 
@@ -350,6 +376,34 @@ update_object_success_test(Config) ->
     }} = dmt_client:checkout_object({version, Revision3}, {proxy, ProxyRef}, Client).
 
 %% RepositoryClient Tests
+
+get_latest_global_version_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_latest_global_version_test">>,
+    UserOpID = create_user_op(Email, Client),
+
+    {ok, Revision0} = dmt_client:get_latest_global_version(Client),
+    ?assertEqual(0, Revision0),
+
+    Commit = #domain_conf_v2_Commit{
+        ops = [
+            {insert, #domain_conf_v2_InsertOp{
+                object =
+                    {category, #domain_Category{
+                        name = <<"name">>,
+                        description = <<"description">>
+                    }}
+            }}
+        ]
+    },
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1
+    }} = dmt_client:commit(Revision0, Commit, UserOpID, Client),
+
+    {ok, Revision2} = dmt_client:get_latest_global_version(Client),
+    ?assertEqual(Revision2, Revision1),
+    ?assertEqual(1, Revision1).
 
 %% GetLocalVersions
 
