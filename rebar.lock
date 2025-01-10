@@ -29,7 +29,7 @@
  {<<"ctx">>,{pkg,<<"ctx">>,<<"0.6.0">>},2},
  {<<"damsel">>,
   {git,"https://github.com/valitydev/damsel.git",
-       {ref,"1698ed8ff0261cea4c23077754ab3c4b756709ec"}},
+       {ref,"b718527c737f98f96959058f674fc09df9a78b91"}},
   0},
  {<<"envloader">>,
   {git,"https://github.com/nuex/envloader.git",

@@ -18,7 +18,4 @@ bin
 
 .codestract
 
-/_build/default/lib/dmt
-/_build/default/lib/dmt_core
-/_build/default/lib/dmt_object
-/_build/test
+_build
