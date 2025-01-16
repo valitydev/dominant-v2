@@ -297,7 +297,7 @@ CREATE TABLE payment_system (
     PRIMARY KEY (id, global_version)
 );
 
-CREATE TABLE bank_card_token_service (
+CREATE TABLE payment_token (
     id TEXT NOT NULL,
     global_version BIGINT NOT NULL REFERENCES global_version(version),
     references_to TEXT[] NOT NULL,
