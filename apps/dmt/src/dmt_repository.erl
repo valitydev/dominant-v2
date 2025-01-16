@@ -414,7 +414,12 @@ get_insert_object_id(Worker, undefined, Type) ->
 get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
-            throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}});
+            case check_if_object_deleted(Worker, ForcedID, Type) of
+                true ->
+                    {ForcedID, null};
+                false ->
+                    throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}})
+            end;
         false ->
             {ForcedID, null}
     end.
@@ -478,25 +483,34 @@ get_new_object_id(Worker, LastSequenceInType, Type) ->
     ).
 
 check_if_id_exists(Worker, ID0, Type0) ->
-    % A = {
-    %     ok,
-    %     [{column, <<"id">>, text, 25, -1, -1, 1, 16414, 1}],
-    %     [{<<"g2gCdxJkb21haW5fQ2F0ZWdvcnlSZWZiAAAaeQ==">>}]
-    % },
-    %%    Type1 = atom_to_list(Type0),
     Query = io_lib:format("""
     SELECT id
     FROM ~p
     WHERE id = $1;
     """, [Type0]),
     ID1 = to_string(ID0),
-    logger:error("check_if_id_exists ID0: ~p ID1 ~p", [ID0, ID1]),
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
         {ok, _Columns, [{ReturnID}]} ->
             ID1 = binary_to_list(ReturnID),
             true;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+check_if_object_deleted(Worker, ID0, Type0) ->
+    Query = io_lib:format("""
+    SELECT is_active
+    FROM ~p
+    WHERE id = $1;
+    """, [Type0]),
+    ID1 = to_string(ID0),
+    case epg_pool:query(Worker, Query, [ID1]) of
+        {ok, _Columns, []} ->
+            throw({object_dissapeared, {Type0, ID0}});
+        {ok, _Columns, [{IsActive}]} ->
+            IsActive;
         {error, Reason} ->
             throw({error, Reason})
     end.
