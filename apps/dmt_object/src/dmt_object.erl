@@ -97,7 +97,7 @@ just_object(
     CreatedAt,
     IsActive
 ) ->
-    {Type, _} = ID,
+    Type = get_type_by_id(ID),
     #{
         id => ID,
         type => Type,
@@ -123,3 +123,8 @@ check_domain_object_refs(Ref, Object) ->
 
 list_term_to_binary(Terms) ->
     lists:map(fun(Term) -> term_to_binary(Term) end, Terms).
+
+get_type_by_id({Type, _}) ->
+    Type;
+get_type_by_id({Type}) ->
+    Type.
