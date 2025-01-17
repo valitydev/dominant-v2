@@ -364,6 +364,7 @@ get_object_field({_, _, _, data, _}, Data, _Ref) ->
 update_objects(Worker, UpdateObjects, Version) ->
     maps:foreach(
         fun({_, ID}, UpdateObject) ->
+            logger:error("update_objects ID0 ~p ID1 ~p", [ID, maps:get(id, UpdateObject)]),
             #{
                 id := ID,
                 type := Type,
@@ -372,6 +373,19 @@ update_objects(Worker, UpdateObjects, Version) ->
                 data := Data,
                 is_active := IsActive
             } = UpdateObject,
+            A = #{
+                data =>
+                    {category,
+                        {domain_CategoryObject, {domain_CategoryRef, 2},
+                            {domain_Category, <<"Generic Store">>, <<"Generic Store">>, live}}},
+                id => {domain_CategoryRef, 2},
+                type => category,
+                is_active => true,
+                created_at => <<"2025-01-17T00:21:07Z">>,
+                referenced_by => [{domain_TermSetHierarchyRef, 2}],
+                global_version => 3,
+                references => []
+            },
             ok = update_object(Worker, Type, ID, References, ReferencedBy, IsActive, Data, Version)
         end,
         UpdateObjects
