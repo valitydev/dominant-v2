@@ -149,13 +149,12 @@ update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
             #{
-                id := UpdatedObjectID,
                 referenced_by := RefdBy0
             } = OG = get_original_object_changes(Acc, Ref),
             RefdBy1 = ordsets:from_list(RefdBy0),
             RefdBy2 = ordsets:del_element(ObjectID, RefdBy1),
             Acc#{
-                UpdatedObjectID =>
+                Ref =>
                     OG#{
                         referenced_by => ordsets:to_list(RefdBy2)
                     }
