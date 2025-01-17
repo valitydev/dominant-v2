@@ -115,27 +115,28 @@ assemble_operations_(
 update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
     #{
         id := ObjectID,
+        type := ObjectType,
         references := OriginalReferences
     } = OriginalObjectChanges,
+    ObjectRef = {ObjectType, ObjectID},
     #{references := NewVersionReferences} = ObjectChanges,
     ORS = ordsets:from_list(OriginalReferences),
     NVRS = ordsets:from_list(NewVersionReferences),
     AddedRefs = ordsets:subtract(NVRS, ORS),
     RemovedRefs = ordsets:subtract(ORS, NVRS),
 
-    Updates1 = update_objects_added_refs(ObjectID, AddedRefs, Updates),
-    update_objects_removed_refs(ObjectID, RemovedRefs, Updates1).
+    Updates1 = update_objects_added_refs(ObjectRef, AddedRefs, Updates),
+    update_objects_removed_refs(ObjectRef, RemovedRefs, Updates1).
 
 update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
             #{
-                id := UpdatedObjectID,
                 referenced_by := RefdBy0
             } = OG = get_original_object_changes(Acc, Ref),
 
             Acc#{
-                UpdatedObjectID =>
+                Ref =>
                     OG#{
                         referenced_by => [ObjectID | RefdBy0]
                     }
