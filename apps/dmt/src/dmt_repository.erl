@@ -415,11 +415,11 @@ get_insert_object_id(Worker, undefined, Type) ->
 get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
     case check_if_id_exists(Worker, ForcedID, Type) of
         true ->
-            case check_if_object_deleted(Worker, ForcedID, Type) of
+            case check_if_object_active(Worker, ForcedID, Type) of
                 true ->
-                    {ForcedID, null};
+                    throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}});
                 false ->
-                    throw({error, {conflict, {forced_id_exists, {Type, ForcedID}}}})
+                    {ForcedID, null}
             end;
         false ->
             {ForcedID, null}
@@ -493,14 +493,14 @@ check_if_id_exists(Worker, ID0, Type0) ->
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
-        {ok, _Columns, [{ReturnID}]} ->
+        {ok, _Columns, [{ReturnID} | _]} ->
             ID1 = binary_to_list(ReturnID),
             true;
         {error, Reason} ->
             throw({error, Reason})
     end.
 
-check_if_object_deleted(Worker, ID0, Type0) ->
+check_if_object_active(Worker, ID0, Type0) ->
     Query = io_lib:format("""
     SELECT is_active
     FROM ~p
@@ -510,8 +510,8 @@ check_if_object_deleted(Worker, ID0, Type0) ->
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             throw({object_dissapeared, {Type0, ID0}});
-        {ok, _Columns, [{IsActive}]} ->
-            IsActive;
+        {ok, _Columns, Res} ->
+            lists:all(fun({IsActive}) -> IsActive end, Res);
         {error, Reason} ->
             throw({error, Reason})
     end.
