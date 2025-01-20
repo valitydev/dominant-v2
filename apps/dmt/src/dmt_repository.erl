@@ -504,14 +504,16 @@ check_if_object_active(Worker, ID0, Type0) ->
     Query = io_lib:format("""
     SELECT is_active
     FROM ~p
-    WHERE id = $1;
+    WHERE id = $1
+    ORDER BY global_version DESC
+    LIMIT 1;
     """, [Type0]),
     ID1 = to_string(ID0),
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             throw({object_dissapeared, {Type0, ID0}});
-        {ok, _Columns, Res} ->
-            lists:any(fun({IsActive}) -> IsActive end, Res);
+        {ok, _Columns, [{IsActive}]} ->
+            IsActive;
         {error, Reason} ->
             throw({error, Reason})
     end.
