@@ -511,7 +511,7 @@ check_if_object_active(Worker, ID0, Type0) ->
         {ok, _Columns, []} ->
             throw({object_dissapeared, {Type0, ID0}});
         {ok, _Columns, Res} ->
-            lists:all(fun({IsActive}) -> IsActive end, Res);
+            lists:any(fun({IsActive}) -> IsActive end, Res);
         {error, Reason} ->
             throw({error, Reason})
     end.
