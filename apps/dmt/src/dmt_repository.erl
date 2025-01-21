@@ -130,10 +130,10 @@ update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
 update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
+            {ok, OG} = get_referenced_object_changes(Acc, Ref, ObjectID),
             #{
                 referenced_by := RefdBy0
-            } = OG = get_referenced_object_changes(Acc, Ref, ObjectID),
-
+            } = OG,
             Acc#{
                 Ref =>
                     OG#{
@@ -148,9 +148,10 @@ update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
 update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
+            {ok, OG} = get_referenced_object_changes(Acc, Ref, ObjectID),
             #{
                 referenced_by := RefdBy0
-            } = OG = get_referenced_object_changes(Acc, Ref, ObjectID),
+            } = OG,
             RefdBy1 = ordsets:from_list(RefdBy0),
             RefdBy2 = ordsets:del_element(ObjectID, RefdBy1),
             Acc#{
