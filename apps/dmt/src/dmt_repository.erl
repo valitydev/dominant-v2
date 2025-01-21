@@ -176,7 +176,7 @@ get_referenced_object_changes(Worker, Updates, ReferencedRef, OriginalRef) ->
 get_original_object_changes(Worker, Updates, Ref) ->
     case Updates of
         #{Ref := Object} ->
-            Object;
+            {ok, Object};
         _ ->
             case get_latest_target_object(Worker, Ref) of
                 {ok, Res} ->
