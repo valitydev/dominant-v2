@@ -2,6 +2,8 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
+-define(EPGPOOL, default_pool).
+
 -export([handle_function/4]).
 
 handle_function(Function, Args, WoodyContext0, Options) ->
@@ -14,7 +16,7 @@ default_handling_timeout(#{default_handling_timeout := Timeout}) ->
 
 do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options) ->
     %% Fetch the object based on VersionReference and Reference
-    case dmt_repository:get_object(VersionRef, ObjectRef) of
+    case dmt_repository:get_object(?EPGPOOL, VersionRef, ObjectRef) of
         {ok, Object} ->
             {ok, Object};
         {error, global_version_not_found} ->

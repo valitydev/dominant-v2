@@ -6,15 +6,15 @@
 %% API
 
 -export([commit/3]).
--export([get_object/2]).
+-export([get_object/3]).
 -export([get_latest_global_version/0]).
 -export([get_local_versions/3]).
 -export([get_global_versions/2]).
 
 %%
 
-get_object({version, V}, ObjectRef) ->
-    case get_target_object(ObjectRef, V) of
+get_object(Worker, {version, V}, ObjectRef) ->
+    case get_target_object(Worker, ObjectRef, V) of
         {ok, #{
             global_version := GlobalVersion,
             data := Data,
@@ -31,8 +31,8 @@ get_object({version, V}, ObjectRef) ->
         {error, Reason} ->
             {error, Reason}
     end;
-get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
-    case get_latest_target_object(ObjectRef) of
+get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
+    case get_latest_target_object(Worker, ObjectRef) of
         {ok, #{
             global_version := GlobalVersion,
             data := Data,
@@ -71,11 +71,11 @@ get_local_versions(_Ref, _Limit, _ContinuationToken) ->
 get_global_versions(_Limit, _ContinuationToken) ->
     not_impl.
 
-assemble_operations(Commit) ->
+assemble_operations(Worker, Commit) ->
     try
         lists:foldl(
             fun assemble_operations_/2,
-            {[], #{}, []},
+            {Worker, [], #{}, []},
             Commit#domain_conf_v2_Commit.ops
         )
     catch
@@ -85,7 +85,7 @@ assemble_operations(Commit) ->
 
 assemble_operations_(
     Operation,
-    {InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
+    {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
@@ -95,23 +95,23 @@ assemble_operations_(
                 references := Refers
             } = NewObject,
 
-            Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
-            {[NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
+            Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
+            {Worker, [NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
         {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
-            {ok, Changes} = get_original_object_changes(UpdatesAcc, Ref),
+            {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
             {ok, ObjectUpdate} = dmt_object:update_object(UpdateOp, Changes),
-            UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
-            {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
+            UpdatesAcc1 = update_referenced_objects(Worker, Changes, ObjectUpdate, UpdatesAcc),
+            {Worker, InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
-            {ok, OG} = get_original_object_changes(UpdatesAcc, Ref),
+            {ok, OG} = get_original_object_changes(Worker, UpdatesAcc, Ref),
             #{references := OriginalReferences} = OG,
-            UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
+            UpdatesAcc1 = update_objects_removed_refs(Worker, Ref, OriginalReferences, UpdatesAcc),
 
             NewObjectState = dmt_object:remove_object(OG),
-            {InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
+            {Worker, InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
     end.
 
-update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
+update_referenced_objects(Worker, OriginalObjectChanges, ObjectChanges, Updates) ->
     #{
         id := ObjectID,
         type := ObjectType,
@@ -124,13 +124,13 @@ update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
     AddedRefs = ordsets:subtract(NVRS, ORS),
     RemovedRefs = ordsets:subtract(ORS, NVRS),
 
-    Updates1 = update_objects_added_refs(ObjectRef, AddedRefs, Updates),
-    update_objects_removed_refs(ObjectRef, RemovedRefs, Updates1).
+    Updates1 = update_objects_added_refs(Worker, ObjectRef, AddedRefs, Updates),
+    update_objects_removed_refs(Worker, ObjectRef, RemovedRefs, Updates1).
 
-update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
+update_objects_added_refs(Worker, ObjectID, AddedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
-            {ok, OG} = get_referenced_object_changes(Acc, Ref, ObjectID),
+            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
             #{
                 referenced_by := RefdBy0
             } = OG,
@@ -145,10 +145,10 @@ update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
         AddedRefs
     ).
 
-update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
+update_objects_removed_refs(Worker, ObjectID, RemovedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
-            {ok, OG} = get_referenced_object_changes(Acc, Ref, ObjectID),
+            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
             #{
                 referenced_by := RefdBy0
             } = OG,
@@ -165,8 +165,8 @@ update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
         RemovedRefs
     ).
 
-get_referenced_object_changes(Updates, ReferencedRef, OriginalRef) ->
-    try get_original_object_changes(Updates, ReferencedRef) of
+get_referenced_object_changes(Worker, Updates, ReferencedRef, OriginalRef) ->
+    try get_original_object_changes(Worker, Updates, ReferencedRef) of
         {ok, Object} ->
             {ok, Object}
     catch
@@ -178,12 +178,12 @@ get_referenced_object_changes(Updates, ReferencedRef, OriginalRef) ->
             throw(Error)
     end.
 
-get_original_object_changes(Updates, Ref) ->
+get_original_object_changes(Worker, Updates, Ref) ->
     case Updates of
         #{Ref := Object} ->
             Object;
         _ ->
-            case get_latest_target_object(Ref) of
+            case get_latest_target_object(Worker, Ref) of
                 {ok, Res} ->
                     {Type, _} = Ref,
                     {ok, Res#{
@@ -195,12 +195,12 @@ get_original_object_changes(Updates, Ref) ->
     end.
 
 commit(Version, Commit, CreatedBy) ->
-    {InsertObjects, UpdateObjects0, ChangedObjectIds} = assemble_operations(Commit),
-
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
             try
+                {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds} =
+                    assemble_operations(Worker, Commit),
                 ok = check_versions_sql(Worker, ChangedObjectIds, Version),
                 NewVersion = get_new_version(Worker, CreatedBy),
                 PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
@@ -213,7 +213,7 @@ commit(Version, Commit, CreatedBy) ->
                         "Class:ExceptionPattern:Stacktrace ~p:~p:~p~n",
                         [Class, ExceptionPattern, Stacktrace]
                     ),
-                    error(ExceptionPattern)
+                    ExceptionPattern
             end
         end
     ),
@@ -546,9 +546,6 @@ get_target_objects(Worker, Refs, Version) ->
         Refs
     ).
 
-get_target_object(Ref, Version) ->
-    get_target_object(default_pool, Ref, Version).
-
 get_target_object(Worker, Ref, Version) ->
     % First check if the version exists
     case check_version_exists(Worker, Version) of
@@ -600,7 +597,7 @@ fetch_object(Worker, Ref, Version) ->
             {ok, Result}
     end.
 
-get_latest_target_object(Ref) ->
+get_latest_target_object(Worker, Ref) ->
     {Type, ID} = Ref,
     ID0 = to_string(ID),
     Request = io_lib:format("""
@@ -616,7 +613,7 @@ get_latest_target_object(Ref) ->
     ORDER BY global_version DESC
     LIMIT 1
     """, [Type]),
-    case epg_pool:query(default_pool, Request, [ID0]) of
+    case epg_pool:query(Worker, Request, [ID0]) of
         {ok, _Columns, []} ->
             {error, {object_not_found, Ref}};
         {ok, Columns, Rows} ->
