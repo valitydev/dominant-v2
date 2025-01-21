@@ -72,16 +72,11 @@ get_global_versions(_Limit, _ContinuationToken) ->
     not_impl.
 
 assemble_operations(Worker, Commit) ->
-    try
-        lists:foldl(
-            fun assemble_operations_/2,
-            {Worker, [], #{}, []},
-            Commit#domain_conf_v2_Commit.ops
-        )
-    catch
-        {error, Error} ->
-            {error, Error}
-    end.
+    lists:foldl(
+        fun assemble_operations_/2,
+        {Worker, [], #{}, []},
+        Commit#domain_conf_v2_Commit.ops
+    ).
 
 assemble_operations_(
     Operation,
