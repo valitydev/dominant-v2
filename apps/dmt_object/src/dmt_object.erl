@@ -55,7 +55,9 @@ new_object(#domain_conf_v2_InsertOp{
                 tmp_id => uuid:get_v4_urandom(),
                 type => Type,
                 forced_id => ForcedRef,
-                references => list_term_to_binary(dmt_object_reference:refless_object_references(NewObject)),
+                references => list_term_to_binary(
+                    dmt_object_reference:refless_object_references(NewObject)
+                ),
                 data => NewObject
             }};
         {error, Error} ->
@@ -77,7 +79,9 @@ update_object(
             type => Type,
             %%          NOTE this will just provide all the refs that already exist,
             %%          it doesn't give us diff, but maybe it's not needed
-            references => dmt_object_reference:domain_object_references(NewObject),
+            references => list_term_to_binary(
+                dmt_object_reference:domain_object_references(NewObject)
+            ),
             data => NewObject
         }}
     end.

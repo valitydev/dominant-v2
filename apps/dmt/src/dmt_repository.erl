@@ -394,6 +394,7 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
             ok;
         {error, Reason} ->
             logger:error("Query ~s~n Params ~p~n", [Query, Params]),
+            logger:error("References1: ~p", [References1]),
             throw({error, Reason})
     end.
 
