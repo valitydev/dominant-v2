@@ -665,7 +665,7 @@ marshall_object(#{
 
 to_string(A0) ->
     A1 = term_to_binary(A0),
-    base64:encode_to_string(A1).
+    base64:encode(A1).
 
 from_string(B0) ->
     B1 = base64:decode(B0),
