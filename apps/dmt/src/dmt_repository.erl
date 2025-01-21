@@ -389,11 +389,11 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
             VALUES ($1, $2, $3, $4, $5, $6);
         """, [Type]),
     Params = [ID1, Version, References1, ReferencedBy1, Data1, IsActive],
-    logger:error("Query ~p~n Params ~p~n", [Query, Params]),
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
             ok;
         {error, Reason} ->
+            logger:error("Query ~s~n Params ~p~n", [Query, Params]),
             throw({error, Reason})
     end.
 
