@@ -98,14 +98,13 @@ assemble_operations_(
             Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
             {[NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
         {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
-            Changes = get_original_object_changes(UpdatesAcc, Ref),
+            {ok, Changes} = get_original_object_changes(UpdatesAcc, Ref),
             {ok, ObjectUpdate} = dmt_object:update_object(UpdateOp, Changes),
             UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
             {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
-            #{
-                references := OriginalReferences
-            } = OG = get_original_object_changes(UpdatesAcc, Ref),
+            {ok, OG} = get_original_object_changes(UpdatesAcc, Ref),
+            #{references := OriginalReferences} = OG,
             UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
 
             NewObjectState = dmt_object:remove_object(OG),
@@ -133,7 +132,7 @@ update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
         fun(Ref, Acc) ->
             #{
                 referenced_by := RefdBy0
-            } = OG = get_original_object_changes(Acc, Ref),
+            } = OG = get_referenced_object_changes(Acc, Ref, ObjectID),
 
             Acc#{
                 Ref =>
@@ -151,7 +150,7 @@ update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
         fun(Ref, Acc) ->
             #{
                 referenced_by := RefdBy0
-            } = OG = get_original_object_changes(Acc, Ref),
+            } = OG = get_referenced_object_changes(Acc, Ref, ObjectID),
             RefdBy1 = ordsets:from_list(RefdBy0),
             RefdBy2 = ordsets:del_element(ObjectID, RefdBy1),
             Acc#{
@@ -165,16 +164,33 @@ update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
         RemovedRefs
     ).
 
+get_referenced_object_changes(Updates, ReferencedRef, OriginalRef) ->
+    try get_original_object_changes(Updates, ReferencedRef) of
+        {ok, Object} ->
+            {ok, Object}
+    catch
+        throw:{error, {operation_error, {conflict, {object_not_found, Ref}}}} = Error ->
+            logger:error(
+                "get_referenced_object_changes ReferencedRef ~p OriginalRef ~p",
+                [Ref, OriginalRef]
+            ),
+            throw(Error)
+    end.
+
 get_original_object_changes(Updates, Ref) ->
     case Updates of
         #{Ref := Object} ->
             Object;
         _ ->
-            {ok, Res} = get_latest_target_object(Ref),
-            {Type, _} = Ref,
-            Res#{
-                type => Type
-            }
+            case get_latest_target_object(Ref) of
+                {ok, Res} ->
+                    {Type, _} = Ref,
+                    {ok, Res#{
+                        type => Type
+                    }};
+                {error, {object_not_found, Ref}} ->
+                    throw({error, {operation_error, {conflict, {object_not_found, Ref}}}})
+            end
     end.
 
 commit(Version, Commit, CreatedBy) ->
@@ -393,8 +409,6 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
         {ok, 1} ->
             ok;
         {error, Reason} ->
-            logger:error("Query ~s~n Params ~p~n", [Query, Params]),
-            io:format("References1: ~p", [References1]),
             throw({error, Reason})
     end.
 

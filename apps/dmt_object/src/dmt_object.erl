@@ -123,9 +123,6 @@ check_domain_object_refs({Type, Ref}, {Type, {_Object, Ref, _Data}}) ->
 check_domain_object_refs(Ref, Object) ->
     {error, {reference_mismatch, Ref, Object}}.
 
-list_term_to_binary(Terms) ->
-    lists:map(fun(Term) -> term_to_binary(Term) end, Terms).
-
 get_type_by_id({Type, _}) ->
     Type;
 get_type_by_id({Type}) ->
