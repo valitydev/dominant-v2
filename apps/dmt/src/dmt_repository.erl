@@ -488,14 +488,14 @@ check_if_id_exists(Worker, ID0, Type0) ->
     Query = io_lib:format("""
     SELECT id
     FROM ~p
-    WHERE id = $1;
+    WHERE id = $1
+    LIMIT 1;
     """, [Type0]),
     ID1 = to_string(ID0),
     case epg_pool:query(Worker, Query, [ID1]) of
         {ok, _Columns, []} ->
             false;
-        {ok, _Columns, [{ReturnID} | _]} ->
-            ID1 = binary_to_list(ReturnID),
+        {ok, _Columns, [{ID1}]} ->
             true;
         {error, Reason} ->
             throw({error, Reason})
