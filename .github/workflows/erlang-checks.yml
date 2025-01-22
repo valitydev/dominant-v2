@@ -3,10 +3,10 @@ name: Erlang CI Checks
 on:
   push:
     branches:
-      - 'master'
-      - 'epic/**'
+      - "master"
+      - "epic/**"
   pull_request:
-    branches: ['**']
+    branches: ["**"]
 
 jobs:
   setup:
@@ -30,7 +30,7 @@ jobs:
   run:
     name: Run checks
     needs: setup
-    uses: valitydev/erlang-workflows/.github/workflows/erlang-parallel-build.yml@v1.0.15
+    uses: valitydev/erlang-workflows/.github/workflows/erlang-parallel-build.yml@v1.0.16
     with:
       otp-version: ${{ needs.setup.outputs.otp-version }}
       rebar-version: ${{ needs.setup.outputs.rebar-version }}
