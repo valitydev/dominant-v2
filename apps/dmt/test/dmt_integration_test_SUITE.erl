@@ -16,12 +16,12 @@
 ]).
 
 -export([
-    %%    UserOpManagement Tests
-    create_user_op_test/1,
-    get_user_op_test/1,
-    delete_user_op_test/1,
-    delete_nonexistant_user_op_test/1,
-    create_user_op_email_duplicate_test/1
+    %%    AuthorManagement Tests
+    create_author_test/1,
+    get_author_test/1,
+    delete_author_test/1,
+    delete_nonexistant_author_test/1,
+    create_author_email_duplicate_test/1
 ]).
 
 -export([
@@ -30,7 +30,7 @@
     insert_object_sequence_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
     update_object_success_test/1,
-    get_latest_global_version_test/1
+    get_latest_version_test/1
 ]).
 
 -export([
@@ -53,7 +53,7 @@ end_per_suite(_Config) ->
 %% Define all test cases
 all() ->
     [
-        {group, user_op_tests},
+        {group, author_tests},
         {group, repository_tests}
         %%        {group, repository_client_tests}
     ].
@@ -61,19 +61,19 @@ all() ->
 %% Define test groups
 groups() ->
     [
-        {user_op_tests, [parallel], [
-            create_user_op_test,
-            get_user_op_test,
-            delete_user_op_test,
-            delete_nonexistant_user_op_test,
-            create_user_op_email_duplicate_test
+        {author_tests, [parallel], [
+            create_author_test,
+            get_author_test,
+            delete_author_test,
+            delete_nonexistant_author_test,
+            create_author_email_duplicate_test
         ]},
         {repository_tests, [], [
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
             insert_remove_referencing_object_success_test,
             update_object_success_test,
-            get_latest_global_version_test
+            get_latest_version_test
         ]},
         {repository_client_tests, [], []}
     ].
@@ -81,7 +81,7 @@ groups() ->
 init_per_group(repository_client_tests, C) ->
     Client = dmt_ct_helper:cfg(client, C),
     [
-        {user_op_id, create_user_op(<<"repository_client_tests@tests">>, Client)}
+        {author_id, create_author(<<"repository_client_tests@tests">>, Client)}
         | C
     ];
 init_per_group(_, C) ->
@@ -96,61 +96,61 @@ end_per_testcase(_, _C) ->
 
 %% Test Cases
 
-%% UserOpManagement Tests
+%% AuthorManagement Tests
 
-create_user_op_test(Config) ->
+create_author_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
-    UserOpParams = #domain_conf_v2_UserOpParams{
-        email = <<"create_user_op_test@test">>,
+    AuthorParams = #domain_conf_v2_AuthorParams{
+        email = <<"create_author_test@test">>,
         name = <<"some_name">>
     },
 
-    {ok, _} = dmt_client:create_user_op(UserOpParams, Client).
+    {ok, _} = dmt_client:create_author(AuthorParams, Client).
 
-get_user_op_test(Config) ->
+get_author_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-    Email = <<"get_user_op_test">>,
-    UserOpID = create_user_op(Email, Client),
-    {ok, #domain_conf_v2_UserOp{
+    Email = <<"get_author_test">>,
+    AuthorID = create_author(Email, Client),
+    {ok, #domain_conf_v2_Author{
         email = Email1
-    }} = dmt_client:get_user_op(UserOpID, Client),
+    }} = dmt_client:get_author(AuthorID, Client),
     ?assertEqual(Email, Email1).
 
-delete_user_op_test(Config) ->
+delete_author_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-    Email = <<"delete_user_op_test">>,
-    UserOpID = create_user_op(Email, Client),
-    {ok, ok} = dmt_client:delete_user_op(UserOpID, Client),
-    {exception, #domain_conf_v2_UserOpNotFound{}} =
-        dmt_client:get_user_op(UserOpID, Client).
+    Email = <<"delete_author_test">>,
+    AuthorID = create_author(Email, Client),
+    {ok, ok} = dmt_client:delete_author(AuthorID, Client),
+    {exception, #domain_conf_v2_AuthorNotFound{}} =
+        dmt_client:get_author(AuthorID, Client).
 
-delete_nonexistant_user_op_test(Config) ->
+delete_nonexistant_author_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
     % some string
-    {exception, #domain_conf_v2_UserOpNotFound{}} =
-        dmt_client:delete_user_op(<<"nonexistant_id">>, Client),
+    {exception, #domain_conf_v2_AuthorNotFound{}} =
+        dmt_client:delete_author(<<"nonexistant_id">>, Client),
     % unknown uuid
-    {exception, #domain_conf_v2_UserOpNotFound{}} =
-        dmt_client:delete_user_op(uuid:get_v4(), Client).
+    {exception, #domain_conf_v2_AuthorNotFound{}} =
+        dmt_client:delete_author(uuid:get_v4(), Client).
 
-create_user_op_email_duplicate_test(Config) ->
+create_author_email_duplicate_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
-    UserOpParams1 = #domain_conf_v2_UserOpParams{
-        email = <<"create_user_op_email_duplicate_test@test">>,
+    AuthorParams1 = #domain_conf_v2_AuthorParams{
+        email = <<"create_author_email_duplicate_test@test">>,
         name = <<"some_name">>
     },
 
-    UserOpParams2 = #domain_conf_v2_UserOpParams{
-        email = <<"create_user_op_email_duplicate_test@test">>,
+    AuthorParams2 = #domain_conf_v2_AuthorParams{
+        email = <<"create_author_email_duplicate_test@test">>,
         name = <<"different name">>
     },
 
-    {ok, _} = dmt_client:create_user_op(UserOpParams1, Client),
-    {exception, #domain_conf_v2_UserAlreadyExists{}} =
-        dmt_client:create_user_op(UserOpParams2, Client).
+    {ok, _} = dmt_client:create_author(AuthorParams1, Client),
+    {exception, #domain_conf_v2_AuthorAlreadyExists{}} =
+        dmt_client:create_author(AuthorParams2, Client).
 
 %% Repository tests
 
@@ -158,22 +158,20 @@ insert_remove_referencing_object_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
     Email = <<"insert_remove_referencing_object_success_test">>,
-    UserOpID = create_user_op(Email, Client),
+    AuthorID = create_author(Email, Client),
 
     Revision1 = 0,
-    Commit1 = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {proxy, #domain_ProxyDefinition{
-                        name = <<"proxy">>,
-                        description = <<"proxy_description">>,
-                        url = <<"http://someurl">>,
-                        options = #{}
-                    }}
-            }}
-        ]
-    },
+    Operations1 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"proxy">>,
+                    description = <<"proxy_description">>,
+                    url = <<"http://someurl">>,
+                    options = #{}
+                }}
+        }}
+    ],
     {ok, #domain_conf_v2_CommitResponse{
         version = Revision2,
         new_objects = [
@@ -181,23 +179,21 @@ insert_remove_referencing_object_success_test(Config) ->
                 ref = ProxyRef
             }}
         ]
-    }} = dmt_client:commit(Revision1, Commit1, UserOpID, Client),
+    }} = dmt_client:commit(Revision1, Operations1, AuthorID, Client),
 
-    Commit2 = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {provider, #domain_Provider{
-                        name = <<"name">>,
-                        description = <<"description">>,
-                        proxy = #domain_Proxy{
-                            ref = ProxyRef,
-                            additional = #{}
-                        }
-                    }}
-            }}
-        ]
-    },
+    Operations2 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"name">>,
+                    description = <<"description">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }}
+        }}
+    ],
 
     {ok, #domain_conf_v2_CommitResponse{
         version = Revision3,
@@ -206,18 +202,16 @@ insert_remove_referencing_object_success_test(Config) ->
                 ref = _ProviderRef
             }}
         ]
-    }} = dmt_client:commit(Revision2, Commit2, UserOpID, Client),
+    }} = dmt_client:commit(Revision2, Operations2, AuthorID, Client),
 
     %%  try to remove proxy
-    Commit3 = #domain_conf_v2_Commit{
-        ops = [
-            {remove, #domain_conf_v2_RemoveOp{
-                ref = {proxy, ProxyRef}
-            }}
-        ]
-    },
+    Operations3 = [
+        {remove, #domain_conf_v2_RemoveOp{
+            ref = {proxy, ProxyRef}
+        }}
+    ],
 
-    {ok, _} = dmt_client:commit(Revision3, Commit3, UserOpID, Client).
+    {ok, _} = dmt_client:commit(Revision3, Operations3, AuthorID, Client).
 
 %% FIXME reference collecting doesn't work. Need to fix ASAP
 
@@ -232,17 +226,17 @@ insert_remove_referencing_object_success_test(Config) ->
 %%    },
 %%    {ok, #domain_conf_v2_CommitResponse{
 %%        version = Revision4
-%%    }} = dmt_client:commit(Revision3, Commit4, UserOpID, Client),
+%%    }} = dmt_client:commit(Revision3, Commit4, AuthorID, Client),
 %%
 %%%%  try to remove proxy again
 %%    {ok, #domain_conf_v2_CommitResponse{}} =
-%%        dmt_client:commit(Revision4, Commit3, UserOpID, Client).
+%%        dmt_client:commit(Revision4, Commit3, AuthorID, Client).
 
 insert_object_sequence_id_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
     Email = <<"insert_object_sequence_id_success_test">>,
-    UserOpID = create_user_op(Email, Client),
+    AuthorID = create_author(Email, Client),
 
     %% Insert a test object
     Revision = 0,
@@ -250,16 +244,14 @@ insert_object_sequence_id_success_test(Config) ->
         name = <<"name1">>,
         description = <<"description1">>
     },
-    Commit = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object = {category, Category}
-            }},
-            {insert, #domain_conf_v2_InsertOp{
-                object = {category, Category}
-            }}
-        ]
-    },
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object = {category, Category}
+        }},
+        {insert, #domain_conf_v2_InsertOp{
+            object = {category, Category}
+        }}
+    ],
 
     {ok, #domain_conf_v2_CommitResponse{
         new_objects = [
@@ -270,7 +262,7 @@ insert_object_sequence_id_success_test(Config) ->
                 ref = #domain_CategoryRef{id = ID2}
             }}
         ]
-    }} = dmt_client:commit(Revision, Commit, UserOpID, Client),
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
 
     ?assertMatch(true, is_in_sequence(ID1, ID2)).
 
@@ -286,7 +278,7 @@ insert_object_forced_id_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
     Email = <<"insert_object_forced_id_success_test">>,
-    UserOpID = create_user_op(Email, Client),
+    AuthorID = create_author(Email, Client),
 
     %% Insert a test object
     Revision = 0,
@@ -296,19 +288,17 @@ insert_object_forced_id_success_test(Config) ->
         name = <<"name">>,
         description = <<"description">>
     },
-    Commit = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {category, Category},
-                force_ref = ForcedRef
-            }}
-        ]
-    },
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, Category},
+            force_ref = ForcedRef
+        }}
+    ],
 
     {ok, #domain_conf_v2_CommitResponse{
         new_objects = NewObjectsSet
-    }} = dmt_client:commit(Revision, Commit, UserOpID, Client),
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
 
     [
         {category, #domain_CategoryObject{
@@ -322,22 +312,20 @@ update_object_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
     Email = <<"insert_remove_referencing_object_success_test">>,
-    UserOpID = create_user_op(Email, Client),
+    AuthorID = create_author(Email, Client),
 
     Revision1 = 0,
-    Commit1 = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {proxy, #domain_ProxyDefinition{
-                        name = <<"proxy">>,
-                        description = <<"proxy_description">>,
-                        url = <<"http://someurl">>,
-                        options = #{}
-                    }}
-            }}
-        ]
-    },
+    Operations1 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"proxy">>,
+                    description = <<"proxy_description">>,
+                    url = <<"http://someurl">>,
+                    options = #{}
+                }}
+        }}
+    ],
     {ok, #domain_conf_v2_CommitResponse{
         version = Revision2,
         new_objects = [
@@ -345,7 +333,7 @@ update_object_success_test(Config) ->
                 ref = ProxyRef
             }}
         ]
-    }} = dmt_client:commit(Revision1, Commit1, UserOpID, Client),
+    }} = dmt_client:commit(Revision1, Operations1, AuthorID, Client),
 
     NewObject =
         {proxy, #domain_ProxyObject{
@@ -358,18 +346,15 @@ update_object_success_test(Config) ->
             }
         }},
 
-    Commit2 = #domain_conf_v2_Commit{
-        ops = [
-            {update, #domain_conf_v2_UpdateOp{
-                targeted_ref = {proxy, ProxyRef},
-                new_object = NewObject
-            }}
-        ]
-    },
+    Operations2 = [
+        {update, #domain_conf_v2_UpdateOp{
+            object = NewObject
+        }}
+    ],
 
     {ok, #domain_conf_v2_CommitResponse{
         version = Revision3
-    }} = dmt_client:commit(Revision2, Commit2, UserOpID, Client),
+    }} = dmt_client:commit(Revision2, Operations2, AuthorID, Client),
 
     {ok, #domain_conf_v2_VersionedObject{
         object = NewObject
@@ -377,31 +362,29 @@ update_object_success_test(Config) ->
 
 %% RepositoryClient Tests
 
-get_latest_global_version_test(Config) ->
+get_latest_version_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-    Email = <<"get_latest_global_version_test">>,
-    UserOpID = create_user_op(Email, Client),
+    Email = <<"get_latest_version_test">>,
+    AuthorID = create_author(Email, Client),
 
-    {ok, Revision0} = dmt_client:get_latest_global_version(Client),
+    {ok, Revision0} = dmt_client:get_latest_version(Client),
     ?assertEqual(0, Revision0),
 
-    Commit = #domain_conf_v2_Commit{
-        ops = [
-            {insert, #domain_conf_v2_InsertOp{
-                object =
-                    {category, #domain_Category{
-                        name = <<"name">>,
-                        description = <<"description">>
-                    }}
-            }}
-        ]
-    },
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"name">>,
+                    description = <<"description">>
+                }}
+        }}
+    ],
 
     {ok, #domain_conf_v2_CommitResponse{
         version = Revision1
-    }} = dmt_client:commit(Revision0, Commit, UserOpID, Client),
+    }} = dmt_client:commit(Revision0, Operations, AuthorID, Client),
 
-    {ok, Revision2} = dmt_client:get_latest_global_version(Client),
+    {ok, Revision2} = dmt_client:get_latest_version(Client),
     ?assertEqual(Revision2, Revision1),
     ?assertEqual(1, Revision1).
 
@@ -409,14 +392,13 @@ get_latest_global_version_test(Config) ->
 
 %% GetGlobalVersions
 
-create_user_op(Email, Client) ->
-    %%  Create UserOp
-    UserOpParams = #domain_conf_v2_UserOpParams{
+create_author(Email, Client) ->
+    AuthorParams = #domain_conf_v2_AuthorParams{
         email = Email,
         name = <<"some_name">>
     },
 
-    {ok, #domain_conf_v2_UserOp{
-        id = UserOpID
-    }} = dmt_client:create_user_op(UserOpParams, Client),
-    UserOpID.
+    {ok, #domain_conf_v2_Author{
+        id = AuthorID
+    }} = dmt_client:create_author(AuthorParams, Client),
+    AuthorID.

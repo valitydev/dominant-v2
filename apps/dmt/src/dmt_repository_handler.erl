@@ -10,8 +10,8 @@ handle_function(Function, Args, WoodyContext0, Options) ->
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
-do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) ->
-    case dmt_repository:commit(Version, Commit, CreatedBy) of
+do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options) ->
+    case dmt_repository:commit(Version, Operations, AuthorID) of
         {ok, NextVersion, NewObjects} ->
             {ok, #domain_conf_v2_CommitResponse{
                 version = NextVersion,
@@ -25,6 +25,14 @@ do_handle_function('Commit', {Version, Commit, CreatedBy}, _Context, _Options) -
             woody_error:raise(business, #domain_conf_v2_ObsoleteCommitVersion{latest_version = LatestVersion});
         {error, migration_in_progress} ->
             woody_error:raise(system, {internal, resource_unavailable, <<"Migration in progress. Please, stand by.">>})
+    end;
+do_handle_function('GetLatestVersion', _, _Context, _Options) ->
+    %% Fetch the object based on VersionReference and Reference
+    case dmt_repository:get_latest_version() of
+        {ok, Version} ->
+            {ok, Version};
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
     end.
 
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->

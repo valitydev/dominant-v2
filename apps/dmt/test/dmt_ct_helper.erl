@@ -54,8 +54,8 @@ start_app(dmt = AppName) ->
                 repository_client => #{
                     url => <<"http://dmt:8022/v1/domain/repository_client">>
                 },
-                user_op => #{
-                    url => <<"http://dmt:8022/v1/domain/user_op">>
+                author => #{
+                    url => <<"http://dmt:8022/v1/domain/author">>
                 }
             }}
         ]),
@@ -78,7 +78,7 @@ start_app(epg_connector = AppName) ->
                     database => default_db,
                     size => 10
                 },
-                user_op_pool => #{
+                author_pool => #{
                     database => default_db,
                     size => 10
                 }

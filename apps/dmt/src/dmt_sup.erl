@@ -102,8 +102,8 @@ get_repository_handlers() ->
             repository => dmt_repository_client_handler,
             default_handling_timeout => DefaultTimeout
         }),
-        get_handler(user_op, #{
-            repository => dmt_user_op_handler,
+        get_handler(author, #{
+            repository => dmt_author_handler,
             default_handling_timeout => DefaultTimeout
         })
     ].
@@ -120,18 +120,18 @@ get_handler(repository_client, Options) ->
         get_service(repository_client),
         {dmt_repository_client_handler, Options}
     }};
-get_handler(user_op, Options) ->
-    {"/v1/domain/user_op", {
-        get_service(user_op),
-        {dmt_user_op_handler, Options}
+get_handler(author, Options) ->
+    {"/v1/domain/author", {
+        get_service(author),
+        {dmt_author_handler, Options}
     }}.
 
 get_service(repository) ->
     {dmsl_domain_conf_v2_thrift, 'Repository'};
 get_service(repository_client) ->
     {dmsl_domain_conf_v2_thrift, 'RepositoryClient'};
-get_service(user_op) ->
-    {dmsl_domain_conf_v2_thrift, 'UserOpManagement'}.
+get_service(author) ->
+    {dmsl_domain_conf_v2_thrift, 'AuthorManagement'}.
 
 -spec enable_health_logging(erl_health:check()) -> erl_health:check().
 enable_health_logging(Check) ->

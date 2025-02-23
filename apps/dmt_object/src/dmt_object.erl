@@ -37,7 +37,7 @@
 -type object() :: #{
     id := object_id(),
     type := object_type(),
-    global_version := string(),
+    version := string(),
     references := [{object_type(), object_id()}],
     referenced_by := [{object_type(), object_id()}],
     data := binary(),
@@ -64,23 +64,20 @@ new_object(#domain_conf_v2_InsertOp{
     end.
 
 update_object(
-    #domain_conf_v2_UpdateOp{
-        targeted_ref = {_, ID} = TargetedRef,
-        new_object = NewObject
-    },
+    Object,
     ExistingUpdate
 ) ->
     maybe
-        {ok, Type} ?= get_checked_type(TargetedRef, NewObject),
-        ok ?= check_domain_object_refs(TargetedRef, NewObject),
+        {ok, Type} ?= get_object_type(Object),
+        {ok, ID} ?= get_object_ref(Object),
         {ok, ExistingUpdate#{
             id => ID,
             type => Type,
             %%          NOTE this will just provide all the refs that already exist,
             %%          it doesn't give us diff, but maybe it's not needed
             references =>
-                dmt_object_reference:domain_object_references(NewObject),
-            data => NewObject
+                dmt_object_reference:domain_object_references(Object),
+            data => Object
         }}
     end.
 
@@ -103,7 +100,7 @@ just_object(
     #{
         id => ID,
         type => Type,
-        global_version => Version,
+        version => Version,
         references => ReferencesTo,
         referenced_by => ReferencedBy,
         data => Data,
@@ -118,10 +115,15 @@ get_checked_type({Type, _}, {Type, _}) ->
 get_checked_type(Ref, Object) ->
     {error, {type_mismatch, Ref, Object}}.
 
-check_domain_object_refs({Type, Ref}, {Type, {_Object, Ref, _Data}}) ->
-    ok;
-check_domain_object_refs(Ref, Object) ->
-    {error, {reference_mismatch, Ref, Object}}.
+get_object_type({Type, {_Object, _Ref, _Data}}) ->
+    {ok, Type};
+get_object_type(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
+
+get_object_ref({Type, {_Object, ID, _Data}}) ->
+    {ok, {Type, ID}};
+get_object_ref(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
 
 get_type_by_id({Type, _}) ->
     Type;

@@ -7,26 +7,27 @@
 
 -export([commit/3]).
 -export([get_object/3]).
--export([get_latest_global_version/0]).
--export([get_local_versions/3]).
--export([get_global_versions/2]).
+-export([get_latest_version/0]).
 
 %%
 
 get_object(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{
-            global_version := GlobalVersion,
+            version := Version,
             data := Data,
-            created_at := CreatedAt
+            created_at := CreatedAt,
+            created_by := CreatedBy
         }} ->
             % io:format("get_object Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
-                global_version = GlobalVersion,
-                %% TODO implement local versions
-                local_version = 0,
-                object = Data,
-                created_at = CreatedAt
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    version = Version,
+                    ref = ObjectRef,
+                    changed_at = CreatedAt,
+                    changed_by = CreatedBy
+                },
+                object = Data
             }};
         {error, Reason} ->
             {error, Reason}
@@ -34,25 +35,28 @@ get_object(Worker, {version, V}, ObjectRef) ->
 get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
     case get_latest_target_object(Worker, ObjectRef) of
         {ok, #{
-            global_version := GlobalVersion,
+            version := Version,
             data := Data,
-            created_at := CreatedAt
+            created_at := CreatedAt,
+            created_by := CreatedBy
         }} ->
             {ok, #domain_conf_v2_VersionedObject{
-                global_version = GlobalVersion,
-                %% TODO implement local versions
-                local_version = 0,
-                object = Data,
-                created_at = CreatedAt
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    version = Version,
+                    ref = ObjectRef,
+                    changed_at = CreatedAt,
+                    changed_by = CreatedBy
+                },
+                object = Data
             }};
         {error, Reason} ->
             {error, Reason}
     end.
 
-get_latest_global_version() ->
+get_latest_version() ->
     Query1 =
         """
-        SELECT MAX(version) FROM global_version;
+        SELECT MAX(version) FROM version;
         """,
     case epg_pool:query(default_pool, Query1) of
         {ok, _Columns, [{null}]} ->
@@ -63,19 +67,11 @@ get_latest_global_version() ->
             {error, Reason}
     end.
 
-%% Retrieve local versions with pagination
-get_local_versions(_Ref, _Limit, _ContinuationToken) ->
-    not_impl.
-
-%% Retrieve global versions with pagination
-get_global_versions(_Limit, _ContinuationToken) ->
-    not_impl.
-
-assemble_operations(Worker, Commit) ->
+assemble_operations(Worker, Operations) ->
     lists:foldl(
         fun assemble_operations_/2,
         {Worker, [], #{}, []},
-        Commit#domain_conf_v2_Commit.ops
+        Operations
     ).
 
 assemble_operations_(
@@ -92,9 +88,10 @@ assemble_operations_(
 
             Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
             {Worker, [NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
-        {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
+        {update, #domain_conf_v2_UpdateOp{object = Object}} ->
+            Ref = get_object_ref(Object),
             {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
-            {ok, ObjectUpdate} = dmt_object:update_object(UpdateOp, Changes),
+            {ok, ObjectUpdate} = dmt_object:update_object(Object, Changes),
             UpdatesAcc1 = update_referenced_objects(Worker, Changes, ObjectUpdate, UpdatesAcc),
             {Worker, InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
@@ -189,15 +186,15 @@ get_original_object_changes(Worker, Updates, Ref) ->
             end
     end.
 
-commit(Version, Commit, CreatedBy) ->
+commit(Version, Operations, AuthorID) ->
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
             try
                 {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds} =
-                    assemble_operations(Worker, Commit),
+                    assemble_operations(Worker, Operations),
                 ok = check_versions_sql(Worker, ChangedObjectIds, Version),
-                NewVersion = get_new_version(Worker, CreatedBy),
+                NewVersion = get_new_version(Worker, AuthorID),
                 PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
                 UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
                 ok = update_objects(Worker, UpdateObjects1, NewVersion),
@@ -264,10 +261,10 @@ check_versions_sql(Worker, ChangedObjectIds, Version) ->
             ChangedObjectRef1 = to_string(ChangedObjectRef0),
             Query0 =
                 io_lib:format("""
-                SELECT id, global_version
+                SELECT id, version
                 FROM ~p
                 WHERE id = $1
-                ORDER BY global_version DESC
+                ORDER BY version DESC
                 LIMIT 1
                 """, [ChangedObjectType]),
             case epg_pool:query(Worker, Query0, [ChangedObjectRef1]) of
@@ -285,13 +282,13 @@ check_versions_sql(Worker, ChangedObjectIds, Version) ->
     ),
     ok.
 
-get_new_version(Worker, CreatedBy) ->
+get_new_version(Worker, AuthorID) ->
     Query1 =
         """
-        INSERT INTO GLOBAL_VERSION (CREATED_BY)
+        INSERT INTO version (CREATED_BY)
         VALUES ($1::uuid) RETURNING version;
         """,
-    case epg_pool:query(Worker, Query1, [CreatedBy]) of
+    case epg_pool:query(Worker, Query1, [AuthorID]) of
         {ok, 1, _Columns, [{NewVersion}]} ->
             NewVersion;
         {error, Reason} ->
@@ -327,14 +324,14 @@ insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
             true ->
                 Query0 =
                     io_lib:format("""
-                    INSERT INTO ~p (id, global_version, references_to, referenced_by, data, is_active)
+                    INSERT INTO ~p (id, version, references_to, referenced_by, data, is_active)
                         VALUES ($1, $2, $3, $4, $5, TRUE);
                     """, [Type]),
                 {Query0, [ID1 | Params0]};
             false ->
                 Query1 =
                     io_lib:format("""
-                    INSERT INTO ~p (id, sequence, global_version, references_to, referenced_by, data, is_active)
+                    INSERT INTO ~p (id, sequence, version, references_to, referenced_by, data, is_active)
                         VALUES ($1, $2, $3, $4, $5, $6, TRUE);
                     """, [Type]),
                 {Query1, [ID1, Sequence | Params0]}
@@ -397,7 +394,7 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
     Query =
         io_lib:format("""
         INSERT INTO ~p
-        (id, global_version, references_to, referenced_by, data, is_active)
+        (id, version, references_to, referenced_by, data, is_active)
             VALUES ($1, $2, $3, $4, $5, $6);
         """, [Type]),
     Params = [ID1, Version, References1, ReferencedBy1, Data1, IsActive],
@@ -516,7 +513,7 @@ check_if_object_active(Worker, ID0, Type0) ->
     SELECT is_active
     FROM ~p
     WHERE id = $1
-    ORDER BY global_version DESC
+    ORDER BY version DESC
     LIMIT 1;
     """, [Type0]),
     ID1 = to_string(ID0),
@@ -547,7 +544,7 @@ get_target_object(Worker, Ref, Version) ->
         {ok, exists} ->
             fetch_object(Worker, Ref, Version);
         {ok, not_exists} ->
-            {error, global_version_not_found};
+            {error, version_not_found};
         Error ->
             Error
     end.
@@ -555,7 +552,7 @@ get_target_object(Worker, Ref, Version) ->
 check_version_exists(Worker, Version) ->
     VersionRequest = """
     SELECT 1
-    FROM global_version
+    FROM version
     WHERE version = $1
     LIMIT 1
     """,
@@ -573,15 +570,15 @@ fetch_object(Worker, Ref, Version) ->
     ID0 = to_string(ID),
     Request = io_lib:format("""
     SELECT id,
-           global_version,
+           version,
            references_to,
            referenced_by,
            data,
            is_active,
            created_at
     FROM ~p
-    WHERE id = $1 AND global_version <= $2
-    ORDER BY global_version DESC
+    WHERE id = $1 AND version <= $2
+    ORDER BY version DESC
     LIMIT 1
     """, [Type]),
     case epg_pool:query(Worker, Request, [ID0, Version]) of
@@ -597,7 +594,7 @@ get_latest_target_object(Worker, Ref) ->
     ID0 = to_string(ID),
     Request = io_lib:format("""
     SELECT id,
-           global_version,
+           version,
            references_to,
            referenced_by,
            data,
@@ -605,7 +602,7 @@ get_latest_target_object(Worker, Ref) ->
            created_at
     FROM ~p
     WHERE id = $1
-    ORDER BY global_version DESC
+    ORDER BY version DESC
     LIMIT 1
     """, [Type]),
     case epg_pool:query(Worker, Request, [ID0]) of
@@ -653,7 +650,7 @@ datetime_to_binary(DateTime) ->
 
 marshall_object(#{
     <<"id">> := ID,
-    <<"global_version">> := Version,
+    <<"version">> := Version,
     <<"references_to">> := ReferencesTo,
     <<"referenced_by">> := ReferencedBy,
     <<"data">> := Data,
@@ -677,3 +674,8 @@ to_string(A0) ->
 from_string(B0) ->
     B1 = base64:decode(B0),
     binary_to_term(B1).
+
+get_object_ref({Type, {_Object, ID, _Data}}) ->
+    {ok, {Type, ID}};
+get_object_ref(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
