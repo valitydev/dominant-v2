@@ -26,38 +26,3 @@ do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end.
-% TODO
-% do_handle_function('GetLocalVersions', {Request}, _Context, _Options) ->
-%     #domain_conf_v2_GetLocalVersionsRequest{
-%         ref = Ref,
-%         limit = Limit,
-%         continuation_token = ContinuationToken
-%     } = Request,
-%     %% Retrieve local versions with pagination
-%     case dmt_repository:get_local_versions(Ref, Limit, ContinuationToken) of
-%         {ok, Versions, NewToken} ->
-%             {ok, #domain_conf_v2_GetVersionsResponse{
-%                 result = Versions,
-%                 continuation_token = NewToken
-%             }};
-%         {error, object_not_found} ->
-%             woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
-%         {error, Reason} ->
-%             woody_error:raise(system, {internal, Reason})
-%     end;
-% TODO
-% do_handle_function('GetGlobalVersions', {Request}, _Context, _Options) ->
-%     #domain_conf_v2_GetGlobalVersionsRequest{
-%         limit = Limit,
-%         continuation_token = ContinuationToken
-%     } = Request,
-%     %% Retrieve global versions with pagination
-%     case dmt_repository:get_global_versions(Limit, ContinuationToken) of
-%         {ok, Versions, NewToken} ->
-%             {ok, #domain_conf_v2_GetVersionsResponse{
-%                 result = Versions,
-%                 continuation_token = NewToken
-%             }};
-%         {error, Reason} ->
-%             woody_error:raise(system, {internal, Reason})
-%     end.

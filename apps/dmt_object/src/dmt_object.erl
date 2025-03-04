@@ -7,7 +7,7 @@
 -export([new_object/1]).
 -export([update_object/2]).
 -export([remove_object/1]).
--export([just_object/7]).
+-export([just_object/8]).
 
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
@@ -89,6 +89,7 @@ remove_object(OG) ->
 
 just_object(
     ID,
+    Type,
     Version,
     ReferencesTo,
     ReferencedBy,
@@ -96,7 +97,6 @@ just_object(
     CreatedAt,
     IsActive
 ) ->
-    Type = get_type_by_id(ID),
     #{
         id => ID,
         type => Type,
@@ -124,8 +124,3 @@ get_object_ref({Type, {_Object, ID, _Data}}) ->
     {ok, {Type, ID}};
 get_object_ref(Obj) ->
     {error, {is_not_domain_object, Obj}}.
-
-get_type_by_id({Type, _}) ->
-    Type;
-get_type_by_id({Type}) ->
-    Type.

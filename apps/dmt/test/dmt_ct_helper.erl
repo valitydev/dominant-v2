@@ -153,6 +153,7 @@ cleanup_db() ->
             FROM information_schema.tables
             WHERE table_schema='public'
             AND NOT table_name = '__migrations'
+            AND NOT table_name = 'entity_type'
             ) LOOP
             -- Execute the TRUNCATE command on each table
             EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.table_name) || ' RESTART IDENTITY CASCADE';

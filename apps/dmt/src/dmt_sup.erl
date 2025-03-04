@@ -108,7 +108,7 @@ get_repository_handlers() ->
         })
     ].
 
--spec get_handler(repository | repository_client | user_op, woody:options()) ->
+-spec get_handler(repository | repository_client | author, woody:options()) ->
     woody:http_handler(woody:th_handler()).
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {

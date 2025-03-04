@@ -24,14 +24,14 @@ checkout_object(VersionRef, ObjectRef, Client) ->
 
 get_local_versions(Request, Client) ->
     Args = [Request],
-    dmt_client_api:call(repository_client, 'GetLocalVersions', Args, Client).
+    dmt_client_api:call(repository, 'GetLocalVersions', Args, Client).
 
 get_versions(Request, Client) ->
     Args = [Request],
-    dmt_client_api:call(repository_client, 'GetGlobalVersions', Args, Client).
+    dmt_client_api:call(repository, 'GetGlobalVersions', Args, Client).
 
 get_latest_version(Client) ->
-    dmt_client_api:call(repository_client, 'GetLatestVersion', [], Client).
+    dmt_client_api:call(repository, 'GetLatestVersion', [], Client).
 
 commit(Version, Commit, Author, Client) ->
     Args = [Version, Commit, Author],
