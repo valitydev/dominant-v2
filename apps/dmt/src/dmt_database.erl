@@ -11,6 +11,8 @@
 -export([get_object/3]).
 -export([get_latest_object/2]).
 -export([get_version_creator/2]).
+-export([get_all_objects_history/3]).
+-export([get_next_history_offset/3]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -201,4 +203,47 @@ get_version_creator(Worker, Version) ->
             {error, not_found};
         {ok, _Columns, [{CreatedBy}]} ->
             {ok, CreatedBy}
+    end.
+
+get_all_objects_history(Worker, Limit, Offset) ->
+    Query = """
+    SELECT e.id,
+               e.entity_type,
+               e.version,
+               e.references_to,
+               e.referenced_by,
+               e.data,
+               e.is_active,
+               e.created_at
+        FROM entity e
+        ORDER BY e.version DESC, e.id
+        LIMIT $1 OFFSET $2
+    """,
+
+    case epg_pool:query(Worker, Query, [Limit, Offset]) of
+        {ok, Columns, Rows} ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            {ok, Objects};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+get_next_history_offset(Worker, Limit, Offset) ->
+    % Сначала проверим, есть ли еще записи после текущего смещения + лимит
+    Query = """
+    SELECT 1
+    FROM entity
+    OFFSET $1
+    LIMIT 1
+    """,
+
+    case epg_pool:query(Worker, Query, [Offset + Limit]) of
+        {ok, _, [_]} ->
+            % Есть хотя бы одна запись после текущей страницы
+            {ok, Offset + Limit};
+        {ok, _, []} ->
+            % Больше записей нет
+            {ok, undefined};
+        {error, Reason} ->
+            {error, Reason}
     end.

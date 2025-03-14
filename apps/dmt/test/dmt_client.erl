@@ -7,7 +7,7 @@
 -export([
     checkout_object/3,
     get_local_versions/2,
-    get_versions/2,
+    get_all_objects_history/2,
     get_latest_version/1,
     commit/4
 ]).
@@ -26,9 +26,9 @@ get_local_versions(Request, Client) ->
     Args = [Request],
     dmt_client_api:call(repository, 'GetLocalVersions', Args, Client).
 
-get_versions(Request, Client) ->
+get_all_objects_history(Request, Client) ->
     Args = [Request],
-    dmt_client_api:call(repository, 'GetGlobalVersions', Args, Client).
+    dmt_client_api:call(repository, 'GetAllObjectsHistory', Args, Client).
 
 get_latest_version(Client) ->
     dmt_client_api:call(repository, 'GetLatestVersion', [], Client).

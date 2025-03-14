@@ -58,8 +58,40 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
 get_latest_version() ->
     dmt_database:get_latest_version(default_pool).
 
-get_all_objects_history(_Request) ->
-    throw(not_impl).
+get_all_objects_history(Request) ->
+    #domain_conf_v2_RequestParams{
+        limit = Limit,
+        continuation_token = Offset0
+    } = Request,
+    Offset1 = maybe_from_string(Offset0, 0),
+    maybe
+        {ok, Objects0} = dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
+        {ok, NewOffset} = dmt_database:get_next_history_offset(default_pool, Limit, Offset1),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_ObjectVersionsResponse{
+            result = [marshall_to_object_info(O) || O <- Objects1],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+maybe_to_string(undefined, Default) -> Default;
+maybe_to_string(Value, _) -> dmt_mapper:to_string(Value).
+
+maybe_from_string(undefined, Default) -> Default;
+maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
+
+marshall_to_object_info(Object) ->
+    #domain_conf_v2_VersionedObjectInfo{
+        version = maps:get(version, Object),
+        ref = maps:get(id, Object),
+        changed_at = maps:get(created_at, Object),
+        changed_by = maps:get(created_by, Object)
+    }.
 
 search_objects(_Request) ->
     throw(not_impl).
@@ -415,6 +447,23 @@ get_target_object(Worker, Ref, Version) ->
         {error, Error} ->
             throw({error, Error})
     end.
+
+add_created_by_to_objects(Worker, Objects) ->
+    Versions = lists:uniq([Version || #{version := Version} <- Objects]),
+    AuthorsOfVersions =
+        #{
+            Version => Author
+         || Version <- Versions,
+            {ok, AuthorID} <- [dmt_database:get_version_creator(Worker, Version)],
+            {ok, Author} <- [dmt_author:get(AuthorID)]
+        },
+    EnrichedObjects = [
+        Object#{
+            created_by => maps:get(Version, AuthorsOfVersions, undefined)
+        }
+     || #{version := Version} = Object <- Objects
+    ],
+    {ok, EnrichedObjects}.
 
 add_created_by_to_object(Worker, Object) ->
     #{version := Version} = Object,

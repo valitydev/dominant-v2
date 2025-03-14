@@ -30,7 +30,9 @@
     insert_object_sequence_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
     update_object_success_test/1,
-    get_latest_version_test/1
+    get_latest_version_test/1,
+    get_all_objects_history_test/1,
+    get_all_objects_history_pagination_test/1
 ]).
 
 -export([
@@ -73,7 +75,9 @@ groups() ->
             insert_object_sequence_id_success_test,
             insert_remove_referencing_object_success_test,
             update_object_success_test,
-            get_latest_version_test
+            get_latest_version_test,
+            get_all_objects_history_test,
+            get_all_objects_history_pagination_test
         ]},
         {repository_client_tests, [], []}
     ].
@@ -360,6 +364,191 @@ update_object_success_test(Config) ->
         object = NewObject
     }} = dmt_client:checkout_object({version, Revision3}, {proxy, ProxyRef}, Client).
 
+get_all_objects_history_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_all_objects_history_test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create initial objects and updates to generate history
+    Revision0 = 0,
+
+    % First commit - create first category object
+    CategoryOps1 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"category1">>,
+                    description = <<"description1">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef1
+            }}
+        ]
+    }} = dmt_client:commit(Revision0, CategoryOps1, AuthorID, Client),
+
+    % Second commit - create second category object
+    CategoryOps2 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"category2">>,
+                    description = <<"description2">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef2
+            }}
+        ]
+    }} = dmt_client:commit(Revision1, CategoryOps2, AuthorID, Client),
+
+    % Third commit - update the first object
+    UpdateOps = [
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef1,
+                    data = #domain_Category{
+                        name = <<"category1-updated">>,
+                        description = <<"description1-updated">>
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3
+    }} = dmt_client:commit(Revision2, UpdateOps, AuthorID, Client),
+
+    % Fetch all object history
+    Request = #domain_conf_v2_RequestParams{
+        % Get all objects in one request
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = HistoryObjects,
+        total_count = Count
+    }} = dmt_client:get_all_objects_history(Request, Client),
+
+    % We should have exactly 3 entries for our specific objects
+    ?assertEqual(3, Count),
+
+    % Verify all expected objects are in the history with correct versions
+    Cat1Update = find_object_in_history(HistoryObjects, {category, CategoryRef1}, Revision3),
+    % _ = logger:error("CategoryRef1: ~p, Revision3: ~p", [CategoryRef1, Revision3]),
+    Cat2Initial = find_object_in_history(HistoryObjects, {category, CategoryRef2}, Revision2),
+    Cat1Initial = find_object_in_history(HistoryObjects, {category, CategoryRef1}, Revision1),
+
+    % _ = logger:error("History objects: ~p", [HistoryObjects]),
+    % Verify we found all our expected history entries
+    ?assertNotEqual(undefined, Cat1Update, "Updated category1 not found in history"),
+    ?assertNotEqual(undefined, Cat2Initial, "Initial category2 not found in history"),
+    ?assertNotEqual(undefined, Cat1Initial, "Initial category1 not found in history").
+
+get_all_objects_history_pagination_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_all_objects_history_pagination_test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create 5 different category objects
+    {_Revision5, CategoryRefs} = create_n_categories(5, 0, AuthorID, Client, []),
+
+    % First page with small limit to force pagination
+    Request1 = #domain_conf_v2_RequestParams{
+        limit = 2
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = FirstPageObjects,
+        total_count = FirstPageCount,
+        continuation_token = ContinuationToken1
+    }} = dmt_client:get_all_objects_history(Request1, Client),
+
+    % Verify we got the expected number of objects in first page
+    ?assertEqual(2, length(FirstPageObjects)),
+    ?assertEqual(2, FirstPageCount),
+
+    % Verify continuation token exists (we should have more pages)
+    ?assertNotEqual(undefined, ContinuationToken1, "Expected continuation token for pagination"),
+
+    % Get second page
+    Request2 = #domain_conf_v2_RequestParams{
+        limit = 2,
+        continuation_token = ContinuationToken1
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = SecondPageObjects,
+        total_count = SecondPageCount,
+        continuation_token = ContinuationToken2
+    }} = dmt_client:get_all_objects_history(Request2, Client),
+
+    % Verify second page results
+    ?assertEqual(2, length(SecondPageObjects)),
+    ?assertEqual(2, SecondPageCount),
+
+    % Verify we have another page
+    ?assertNotEqual(undefined, ContinuationToken2, "Expected continuation token for third page"),
+
+    % Get third (final) page
+    Request3 = #domain_conf_v2_RequestParams{
+        limit = 2,
+        continuation_token = ContinuationToken2
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = ThirdPageObjects,
+        total_count = ThirdPageCount,
+        continuation_token = FinalContinuationToken
+    }} = dmt_client:get_all_objects_history(Request3, Client),
+
+    % Verify final page results - since we have 5 total objects, the last page should have 1
+    ?assertEqual(1, length(ThirdPageObjects)),
+    ?assertEqual(1, ThirdPageCount),
+
+    % Verify this is the last page (no more continuation token)
+    ?assertEqual(undefined, FinalContinuationToken, "Expected no more pages"),
+
+    % Verify we got all 5 objects across all pages
+    TotalObjects = FirstPageObjects ++ SecondPageObjects ++ ThirdPageObjects,
+    ?assertEqual(5, length(TotalObjects)),
+
+    % Check that our objects are ordered by version in descending order
+    VersionsInOrder = [V || #domain_conf_v2_VersionedObjectInfo{version = V} <- TotalObjects],
+    ?assert(is_sorted_desc(VersionsInOrder), "Objects should be sorted by version in descending order"),
+
+    % Verify all our category refs are included in the history
+    AllCategoryRefsFound = lists:all(
+        fun(CategoryRef) ->
+            % Extract just the ID number for comparison
+            RefId = element(2, CategoryRef),
+            % Check if any object in TotalObjects has this category ID
+            lists:any(
+                fun(
+                    #domain_conf_v2_VersionedObjectInfo{
+                        ref = {category, #domain_CategoryRef{id = ObjId}}
+                    }
+                ) ->
+                    RefId =:= ObjId
+                end,
+                TotalObjects
+            )
+        end,
+        CategoryRefs
+    ),
+    ?assert(AllCategoryRefsFound, "Not all created categories found in history pages").
+
 %% RepositoryClient Tests
 
 get_latest_version_test(Config) ->
@@ -388,10 +577,6 @@ get_latest_version_test(Config) ->
     ?assertEqual(Revision2, Revision1),
     ?assertEqual(1, Revision1).
 
-%% GetLocalVersions
-
-%% GetGlobalVersions
-
 create_author(Email, Client) ->
     AuthorParams = #domain_conf_v2_AuthorParams{
         email = Email,
@@ -402,3 +587,52 @@ create_author(Email, Client) ->
         id = AuthorID
     }} = dmt_client:create_author(AuthorParams, Client),
     AuthorID.
+
+create_n_categories(0, CurrentRevision, _AuthorID, _Client, Refs) ->
+    {CurrentRevision, lists:reverse(Refs)};
+create_n_categories(N, CurrentRevision, AuthorID, Client, Refs) ->
+    CategoryName = list_to_binary(io_lib:format("category~p", [N])),
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName,
+                    description = <<"test category">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = NextRevision,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef
+            }}
+        ]
+    }} = dmt_client:commit(CurrentRevision, CategoryOps, AuthorID, Client),
+
+    create_n_categories(N - 1, NextRevision, AuthorID, Client, [CategoryRef | Refs]).
+
+% Helper to find an object in history by ref and version
+find_object_in_history(HistoryObjects, ObjectRef, ExpectedVersion) ->
+    lists:foldl(
+        fun(#domain_conf_v2_VersionedObjectInfo{ref = Ref, version = Version} = Obj, Acc) ->
+            case {Ref, Version} of
+                {ObjectRef, ExpectedVersion} ->
+                    Obj;
+                _ ->
+                    Acc
+            end
+        end,
+        undefined,
+        HistoryObjects
+    ).
+
+is_sorted_desc([]) ->
+    true;
+is_sorted_desc([_]) ->
+    true;
+is_sorted_desc([A, B | Rest]) when A >= B ->
+    is_sorted_desc([B | Rest]);
+is_sorted_desc(_) ->
+    false.
