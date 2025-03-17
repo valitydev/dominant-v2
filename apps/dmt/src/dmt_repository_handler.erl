@@ -49,6 +49,15 @@ do_handle_function('SearchObjects', {RequestParams}, _Context, _Options) ->
             woody_error:raise(business, #domain_conf_v2_ObjectTypeNotFound{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
+    end;
+do_handle_function('GetObjectHistory', {ObjectRef, RequestParams}, _Context, _Options) ->
+    case dmt_repository:get_object_history(ObjectRef, RequestParams) of
+        {ok, Result} ->
+            {ok, Result};
+        {error, not_found} ->
+            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
     end.
 
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->

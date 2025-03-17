@@ -1,4 +1,4 @@
--module(dmt_integration_test_SUITE).
+-module(dmt_integration_tests_SUITE).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
@@ -32,7 +32,10 @@
     update_object_success_test/1,
     get_latest_version_test/1,
     get_all_objects_history_test/1,
-    get_all_objects_history_pagination_test/1
+    get_all_objects_history_pagination_test/1,
+    get_object_history_test/1,
+    get_object_history_pagination_test/1,
+    get_object_history_nonexistent_test/1
 ]).
 
 -export([
@@ -77,7 +80,10 @@ groups() ->
             update_object_success_test,
             get_latest_version_test,
             get_all_objects_history_test,
-            get_all_objects_history_pagination_test
+            get_all_objects_history_pagination_test,
+            get_object_history_test,
+            get_object_history_pagination_test,
+            get_object_history_nonexistent_test
         ]},
         {repository_client_tests, [], []}
     ].
@@ -549,8 +555,6 @@ get_all_objects_history_pagination_test(Config) ->
     ),
     ?assert(AllCategoryRefsFound, "Not all created categories found in history pages").
 
-%% RepositoryClient Tests
-
 get_latest_version_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
     Email = <<"get_latest_version_test">>,
@@ -576,6 +580,245 @@ get_latest_version_test(Config) ->
     {ok, Revision2} = dmt_client:get_latest_version(Client),
     ?assertEqual(Revision2, Revision1),
     ?assertEqual(1, Revision1).
+
+%% Test retrieval of a single object's history
+get_object_history_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_object_history_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create initial object
+    Revision0 = 0,
+    CategoryName1 = <<"history_category">>,
+    CategoryDesc1 = <<"original description">>,
+
+    % First commit - create the object
+    CategoryOps1 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName1,
+                    description = CategoryDesc1
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision0, CategoryOps1, AuthorID, Client),
+
+    % Second commit - update the object
+    CategoryName2 = <<"history_category_updated">>,
+    CategoryDesc2 = <<"updated description">>,
+    UpdateOps = [
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef,
+                    data = #domain_Category{
+                        name = CategoryName2,
+                        description = CategoryDesc2
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2
+    }} = dmt_client:commit(Revision1, UpdateOps, AuthorID, Client),
+
+    % Third commit - another update
+    CategoryName3 = <<"history_category_final">>,
+    CategoryDesc3 = <<"final description">>,
+    UpdateOps2 = [
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef,
+                    data = #domain_Category{
+                        name = CategoryName3,
+                        description = CategoryDesc3
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3
+    }} = dmt_client:commit(Revision2, UpdateOps2, AuthorID, Client),
+
+    % Get history for the object
+    ObjectRef = {category, CategoryRef},
+    RequestParams = #domain_conf_v2_RequestParams{
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = HistoryObjects,
+        total_count = Count,
+        continuation_token = ContinuationToken
+    }} = dmt_client:get_object_history(ObjectRef, RequestParams, Client),
+
+    % We should have exactly 3 versions
+    ?assertEqual(3, Count),
+    ?assertEqual(undefined, ContinuationToken, "No continuation token expected"),
+    ?assertEqual(3, length(HistoryObjects), "Should return all 3 versions"),
+
+    % Verify objects are in correct order (newest first)
+    [Version1, Version2, Version3] = HistoryObjects,
+
+    ?assertEqual(Revision3, Version1#domain_conf_v2_VersionedObjectInfo.version, "Latest version should be first"),
+    ?assertEqual(Revision2, Version2#domain_conf_v2_VersionedObjectInfo.version, "Middle version should be second"),
+    ?assertEqual(Revision1, Version3#domain_conf_v2_VersionedObjectInfo.version, "First version should be last"),
+
+    % Verify all objects have correct reference
+    ?assertEqual(ObjectRef, Version1#domain_conf_v2_VersionedObjectInfo.ref),
+    ?assertEqual(ObjectRef, Version2#domain_conf_v2_VersionedObjectInfo.ref),
+    ?assertEqual(ObjectRef, Version3#domain_conf_v2_VersionedObjectInfo.ref).
+
+%% Test pagination functionality for object history
+get_object_history_pagination_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_object_history_pagination_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create an object and perform multiple updates to generate history
+    Revision0 = 0,
+    CategoryRef = create_category_with_updates(5, Revision0, AuthorID, Client),
+    ObjectRef = {category, CategoryRef},
+
+    % First page with small limit to force pagination
+    Request1 = #domain_conf_v2_RequestParams{
+        limit = 2
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = FirstPageObjects,
+        total_count = FirstPageCount,
+        continuation_token = ContinuationToken1
+    }} = dmt_client:get_object_history(ObjectRef, Request1, Client),
+
+    % Verify first page results
+    ?assertEqual(2, FirstPageCount, "First page should have exactly 2 results"),
+    ?assertEqual(2, length(FirstPageObjects), "First page should contain 2 objects"),
+    ?assertNotEqual(undefined, ContinuationToken1, "Should have continuation token for next page"),
+
+    % Get second page
+    Request2 = #domain_conf_v2_RequestParams{
+        limit = 2,
+        continuation_token = ContinuationToken1
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = SecondPageObjects,
+        total_count = SecondPageCount,
+        continuation_token = ContinuationToken2
+    }} = dmt_client:get_object_history(ObjectRef, Request2, Client),
+
+    % Verify second page results
+    ?assertEqual(2, SecondPageCount, "Second page should have exactly 2 results"),
+    ?assertEqual(2, length(SecondPageObjects), "Second page should contain 2 objects"),
+    ?assertNotEqual(undefined, ContinuationToken2, "Should have continuation token for final page"),
+
+    % Get third page (final)
+    Request3 = #domain_conf_v2_RequestParams{
+        limit = 2,
+        continuation_token = ContinuationToken2
+    },
+
+    {ok, #domain_conf_v2_ObjectVersionsResponse{
+        result = ThirdPageObjects,
+        total_count = ThirdPageCount,
+        continuation_token = FinalToken
+    }} = dmt_client:get_object_history(ObjectRef, Request3, Client),
+
+    % Verify final page results - should have just 1 remaining object
+    ?assertEqual(1, ThirdPageCount, "Third page should have exactly 1 result"),
+    ?assertEqual(1, length(ThirdPageObjects), "Third page should contain 1 object"),
+    ?assertEqual(undefined, FinalToken, "No more pagination expected"),
+
+    % Verify we got all 5 objects across all pages with correct order (newest first)
+    AllObjects = FirstPageObjects ++ SecondPageObjects ++ ThirdPageObjects,
+    ?assertEqual(5, length(AllObjects), "Should get 5 objects across all pages"),
+
+    % Check versions are in descending order
+    Versions = [VersionInfo#domain_conf_v2_VersionedObjectInfo.version || VersionInfo <- AllObjects],
+    ?assert(is_sorted_desc(Versions), "Versions should be in descending order").
+
+%% Test behavior for nonexistent object reference
+get_object_history_nonexistent_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create a reference to a nonexistent object
+    NonexistentCategoryRef = #domain_CategoryRef{id = 999999},
+    NonexistentRef = {category, NonexistentCategoryRef},
+
+    RequestParams = #domain_conf_v2_RequestParams{
+        limit = 10
+    },
+
+    % Expect object not found error for nonexistent object
+    Result = dmt_client:get_object_history(NonexistentRef, RequestParams, Client),
+    ?assertMatch({exception, #domain_conf_v2_ObjectNotFound{}}, Result).
+
+% Internal functions
+
+%% Helper function to create a category and make multiple updates to it
+create_category_with_updates(NumUpdates, InitialRevision, AuthorID, Client) ->
+    % Create initial category
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"versioned_category">>,
+                    description = <<"initial version">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef
+            }}
+        ]
+    }} = dmt_client:commit(InitialRevision, CategoryOps, AuthorID, Client),
+
+    % Perform multiple updates
+    lists:foldl(
+        fun(N, CurrentRevision) ->
+            UpdateDesc = list_to_binary(io_lib:format("update version ~p", [N])),
+
+            UpdateOps = [
+                {update, #domain_conf_v2_UpdateOp{
+                    object =
+                        {category, #domain_CategoryObject{
+                            ref = CategoryRef,
+                            data = #domain_Category{
+                                name = <<"versioned_category">>,
+                                description = UpdateDesc
+                            }
+                        }}
+                }}
+            ],
+
+            {ok, #domain_conf_v2_CommitResponse{
+                version = NextRevision
+            }} = dmt_client:commit(CurrentRevision, UpdateOps, AuthorID, Client),
+
+            NextRevision
+        end,
+        Revision1,
+        lists:seq(1, NumUpdates - 1)
+    ),
+
+    CategoryRef.
 
 create_author(Email, Client) ->
     AuthorParams = #domain_conf_v2_AuthorParams{

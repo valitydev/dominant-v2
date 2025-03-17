@@ -11,9 +11,10 @@
 -export([get_object/3]).
 -export([get_latest_object/2]).
 -export([get_version_creator/2]).
+-export([get_object_history/4]).
 -export([get_all_objects_history/3]).
--export([get_next_history_offset/3]).
 -export([search_objects/6]).
+-export([check_entity_type_exists/2]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -216,6 +217,60 @@ get_version_creator(Worker, Version) ->
             {ok, CreatedBy}
     end.
 
+get_object_history(Worker, Ref, Limit, Offset) ->
+    Query = """
+    SELECT e.id,
+               e.entity_type,
+               e.version,
+               e.references_to,
+               e.referenced_by,
+               e.data,
+               e.is_active,
+               e.created_at
+        FROM entity e
+        WHERE id = $1
+        ORDER BY e.version DESC
+        LIMIT $2 OFFSET $3
+    """,
+
+    case epg_pool:query(Worker, Query, [Ref, Limit, Offset]) of
+        {ok, _Columns, []} ->
+            {error, not_found};
+        {ok, Columns, Rows} ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            NewOffset0 = Offset + Limit,
+            HasMoreResults = has_more_object_history(Worker, Ref, NewOffset0),
+            NewOffset1 =
+                case HasMoreResults of
+                    true -> NewOffset0;
+                    false -> undefined
+                end,
+
+            {ok, Objects, NewOffset1};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+has_more_object_history(Worker, Ref, Offset) ->
+    Query = """
+    SELECT 1
+    FROM entity
+    WHERE id = $1
+    LIMIT 1
+    OFFSET $2
+    """,
+    case epg_pool:query(Worker, Query, [Ref, Offset]) of
+        % At least one more result exists
+        {ok, _, [_]} ->
+            true;
+        % No more results or error
+        {ok, _, []} ->
+            false;
+        {error, Reason} ->
+            _ = logger:error("Error checking for more hostory of all objects: ~p", [Reason]),
+            false
+    end.
+
 get_all_objects_history(Worker, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -234,29 +289,38 @@ get_all_objects_history(Worker, Limit, Offset) ->
     case epg_pool:query(Worker, Query, [Limit, Offset]) of
         {ok, Columns, Rows} ->
             Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
-            {ok, Objects};
+            NewOffset0 = Offset + Limit,
+            HasMoreResults = has_more_all_objects_history(Worker, NewOffset0),
+            NewOffset1 =
+                case HasMoreResults of
+                    true -> NewOffset0;
+                    false -> undefined
+                end,
+
+            {ok, Objects, NewOffset1};
         {error, Reason} ->
             {error, Reason}
     end.
 
-get_next_history_offset(Worker, Limit, Offset) ->
+has_more_all_objects_history(Worker, Offset) ->
     % Сначала проверим, есть ли еще записи после текущего смещения + лимит
     Query = """
     SELECT 1
     FROM entity
-    OFFSET $1
     LIMIT 1
+    OFFSET $1
     """,
 
-    case epg_pool:query(Worker, Query, [Offset + Limit]) of
+    case epg_pool:query(Worker, Query, [Offset]) of
+        % At least one more result exists
         {ok, _, [_]} ->
-            % Есть хотя бы одна запись после текущей страницы
-            {ok, Offset + Limit};
+            true;
+        % No more results or error
         {ok, _, []} ->
-            % Больше записей нет
-            {ok, undefined};
+            false;
         {error, Reason} ->
-            {error, Reason}
+            _ = logger:error("Error checking for more hostory of all objects: ~p", [Reason]),
+            false
     end.
 
 search_objects(Worker, Query, Version, Type, Limit, Offset) ->
@@ -284,18 +348,15 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     case epg_pool:query(Worker, Request, AllParams) of
         {ok, Columns, Rows} ->
             Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
-            NextOffset = Offset + Limit,
-
-            % Check if there are more results
-            HasMoreResults = has_more_search_results(Worker, Query, Version, TypeValue, NextOffset),
-
-            FinalNextOffset =
+            NewOffset0 = Offset + Limit,
+            HasMoreResults = has_more_search_results(Worker, Query, Version, TypeValue, NewOffset0),
+            NewOffset1 =
                 case HasMoreResults of
-                    true -> NextOffset;
+                    true -> NewOffset0;
                     false -> undefined
                 end,
 
-            {ok, {Objects, FinalNextOffset}};
+            {ok, {Objects, NewOffset1}};
         {error, Reason} ->
             _ = logger:error("Error fetching search results: ~p", [Reason]),
             _ = logger:error("Error fetching search Params: ~p", [AllParams]),
@@ -322,4 +383,23 @@ has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
         {error, Reason} ->
             _ = logger:error("Error checking for more search results: ~p", [Reason]),
             false
+    end.
+
+check_entity_type_exists(Worker, Type) ->
+    CheckMoreQuery = """
+    SELECT 1 FROM entity_type
+    WHERE name = $1
+    LIMIT 1
+    """,
+
+    case epg_pool:query(Worker, CheckMoreQuery, [Type]) of
+        % At least one more result exists
+        {ok, _, [_]} ->
+            ok;
+        % No more results or error
+        {ok, _, []} ->
+            {error, object_type_not_found};
+        {error, Reason} ->
+            _ = logger:error("Error checking for more search results: ~p", [Reason]),
+            {error, object_type_not_found}
     end.

@@ -7,6 +7,7 @@
 -export([commit/3]).
 -export([get_object/3]).
 -export([get_latest_version/0]).
+-export([get_object_history/2]).
 -export([get_all_objects_history/1]).
 -export([search_objects/1]).
 
@@ -54,6 +55,29 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
             {error, Reason}
     end.
 
+get_object_history(ObjectRef, RequestParams) ->
+    #domain_conf_v2_RequestParams{
+        limit = Limit,
+        continuation_token = Offset0
+    } = RequestParams,
+    Offset1 = maybe_from_string(Offset0, 0),
+    maybe
+        StringRef = dmt_mapper:to_string(ObjectRef),
+        {ok, Objects0, NewOffset} ?= dmt_database:get_object_history(default_pool, StringRef, Limit, Offset1),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_ObjectVersionsResponse{
+            result = [marshall_to_object_info(O) || O <- Objects1],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, not_found} ->
+            {error, not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
 % Done this way to keep hierarchy of calls
 get_latest_version() ->
     dmt_database:get_latest_version(default_pool).
@@ -65,9 +89,8 @@ get_all_objects_history(Request) ->
     } = Request,
     Offset1 = maybe_from_string(Offset0, 0),
     maybe
-        {ok, Objects0} = dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
-        {ok, NewOffset} = dmt_database:get_next_history_offset(default_pool, Limit, Offset1),
-        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        {ok, Objects0, NewOffset} ?= dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
+        {ok, Objects1} ?= add_created_by_to_objects(default_pool, Objects0),
         Result = #domain_conf_v2_ObjectVersionsResponse{
             result = [marshall_to_object_info(O) || O <- Objects1],
             total_count = length(Objects1),
@@ -103,6 +126,7 @@ search_objects(Request) ->
     } = Request,
 
     maybe
+        ok ?= maybe_check_entity_type_exists(Type),
         {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
             default_pool,
             Query,
@@ -119,9 +143,14 @@ search_objects(Request) ->
         },
         {ok, Result}
     else
+        {error, object_type_not_found} ->
+            {error, object_type_not_found};
         {error, Reason} ->
             {error, Reason}
     end.
+
+maybe_check_entity_type_exists(undefined) -> ok;
+maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
 assemble_operations(Worker, Operations) ->
     lists:foldl(

@@ -1,4 +1,4 @@
--module(dmt_search_objects_test_SUITE).
+-module(dmt_search_objects_tests_SUITE).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
@@ -21,8 +21,8 @@
     search_pagination_test/1,
     search_with_version_filter_test/1,
     search_multiple_terms_test/1,
-    search_no_results_test/1
-    % search_invalid_query_test/1
+    search_no_results_test/1,
+    search_invalid_query_test/1
 ]).
 
 %% Initialize per suite
@@ -51,8 +51,8 @@ groups() ->
             search_pagination_test,
             search_with_version_filter_test,
             search_multiple_terms_test,
-            search_no_results_test
-            % search_invalid_query_test
+            search_no_results_test,
+            search_invalid_query_test
         ]}
     ].
 
@@ -586,41 +586,31 @@ search_no_results_test(Config) ->
     ?assertEqual([], Results, "Result list should be empty"),
     ?assertEqual(undefined, Token, "Continuation token should be undefined for empty results").
 
-% % Test invalid query handling
-% search_invalid_query_test(Config) ->
-%     Client = dmt_ct_helper:cfg(client, Config),
+% Test invalid query handling
+search_invalid_query_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
 
-%     % Create author and an object to search
-%     Email = <<"search_invalid_query_test@test">>,
-%     AuthorID = create_author(Email, Client),
+    SacrificialType = dummy,
+    {ok, _} = epg_pool:query(
+        default_pool,
+        """
+        DELETE FROM entity_type
+        WHERE name = $1;
+        """,
+        [SacrificialType]
+    ),
 
-%     % Create a test object
-%     Revision = 0,
-%     Operations = [
-%         {insert, #domain_conf_v2_InsertOp{
-%             object =
-%                 {category, #domain_Category{
-%                     name = <<"test invalid query category">>,
-%                     description = <<"For testing invalid query handling">>
-%                 }}
-%         }}
-%     ],
+    % Search with invalid object type
+    InvalidTypeRequest = #domain_conf_v2_SearchRequestParams{
+        query = <<"test">>,
+        version = 0,
+        limit = 10,
+        type = SacrificialType
+    },
 
-%     {ok, #domain_conf_v2_CommitResponse{
-%         version = Version
-%     }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
-
-%     % Search with invalid object type
-%     InvalidTypeRequest = #domain_conf_v2_SearchRequestParams{
-%         query = <<"test">>,
-%         version = Version,
-%         limit = 10,
-%         type = nonexistent_type
-%     },
-
-%     % Expect object type not found error
-%     Result = dmt_client:search_objects(InvalidTypeRequest, Client),
-%     ?assertMatch({exception, #domain_conf_v2_ObjectTypeNotFound{}}, Result).
+    % Expect object type not found error
+    Result = dmt_client:search_objects(InvalidTypeRequest, Client),
+    ?assertMatch({exception, #domain_conf_v2_ObjectTypeNotFound{}}, Result).
 
 %% Helper function
 create_author(Email, Client) ->

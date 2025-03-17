@@ -6,7 +6,7 @@
 %% API
 -export([
     checkout_object/3,
-    get_local_versions/2,
+    get_object_history/3,
     get_all_objects_history/2,
     get_latest_version/1,
     commit/4,
@@ -23,9 +23,9 @@ checkout_object(VersionRef, ObjectRef, Client) ->
     Args = [VersionRef, ObjectRef],
     dmt_client_api:call(repository_client, 'CheckoutObject', Args, Client).
 
-get_local_versions(Request, Client) ->
-    Args = [Request],
-    dmt_client_api:call(repository, 'GetLocalVersions', Args, Client).
+get_object_history(Ref, Request, Client) ->
+    Args = [Ref, Request],
+    dmt_client_api:call(repository, 'GetObjectHistory', Args, Client).
 
 get_all_objects_history(Request, Client) ->
     Args = [Request],
