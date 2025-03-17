@@ -93,8 +93,35 @@ marshall_to_object_info(Object) ->
         changed_by = maps:get(created_by, Object)
     }.
 
-search_objects(_Request) ->
-    throw(not_impl).
+search_objects(Request) ->
+    #domain_conf_v2_SearchRequestParams{
+        query = Query,
+        version = Version,
+        limit = Limit,
+        type = Type,
+        continuation_token = ContinuationToken
+    } = Request,
+
+    maybe
+        {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
+            default_pool,
+            Query,
+            Version,
+            Type,
+            Limit,
+            maybe_from_string(ContinuationToken, 0)
+        ),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_SearchResponse{
+            result = [marshall_to_object_info(Object) || Object <- Objects1],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 assemble_operations(Worker, Operations) ->
     lists:foldl(
@@ -331,8 +358,9 @@ insert_object(Worker, Type, ID0, Version, References0, Data0) ->
     ID1 = dmt_mapper:to_string(ID0),
     Data1 = dmt_mapper:to_string(Data0),
     References1 = lists:map(fun dmt_mapper:to_string/1, References0),
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
-    case dmt_database:insert_object(Worker, ID1, Type, Version, References1, Data1) of
+    case dmt_database:insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) of
         ok ->
             ID0;
         {error, Reason} ->
@@ -387,8 +415,21 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
     ID1 = dmt_mapper:to_string(ID0),
     References1 = lists:map(fun dmt_mapper:to_string/1, References0),
     ReferencedBy1 = lists:map(fun dmt_mapper:to_string/1, ReferencedBy0),
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
-    case dmt_database:update_object(Worker, ID1, Type, Version, References1, ReferencedBy1, Data1, IsActive) of
+    case
+        dmt_database:update_object(
+            Worker,
+            ID1,
+            Type,
+            Version,
+            References1,
+            ReferencedBy1,
+            Data1,
+            SearchVector,
+            IsActive
+        )
+    of
         ok ->
             ok;
         {error, Reason} ->

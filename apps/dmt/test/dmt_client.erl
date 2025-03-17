@@ -9,7 +9,8 @@
     get_local_versions/2,
     get_all_objects_history/2,
     get_latest_version/1,
-    commit/4
+    commit/4,
+    search_objects/2
 ]).
 
 -export([
@@ -36,6 +37,10 @@ get_latest_version(Client) ->
 commit(Version, Commit, Author, Client) ->
     Args = [Version, Commit, Author],
     dmt_client_api:call(repository, 'Commit', Args, Client).
+
+search_objects(Request, Client) ->
+    Args = [Request],
+    dmt_client_api:call(repository, 'SearchObjects', Args, Client).
 
 create_author(Params, Client) ->
     Args = [Params],

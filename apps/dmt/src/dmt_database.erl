@@ -3,8 +3,8 @@
 -export([get_latest_version/1]).
 -export([get_object_latest_version/2]).
 -export([get_new_version/2]).
--export([insert_object/6]).
--export([update_object/8]).
+-export([insert_object/7]).
+-export([update_object/9]).
 -export([get_next_sequence/2]).
 -export([check_if_object_id_active/2]).
 -export([check_version_exists/2]).
@@ -13,6 +13,7 @@
 -export([get_version_creator/2]).
 -export([get_all_objects_history/3]).
 -export([get_next_history_offset/3]).
+-export([search_objects/6]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -59,14 +60,14 @@ get_new_version(Worker, AuthorID) ->
             {error, Reason}
     end.
 
-insert_object(Worker, ID1, Type, Version, References1, Data1) ->
+insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) ->
     Query = """
     INSERT INTO entity
-    (id, entity_type, version, references_to, referenced_by, data, is_active)
-    VALUES ($1, $2, $3, $4, $5, $6, TRUE);
+    (id, entity_type, version, references_to, referenced_by, data, search_vector, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), TRUE);
     """,
 
-    Params = [ID1, Type, Version, References1, [], Data1],
+    Params = [ID1, Type, Version, References1, [], Data1, SearchVector],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
@@ -75,14 +76,24 @@ insert_object(Worker, ID1, Type, Version, References1, Data1) ->
             {error, Reason}
     end.
 
-update_object(Worker, ID1, Type, Version, References1, ReferencedBy1, Data1, IsActive) ->
+update_object(
+    Worker,
+    ID1,
+    Type,
+    Version,
+    References1,
+    ReferencedBy1,
+    Data1,
+    SearchVector,
+    IsActive
+) ->
     Query = """
     INSERT INTO entity
-    (id, entity_type, version, references_to, referenced_by, data, is_active)
-    VALUES ($1, $2, $3, $4, $5, $6, $7);
+    (id, entity_type, version, references_to, referenced_by, data, search_vector, is_active)
+    VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), $8);
     """,
 
-    Params = [ID1, Type, Version, References1, ReferencedBy1, Data1, IsActive],
+    Params = [ID1, Type, Version, References1, ReferencedBy1, Data1, SearchVector, IsActive],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
@@ -246,4 +257,69 @@ get_next_history_offset(Worker, Limit, Offset) ->
             {ok, undefined};
         {error, Reason} ->
             {error, Reason}
+    end.
+
+search_objects(Worker, Query, Version, Type, Limit, Offset) ->
+    % Use a pattern where the condition is always true when Type is NULL
+    TypeValue =
+        case Type of
+            undefined -> <<"NULL">>;
+            _ -> Type
+        end,
+
+    Request = """
+    SELECT id, entity_type, version, references_to, referenced_by,
+    data, is_active, created_at
+    FROM entity
+    WHERE search_vector @@ plainto_tsquery('multilingual', $1)
+    AND version <= $2
+    AND ($3 = 'NULL' OR entity_type = $3)
+    ORDER BY version DESC, ts_rank(search_vector, plainto_tsquery('multilingual', $1)) DESC
+    LIMIT $4 OFFSET $5
+    """,
+
+    AllParams = [Query, Version, TypeValue, Limit, Offset],
+
+    % Execute the query
+    case epg_pool:query(Worker, Request, AllParams) of
+        {ok, Columns, Rows} ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            NextOffset = Offset + Limit,
+
+            % Check if there are more results
+            HasMoreResults = has_more_search_results(Worker, Query, Version, TypeValue, NextOffset),
+
+            FinalNextOffset =
+                case HasMoreResults of
+                    true -> NextOffset;
+                    false -> undefined
+                end,
+
+            {ok, {Objects, FinalNextOffset}};
+        {error, Reason} ->
+            _ = logger:error("Error fetching search results: ~p", [Reason]),
+            _ = logger:error("Error fetching search Params: ~p", [AllParams]),
+            {ok, {[], undefined}}
+    end.
+
+% Helper function to check if there are more search results
+has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
+    CheckMoreQuery = """
+    SELECT 1 FROM entity
+    WHERE search_vector @@ plainto_tsquery('multilingual', $1)
+    AND version <= $2
+    AND ($3 = 'NULL' OR entity_type = $3)
+    LIMIT 1 OFFSET $4
+    """,
+
+    case epg_pool:query(Worker, CheckMoreQuery, [Query, Version, TypeValue, Offset]) of
+        % At least one more result exists
+        {ok, _, [_]} ->
+            true;
+        % No more results or error
+        {ok, _, []} ->
+            false;
+        {error, Reason} ->
+            _ = logger:error("Error checking for more search results: ~p", [Reason]),
+            false
     end.

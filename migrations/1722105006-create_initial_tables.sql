@@ -30,6 +30,7 @@ CREATE TABLE entity (
     references_to TEXT[] NOT NULL,
     referenced_by TEXT[] NOT NULL,
     data TEXT NOT NULL,
+    search_vector tsvector,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     is_active BOOLEAN DEFAULT TRUE,
     PRIMARY KEY (id, version)
@@ -70,12 +71,19 @@ INSERT INTO entity_type (name, has_sequence) VALUES
 
 CREATE INDEX idx_entity_type ON entity(entity_type);
 CREATE INDEX idx_entity_version ON entity(version);
+CREATE INDEX entity_search_idx ON entity USING GIN (search_vector);
+
+CREATE TEXT SEARCH CONFIGURATION multilingual (COPY = russian);
+ALTER TEXT SEARCH CONFIGURATION multilingual
+    ALTER MAPPING
+    FOR word, hword, hword_part
+    WITH russian_stem, english_stem;
 
 -- :down
 -- Down migration
 
-DROP RULE IF EXISTS entity_insert_route ON entity;
-DROP INDEX IF EXISTS idx_entity_with_sequence_sequence;
+DROP TEXT SEARCH CONFIGURATION multilingual;
+DROP INDEX IF EXISTS entity_search_idx;
 DROP INDEX IF EXISTS idx_entity_version;
 DROP INDEX IF EXISTS idx_entity_type;
 DROP TABLE IF EXISTS entity;
