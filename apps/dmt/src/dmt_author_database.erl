@@ -15,14 +15,17 @@
 insert(Worker, Name, Email) ->
     Sql = """
     INSERT INTO author (name, email)
-    VALUES ($1, $2) returning id
+    VALUES ($1, $2)
+    ON CONFLICT (email) DO UPDATE
+    SET name = author.name
+    RETURNING id, (xmax = 0) AS is_new
     """,
     Params = [Name, Email],
     case epg_pool:query(Worker, Sql, Params) of
-        {ok, 1, _Columns, [{ID}]} ->
+        {ok, 1, _Columns, [{ID, true}]} ->
             {ok, ID};
-        {error, #error{code = <<"23505">>}} ->
-            {error, already_exists};
+        {ok, 1, _Columns, [{ID, false}]} ->
+            {ok, {already_exists, ID}};
         {error, Error} ->
             logger:error("Insert Author error Name: ~p Email ~p Error ~p", [Name, Email, Error]),
             {error, unknown}

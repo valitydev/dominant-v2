@@ -17,10 +17,10 @@ default_handling_timeout(#{default_handling_timeout := Timeout}) ->
 do_handle_function('Create', {Params}, _Context, _Options) ->
     #domain_conf_v2_AuthorParams{email = Email, name = Name} = Params,
     case dmt_author:insert(Name, Email) of
+        {ok, {already_exists, ExistingID}} ->
+            woody_error:raise(business, #domain_conf_v2_AuthorAlreadyExists{id = ExistingID});
         {ok, ID} ->
             {ok, #domain_conf_v2_Author{id = ID, email = Email, name = Name}};
-        {error, already_exists} ->
-            woody_error:raise(business, #domain_conf_v2_AuthorAlreadyExists{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end;

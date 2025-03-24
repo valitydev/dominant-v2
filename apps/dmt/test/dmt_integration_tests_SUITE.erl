@@ -158,9 +158,12 @@ create_author_email_duplicate_test(Config) ->
         name = <<"different name">>
     },
 
-    {ok, _} = dmt_client:create_author(AuthorParams1, Client),
-    {exception, #domain_conf_v2_AuthorAlreadyExists{}} =
-        dmt_client:create_author(AuthorParams2, Client).
+    {ok, #domain_conf_v2_Author{
+        id = ID1
+    }} = dmt_client:create_author(AuthorParams1, Client),
+    {exception, #domain_conf_v2_AuthorAlreadyExists{id = ID2}} =
+        dmt_client:create_author(AuthorParams2, Client),
+    ?assertEqual(ID1, ID2).
 
 %% Repository tests
 
