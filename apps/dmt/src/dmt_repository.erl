@@ -481,7 +481,7 @@ get_insert_object_id(Worker, Ref, _Type) ->
     Ref0 = dmt_mapper:to_string(Ref),
     case dmt_database:check_if_object_id_active(Worker, Ref0) of
         true ->
-            throw({error, {conflict, {forced_id_exists, Ref}}});
+            throw({error, {operation_error, {conflict, {forced_id_exists, Ref}}}});
         false ->
             Ref;
         {error, Reason} ->
@@ -546,7 +546,7 @@ get_latest_target_object(Worker, Ref) ->
 
     case dmt_database:get_latest_object(Worker, Ref0) of
         {ok, LatestObject} ->
-            {ok, LatestObject};
+            add_created_by_to_object(Worker, LatestObject);
         {error, not_found} ->
             {error, {object_not_found, Ref}};
         {error, Error} ->
