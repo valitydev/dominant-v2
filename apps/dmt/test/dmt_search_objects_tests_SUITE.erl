@@ -22,7 +22,11 @@
     search_with_version_filter_test/1,
     search_multiple_terms_test/1,
     search_no_results_test/1,
-    search_invalid_query_test/1
+    search_invalid_query_test/1,
+    search_full_objects_basic_test/1,
+    search_full_objects_with_filter_test/1,
+    search_full_objects_pagination_test/1,
+    search_objects_without_name_desc_test/1
 ]).
 
 %% Initialize per suite
@@ -52,7 +56,11 @@ groups() ->
             search_with_version_filter_test,
             search_multiple_terms_test,
             search_no_results_test,
-            search_invalid_query_test
+            search_objects_without_name_desc_test,
+            search_invalid_query_test,
+            search_full_objects_basic_test,
+            search_full_objects_with_filter_test,
+            search_full_objects_pagination_test
         ]}
     ].
 
@@ -119,13 +127,17 @@ search_basic_test(Config) ->
     % Validate result structure and content
     ?assertMatch(
         [
-            #domain_conf_v2_VersionedObjectInfo{
-                ref = {category, CategoryRef},
-                version = Version,
-                % Timestamp will vary
-                changed_at = _,
-                % Author object
-                changed_by = _
+            #domain_conf_v2_LimitedVersionedObject{
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    ref = {category, CategoryRef},
+                    version = Version,
+                    % Timestamp will vary
+                    changed_at = _,
+                    % Author object
+                    changed_by = _
+                },
+                name = CategoryName,
+                description = CategoryDesc
             }
         ],
         NameResults
@@ -147,7 +159,9 @@ search_basic_test(Config) ->
     ?assertEqual(1, DescCount, "Should find exactly one matching object"),
 
     % Should be the same object as in the name search
-    ?assertEqual(NameResults, DescResults, "Same object should be found by both name and description").
+    ?assertEqual(
+        NameResults, DescResults, "Same object should be found by both name and description"
+    ).
 
 % Search with type filter
 search_with_type_filter_test(Config) ->
@@ -197,7 +211,12 @@ search_with_type_filter_test(Config) ->
     ?assertEqual(2, NoFilterCount, "Should find both objects without type filter"),
 
     % Verify we have both a category and terminal
-    Types = lists:usort([Type || #domain_conf_v2_VersionedObjectInfo{ref = {Type, _}} <- NoFilterResults]),
+    Types = lists:usort([
+        Type
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{ref = {Type, _}}
+        } <- NoFilterResults
+    ]),
     ?assertEqual([category, terminal], lists:sort(Types), "Should find both types without filter"),
 
     % Search with category filter
@@ -216,7 +235,11 @@ search_with_type_filter_test(Config) ->
     ?assertEqual(1, CategoryCount, "Should find only the category with type filter"),
 
     % Verify we only have a category
-    [#domain_conf_v2_VersionedObjectInfo{ref = {ResultType, _}}] = CategoryResults,
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{ref = {ResultType, _}}
+        }
+    ] = CategoryResults,
     ?assertEqual(category, ResultType, "Should only find category with category filter"),
 
     % Search with terminal filter
@@ -235,7 +258,11 @@ search_with_type_filter_test(Config) ->
     ?assertEqual(1, TerminalCount, "Should find only the terminal with type filter"),
 
     % Verify we only have a terminal
-    [#domain_conf_v2_VersionedObjectInfo{ref = {ResultType2, _}}] = TerminalResults,
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{ref = {ResultType2, _}}
+        }
+    ] = TerminalResults,
     ?assertEqual(terminal, ResultType2, "Should only find terminal with terminal filter").
 
 % Test pagination with continuation tokens
@@ -329,12 +356,21 @@ search_pagination_test(Config) ->
 
     % Verify we got all objects and no duplicates
     AllResults = Page1Results ++ Page2Results ++ Page3Results,
-    ?assertEqual(NumObjects, length(AllResults), "Should retrieve all created objects across pages"),
+    ?assertEqual(
+        NumObjects, length(AllResults), "Should retrieve all created objects across pages"
+    ),
 
     % Check for duplicates
-    AllRefs = [Ref || #domain_conf_v2_VersionedObjectInfo{ref = Ref} <- AllResults],
+    AllRefs = [
+        Ref
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+        } <- AllResults
+    ],
     UniqueRefs = lists:usort(AllRefs),
-    ?assertEqual(length(AllRefs), length(UniqueRefs), "Should not have any duplicate results across pages").
+    ?assertEqual(
+        length(AllRefs), length(UniqueRefs), "Should not have any duplicate results across pages"
+    ).
 
 % Test search with version filter
 search_with_version_filter_test(Config) ->
@@ -406,7 +442,11 @@ search_with_version_filter_test(Config) ->
     }} = dmt_client:search_objects(RequestV1, Client),
 
     ?assertEqual(1, CountV1, "Should find only one object at version 1"),
-    [#domain_conf_v2_VersionedObjectInfo{version = V1}] = ResultsV1,
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{version = V1}
+        }
+    ] = ResultsV1,
     ?assertEqual(Revision1, V1, "Object should be from version 1"),
 
     % Search at version 2 - should find first and second objects
@@ -422,8 +462,15 @@ search_with_version_filter_test(Config) ->
     }} = dmt_client:search_objects(RequestV2, Client),
 
     ?assertEqual(2, CountV2, "Should find two objects at version 2"),
-    Versions2 = lists:usort([V || #domain_conf_v2_VersionedObjectInfo{version = V} <- ResultsV2]),
-    ?assertEqual([Revision1, Revision2], lists:sort(Versions2), "Should have objects from versions 1 and 2"),
+    Versions2 = lists:usort([
+        V
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+        } <- ResultsV2
+    ]),
+    ?assertEqual(
+        [Revision1, Revision2], lists:sort(Versions2), "Should have objects from versions 1 and 2"
+    ),
 
     % Search at version 3 (latest) - should find all three objects
     RequestV3 = #domain_conf_v2_SearchRequestParams{
@@ -438,9 +485,16 @@ search_with_version_filter_test(Config) ->
     }} = dmt_client:search_objects(RequestV3, Client),
 
     ?assertEqual(3, CountV3, "Should find three objects at version 3"),
-    Versions3 = lists:usort([V || #domain_conf_v2_VersionedObjectInfo{version = V} <- ResultsV3]),
+    Versions3 = lists:usort([
+        V
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+        } <- ResultsV3
+    ]),
     ?assertEqual(
-        [Revision1, Revision2, Revision3], lists:sort(Versions3), "Should have objects from all three versions"
+        [Revision1, Revision2, Revision3],
+        lists:sort(Versions3),
+        "Should have objects from all three versions"
     ).
 
 % Test searching with complex query terms
@@ -527,17 +581,33 @@ search_multiple_terms_test(Config) ->
     ?assertEqual(1, Count3, "Should find one object with both terms"),
 
     % The object found by the AND query should be included in both single-term result sets
-    [#domain_conf_v2_VersionedObjectInfo{ref = BothTermsRef}] = Results3,
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{ref = BothTermsRef}
+        }
+    ] = Results3,
     ?assert(
         lists:any(
-            fun(#domain_conf_v2_VersionedObjectInfo{ref = Ref}) -> Ref =:= BothTermsRef end,
+            fun(
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+                }
+            ) ->
+                Ref =:= BothTermsRef
+            end,
             Results1
         ),
         "Object with both terms should be found in first term search"
     ),
     ?assert(
         lists:any(
-            fun(#domain_conf_v2_VersionedObjectInfo{ref = Ref}) -> Ref =:= BothTermsRef end,
+            fun(
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+                }
+            ) ->
+                Ref =:= BothTermsRef
+            end,
             Results2
         ),
         "Object with both terms should be found in second term search"
@@ -611,6 +681,410 @@ search_invalid_query_test(Config) ->
     % Expect object type not found error
     Result = dmt_client:search_objects(InvalidTypeRequest, Client),
     ?assertMatch({exception, #domain_conf_v2_ObjectTypeNotFound{}}, Result).
+
+%% Tests for SearchFullObjects
+
+% Basic test of SearchFullObjects functionality
+search_full_objects_basic_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_full_objects_basic_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create test data with searchable content
+    Revision = 0,
+    CategoryName = <<"search_full_category">>,
+    CategoryDesc = <<"searchable full object text">>,
+
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName,
+                    description = CategoryDesc
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version,
+        new_objects = NewObjects
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    % Extract the created category reference
+    [{category, #domain_CategoryObject{ref = CategoryRef}}] = ordsets:to_list(NewObjects),
+
+    % Search for full objects
+    NameRequest = #domain_conf_v2_SearchRequestParams{
+        query = <<"search_full_category">>,
+        version = Version,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = NameResults,
+        total_count = NameCount,
+        continuation_token = NameToken
+    }} = dmt_client:search_full_objects(NameRequest, Client),
+
+    % Verify results
+    ?assertEqual(1, NameCount, "Should find exactly one matching object"),
+    ?assertEqual(undefined, NameToken, "Should not have continuation token"),
+
+    % Validate result structure and content
+    [FullObject] = NameResults,
+    ?assertMatch(
+        #domain_conf_v2_VersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{
+                ref = {category, CategoryRef},
+                version = Version
+            },
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef,
+                    data = #domain_Category{
+                        name = CategoryName,
+                        description = CategoryDesc
+                    }
+                }}
+        },
+        FullObject
+    ),
+
+    % Search by description
+    DescRequest = #domain_conf_v2_SearchRequestParams{
+        query = <<"searchable full object">>,
+        version = Version,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = DescResults,
+        total_count = DescCount
+    }} = dmt_client:search_full_objects(DescRequest, Client),
+
+    % Verify results
+    ?assertEqual(1, DescCount, "Should find exactly one matching object"),
+    ?assertEqual(
+        NameResults, DescResults, "Same full object should be found by both name and description"
+    ).
+
+% Search full objects with type filter
+search_full_objects_with_filter_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_full_objects_with_filter_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create mixed test data (categories and terminals)
+    Revision = 0,
+    SearchTerm = <<"filterable_full">>,
+
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<SearchTerm/binary, " category">>,
+                    description = <<"A test category for full objects">>
+                }}
+        }},
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {terminal, #domain_Terminal{
+                    name = <<SearchTerm/binary, " terminal">>,
+                    description = <<"A test terminal for full objects">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    % Search without type filter (should find both objects)
+    NoFilterRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = NoFilterResults,
+        total_count = NoFilterCount
+    }} = dmt_client:search_full_objects(NoFilterRequest, Client),
+
+    ?assertEqual(2, NoFilterCount, "Should find both full objects without type filter"),
+
+    % Verify we have both a category and terminal
+    Types = lists:usort([
+        Type
+     || #domain_conf_v2_VersionedObject{
+            object = {Type, _}
+        } <- NoFilterResults
+    ]),
+    ?assertEqual([category, terminal], lists:sort(Types), "Should find both types without filter"),
+
+    % Search with category filter
+    CategoryRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = 10,
+        type = category
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = CategoryResults,
+        total_count = CategoryCount
+    }} = dmt_client:search_full_objects(CategoryRequest, Client),
+
+    ?assertEqual(1, CategoryCount, "Should find only the category with type filter"),
+
+    % Verify we only have a category
+    [#domain_conf_v2_VersionedObject{object = {ResultType, _}}] = CategoryResults,
+    ?assertEqual(category, ResultType, "Should only find category with category filter"),
+
+    % Search with terminal filter
+    TerminalRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = 10,
+        type = terminal
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = TerminalResults,
+        total_count = TerminalCount
+    }} = dmt_client:search_full_objects(TerminalRequest, Client),
+
+    ?assertEqual(1, TerminalCount, "Should find only the terminal with type filter"),
+
+    % Verify we only have a terminal
+    [#domain_conf_v2_VersionedObject{object = {ResultType2, _}}] = TerminalResults,
+    ?assertEqual(terminal, ResultType2, "Should only find terminal with terminal filter").
+
+% Test pagination of full objects
+search_full_objects_pagination_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_full_objects_pagination_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create many objects to trigger pagination
+    Revision = 0,
+    SearchTerm = <<"pageable_full">>,
+    % Create enough objects to span multiple pages
+    NumObjects = 5,
+
+    Operations = lists:map(
+        fun(N) ->
+            {insert, #domain_conf_v2_InsertOp{
+                object =
+                    {category, #domain_Category{
+                        name = list_to_binary(io_lib:format("~s category ~p", [SearchTerm, N])),
+                        description = <<"For full objects pagination testing">>
+                    }}
+            }}
+        end,
+        lists:seq(1, NumObjects)
+    ),
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    % Search with a small limit to force pagination
+    PageSize = 2,
+    Request1 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = PageSize
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = Page1Results,
+        total_count = Page1Count,
+        continuation_token = Token1
+    }} = dmt_client:search_full_objects(Request1, Client),
+
+    % Verify first page
+    ?assertEqual(PageSize, Page1Count, "First page should contain exactly PageSize items"),
+    ?assertEqual(PageSize, length(Page1Results)),
+    ?assertNotEqual(undefined, Token1, "Should have a continuation token for more results"),
+
+    % Get second page
+    Request2 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = PageSize,
+        continuation_token = Token1
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = Page2Results,
+        total_count = Page2Count,
+        continuation_token = Token2
+    }} = dmt_client:search_full_objects(Request2, Client),
+
+    % Verify second page
+    ?assertEqual(PageSize, Page2Count, "Second page should contain exactly PageSize items"),
+    ?assertEqual(PageSize, length(Page2Results)),
+    ?assertNotEqual(undefined, Token2, "Should have a continuation token for more results"),
+
+    % Get third page (should be partial)
+    Request3 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version,
+        limit = PageSize,
+        continuation_token = Token2
+    },
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = Page3Results,
+        total_count = Page3Count,
+        continuation_token = Token3
+    }} = dmt_client:search_full_objects(Request3, Client),
+
+    % Verify third page (last page)
+    ExpectedRemaining = NumObjects - (2 * PageSize),
+    ?assertEqual(ExpectedRemaining, Page3Count, "Last page should contain remaining items"),
+    ?assertEqual(ExpectedRemaining, length(Page3Results)),
+    ?assertEqual(undefined, Token3, "Should not have a continuation token after last page"),
+
+    % Verify we got all objects and no duplicates
+    AllResults = Page1Results ++ Page2Results ++ Page3Results,
+    ?assertEqual(
+        NumObjects, length(AllResults), "Should retrieve all created full objects across pages"
+    ),
+
+    % Check for duplicates by extracting refs
+    AllRefs = [
+        Ref
+     || #domain_conf_v2_VersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{
+                ref = Ref
+            }
+        } <- AllResults
+    ],
+    UniqueRefs = lists:usort(AllRefs),
+    ?assertEqual(
+        length(AllRefs), length(UniqueRefs), "Should not have any duplicate results across pages"
+    ).
+
+% Test searching for objects without name or description fields
+search_objects_without_name_desc_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_objects_without_name_desc_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Ensure the 'dummy' entity type exists in the database, it could be deleted by previous tests
+    {ok, _} = epg_pool:query(
+        default_pool,
+        """
+        INSERT INTO entity_type (name, has_sequence) 
+        VALUES ($1, FALSE)
+        ON CONFLICT (name) DO NOTHING;
+        """,
+        [dummy]
+    ),
+
+    % Create a Dummy object which doesn't have name or description fields
+    Revision = 0,
+    DummyRef = #domain_DummyRef{id = <<"search_objects_without_name_desc_test">>},
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            force_ref = {dummy, DummyRef},
+            object = {dummy, #domain_Dummy{}}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version,
+        new_objects = NewObjects
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    % Extract the created dummy reference
+    [{dummy, #domain_DummyObject{ref = DummyRef}}] = ordsets:to_list(NewObjects),
+
+    % Search for dummy objects (should find by type since there's no name/description)
+    Request = #domain_conf_v2_SearchRequestParams{
+        % This should match the type name
+        query = <<"dummy">>,
+        version = Version,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = Results,
+        total_count = Count
+    }} = dmt_client:search_objects(Request, Client),
+
+    % We should still find the object even though it doesn't have name/description
+    ?assertEqual(1, Count, "Should find the dummy object"),
+
+    % Verify the result structure
+    ?assertMatch(
+        [
+            #domain_conf_v2_LimitedVersionedObject{
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    ref = {dummy, DummyRef},
+                    version = Version
+                },
+                name = undefined,
+                description = undefined
+            }
+        ],
+        Results,
+        "Should return the dummy object with undefined name and description"
+    ),
+
+    % Also search with explicit type filter
+    TypedRequest = #domain_conf_v2_SearchRequestParams{
+        % Empty query but with type filter
+        query = <<"*">>,
+        version = Version,
+        limit = 10,
+        type = dummy
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = TypedResults,
+        total_count = TypedCount
+    }} = dmt_client:search_objects(TypedRequest, Client),
+
+    % Should find by type even with empty query
+    ?assertEqual(1, TypedCount, "Should find the dummy object by type filter"),
+    ?assertEqual(Results, TypedResults, "Same result should be returned for type-based search"),
+
+    % Also test with full objects search
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = FullResults,
+        total_count = FullCount
+    }} = dmt_client:search_full_objects(Request, Client),
+
+    % Verify full object search works too
+    ?assertEqual(1, FullCount, "Should find the dummy object in full search"),
+    ?assertMatch(
+        [
+            #domain_conf_v2_VersionedObject{
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    ref = {dummy, DummyRef},
+                    version = Version
+                },
+                object =
+                    {dummy, #domain_DummyObject{
+                        ref = DummyRef,
+                        data = #domain_Dummy{}
+                    }}
+            }
+        ],
+        FullResults,
+        "Should return the full dummy object"
+    ).
 
 %% Helper function
 create_author(Email, Client) ->

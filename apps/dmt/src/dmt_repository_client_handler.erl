@@ -22,7 +22,5 @@ do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options
         {error, version_not_found} ->
             woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
         {error, {object_not_found, _Ref}} ->
-            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
-        {error, Reason} ->
-            woody_error:raise(system, {internal, Reason})
+            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{})
     end.

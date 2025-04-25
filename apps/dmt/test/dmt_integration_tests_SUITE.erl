@@ -21,7 +21,8 @@
     get_author_test/1,
     delete_author_test/1,
     delete_nonexistant_author_test/1,
-    create_author_email_duplicate_test/1
+    create_author_email_duplicate_test/1,
+    get_author_by_email_test/1
 ]).
 
 -export([
@@ -71,7 +72,8 @@ groups() ->
             get_author_test,
             delete_author_test,
             delete_nonexistant_author_test,
-            create_author_email_duplicate_test
+            create_author_email_duplicate_test,
+            get_author_by_email_test
         ]},
         {repository_tests, [], [
             insert_object_forced_id_success_test,
@@ -164,6 +166,39 @@ create_author_email_duplicate_test(Config) ->
     {exception, #domain_conf_v2_AuthorAlreadyExists{id = ID2}} =
         dmt_client:create_author(AuthorParams2, Client),
     ?assertEqual(ID1, ID2).
+
+%% Test getting an author by email
+get_author_by_email_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_author_by_email_test@test">>,
+    Name = <<"Get By Email Test Author">>,
+
+    AuthorParams = #domain_conf_v2_AuthorParams{
+        email = Email,
+        name = Name
+    },
+
+    {ok, #domain_conf_v2_Author{
+        id = AuthorID,
+        email = Email
+    }} = dmt_client:create_author(AuthorParams, Client),
+
+    % Get author by email - retrying to allow for potential database propagation delay
+    {ok, #domain_conf_v2_Author{
+        id = EmailAuthorID,
+        email = EmailResult,
+        name = NameResult
+    }} = dmt_client:get_author_by_email(Email, Client),
+
+    % Verify the result matches the original author
+    ?assertEqual(AuthorID, EmailAuthorID, "Author ID should match"),
+    ?assertEqual(Email, EmailResult, "Email should match"),
+    ?assertEqual(Name, NameResult, "Name should match"),
+
+    % Test with non-existent email
+    NonExistentEmail = <<"nonexistent_email@test">>,
+    {exception, #domain_conf_v2_AuthorNotFound{}} =
+        dmt_client:get_author_by_email(NonExistentEmail, Client).
 
 %% Repository tests
 
@@ -534,8 +569,15 @@ get_all_objects_history_pagination_test(Config) ->
     ?assertEqual(5, length(TotalObjects)),
 
     % Check that our objects are ordered by version in descending order
-    VersionsInOrder = [V || #domain_conf_v2_VersionedObjectInfo{version = V} <- TotalObjects],
-    ?assert(is_sorted_desc(VersionsInOrder), "Objects should be sorted by version in descending order"),
+    VersionsInOrder = [
+        V
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+        } <- TotalObjects
+    ],
+    ?assert(
+        is_sorted_desc(VersionsInOrder), "Objects should be sorted by version in descending order"
+    ),
 
     % Verify all our category refs are included in the history
     AllCategoryRefsFound = lists:all(
@@ -545,8 +587,10 @@ get_all_objects_history_pagination_test(Config) ->
             % Check if any object in TotalObjects has this category ID
             lists:any(
                 fun(
-                    #domain_conf_v2_VersionedObjectInfo{
-                        ref = {category, #domain_CategoryRef{id = ObjId}}
+                    #domain_conf_v2_LimitedVersionedObject{
+                        info = #domain_conf_v2_VersionedObjectInfo{
+                            ref = {category, #domain_CategoryRef{id = ObjId}}
+                        }
                     }
                 ) ->
                     RefId =:= ObjId
@@ -675,14 +719,28 @@ get_object_history_test(Config) ->
     % Verify objects are in correct order (newest first)
     [Version1, Version2, Version3] = HistoryObjects,
 
-    ?assertEqual(Revision3, Version1#domain_conf_v2_VersionedObjectInfo.version, "Latest version should be first"),
-    ?assertEqual(Revision2, Version2#domain_conf_v2_VersionedObjectInfo.version, "Middle version should be second"),
-    ?assertEqual(Revision1, Version3#domain_conf_v2_VersionedObjectInfo.version, "First version should be last"),
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{version = V1}} =
+        Version1,
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{version = V2}} =
+        Version2,
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{version = V3}} =
+        Version3,
+
+    ?assertEqual(Revision3, V1, "Latest version should be first"),
+    ?assertEqual(Revision2, V2, "Middle version should be second"),
+    ?assertEqual(Revision1, V3, "First version should be last"),
 
     % Verify all objects have correct reference
-    ?assertEqual(ObjectRef, Version1#domain_conf_v2_VersionedObjectInfo.ref),
-    ?assertEqual(ObjectRef, Version2#domain_conf_v2_VersionedObjectInfo.ref),
-    ?assertEqual(ObjectRef, Version3#domain_conf_v2_VersionedObjectInfo.ref).
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R1}} =
+        Version1,
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R2}} =
+        Version2,
+    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R3}} =
+        Version3,
+
+    ?assertEqual(ObjectRef, R1),
+    ?assertEqual(ObjectRef, R2),
+    ?assertEqual(ObjectRef, R3).
 
 %% Test pagination functionality for object history
 get_object_history_pagination_test(Config) ->
@@ -750,7 +808,12 @@ get_object_history_pagination_test(Config) ->
     ?assertEqual(5, length(AllObjects), "Should get 5 objects across all pages"),
 
     % Check versions are in descending order
-    Versions = [VersionInfo#domain_conf_v2_VersionedObjectInfo.version || VersionInfo <- AllObjects],
+    Versions = [
+        V
+     || #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+        } <- AllObjects
+    ],
     ?assert(is_sorted_desc(Versions), "Versions should be in descending order").
 
 %% Test behavior for nonexistent object reference
@@ -862,7 +925,12 @@ create_n_categories(N, CurrentRevision, AuthorID, Client, Refs) ->
 % Helper to find an object in history by ref and version
 find_object_in_history(HistoryObjects, ObjectRef, ExpectedVersion) ->
     lists:foldl(
-        fun(#domain_conf_v2_VersionedObjectInfo{ref = Ref, version = Version} = Obj, Acc) ->
+        fun(
+            #domain_conf_v2_LimitedVersionedObject{
+                info = #domain_conf_v2_VersionedObjectInfo{ref = Ref, version = Version}
+            } = Obj,
+            Acc
+        ) ->
             case {Ref, Version} of
                 {ObjectRef, ExpectedVersion} ->
                     Obj;

@@ -61,6 +61,31 @@ get_new_version(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+clean_utf8_string(String) ->
+    % Convert to binary if it's not already
+    Binary =
+        case is_binary(String) of
+            true -> String;
+            false -> unicode:characters_to_binary(String)
+        end,
+    % Remove any invalid UTF-8 sequences
+    case unicode:characters_to_binary(Binary, utf8, utf8) of
+        {error, _Invalid, _Rest} ->
+            % If there are invalid characters, try to clean them
+            lists:foldl(
+                fun(Char, Acc) ->
+                    case unicode:characters_to_binary([Char], utf8, utf8) of
+                        {error, _, _} -> Acc;
+                        CleanChar -> <<Acc/binary, CleanChar/binary>>
+                    end
+                end,
+                <<>>,
+                binary_to_list(Binary)
+            );
+        CleanBinary ->
+            CleanBinary
+    end.
+
 insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) ->
     Query = """
     INSERT INTO entity
@@ -68,12 +93,14 @@ insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) ->
     VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), TRUE);
     """,
 
-    Params = [ID1, Type, Version, References1, [], Data1, SearchVector],
+    CleanSearchVector = clean_utf8_string(SearchVector),
+    Params = [ID1, Type, Version, References1, [], Data1, CleanSearchVector],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
             ok;
         {error, Reason} ->
+            logger:error("Error inserting object: ~p~nParams: ~p", [Reason, Params]),
             {error, Reason}
     end.
 
@@ -323,6 +350,46 @@ has_more_all_objects_history(Worker, Offset) ->
             false
     end.
 
+search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
+    % Use a pattern where the condition is always true when Type is NULL
+    TypeValue =
+        case Type of
+            undefined -> <<"NULL">>;
+            _ -> Type
+        end,
+
+    Request = """
+    SELECT id, entity_type, version, references_to, referenced_by,
+    data, is_active, created_at
+    FROM entity
+    WHERE version <= $1
+    AND ($2 = 'NULL' OR entity_type = $2)
+    ORDER BY version DESC
+    LIMIT $3 OFFSET $4
+    """,
+
+    AllParams = [Version, TypeValue, Limit, Offset],
+
+    % Execute the query
+    case epg_pool:query(Worker, Request, AllParams) of
+        {ok, Columns, Rows} ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            NewOffset0 = Offset + Limit,
+            HasMoreResults = has_more_search_results(
+                Worker, <<"*">>, Version, TypeValue, NewOffset0
+            ),
+            NewOffset1 =
+                case HasMoreResults of
+                    true -> NewOffset0;
+                    false -> undefined
+                end,
+
+            {ok, {Objects, NewOffset1}};
+        {error, Reason} ->
+            _ = logger:error("Error fetching search results: ~p", [Reason]),
+            _ = logger:error("Error fetching search Params: ~p", [AllParams]),
+            {ok, {[], undefined}}
+    end;
 search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     % Use a pattern where the condition is always true when Type is NULL
     TypeValue =
@@ -364,6 +431,25 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     end.
 
 % Helper function to check if there are more search results
+has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
+    CheckMoreQuery = """
+    SELECT 1 FROM entity
+    WHERE version <= $1
+    AND ($2 = 'NULL' OR entity_type = $2)
+    LIMIT 1 OFFSET $3
+    """,
+
+    case epg_pool:query(Worker, CheckMoreQuery, [Version, TypeValue, Offset]) of
+        % At least one more result exists
+        {ok, _, [_]} ->
+            true;
+        % No more results or error
+        {ok, _, []} ->
+            false;
+        {error, Reason} ->
+            _ = logger:error("Error checking for more search results: ~p", [Reason]),
+            false
+    end;
 has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
     CheckMoreQuery = """
     SELECT 1 FROM entity

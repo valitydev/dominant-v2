@@ -7,6 +7,7 @@
 -export([
     insert/3,
     get/2,
+    get_by_email/2,
     delete/2,
     list/3,
     search/3
@@ -46,6 +47,26 @@ get_(Worker, AuthorID) ->
     WHERE id = $1::uuid
     """,
     Params = [AuthorID],
+    case epg_pool:query(Worker, Sql, Params) of
+        {ok, _Columns, [{ID, Name, Email}]} ->
+            {ok, #domain_conf_v2_Author{
+                id = ID,
+                name = Name,
+                email = Email
+            }};
+        {ok, _, []} ->
+            {error, author_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+get_by_email(Worker, Email) ->
+    Sql = """
+    SELECT id, name, email
+    FROM author
+    WHERE email = $1
+    """,
+    Params = [Email],
     case epg_pool:query(Worker, Sql, Params) of
         {ok, _Columns, [{ID, Name, Email}]} ->
             {ok, #domain_conf_v2_Author{

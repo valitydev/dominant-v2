@@ -7,6 +7,7 @@
 -export([
     insert/2,
     get/1,
+    get_by_email/1,
     delete/1
 ]).
 
@@ -21,6 +22,9 @@ insert(Name, Email) ->
 
 get(AuthorID) ->
     dmt_author_database:get(?POOL_NAME, AuthorID).
+
+get_by_email(Email) ->
+    dmt_author_database:get_by_email(?POOL_NAME, Email).
 
 delete(AuthorID) ->
     dmt_author_database:delete(?POOL_NAME, AuthorID).

@@ -10,25 +10,16 @@
 -export([get_object_history/2]).
 -export([get_all_objects_history/1]).
 -export([search_objects/1]).
+-export([search_full_objects/1]).
 
 %%
 
 get_object(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
-        {ok, #{
-            version := Version,
-            data := Data,
-            created_at := CreatedAt,
-            created_by := CreatedBy
-        }} ->
+        {ok, #{data := Data} = Object} ->
             % io:format("get_object Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
-                info = #domain_conf_v2_VersionedObjectInfo{
-                    version = Version,
-                    ref = ObjectRef,
-                    changed_at = CreatedAt,
-                    changed_by = CreatedBy
-                },
+                info = marshall_to_object_info(Object),
                 object = Data
             }};
         {error, Reason} ->
@@ -63,10 +54,18 @@ get_object_history(ObjectRef, RequestParams) ->
     Offset1 = maybe_from_string(Offset0, 0),
     maybe
         StringRef = dmt_mapper:to_string(ObjectRef),
-        {ok, Objects0, NewOffset} ?= dmt_database:get_object_history(default_pool, StringRef, Limit, Offset1),
+        {ok, Objects0, NewOffset} ?=
+            dmt_database:get_object_history(default_pool, StringRef, Limit, Offset1),
         {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
         Result = #domain_conf_v2_ObjectVersionsResponse{
-            result = [marshall_to_object_info(O) || O <- Objects1],
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
             total_count = length(Objects1),
             continuation_token = maybe_to_string(NewOffset, undefined)
         },
@@ -89,10 +88,18 @@ get_all_objects_history(Request) ->
     } = Request,
     Offset1 = maybe_from_string(Offset0, 0),
     maybe
-        {ok, Objects0, NewOffset} ?= dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
+        {ok, Objects0, NewOffset} ?=
+            dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
         {ok, Objects1} ?= add_created_by_to_objects(default_pool, Objects0),
         Result = #domain_conf_v2_ObjectVersionsResponse{
-            result = [marshall_to_object_info(O) || O <- Objects1],
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
             total_count = length(Objects1),
             continuation_token = maybe_to_string(NewOffset, undefined)
         },
@@ -127,6 +134,7 @@ search_objects(Request) ->
 
     maybe
         ok ?= maybe_check_entity_type_exists(Type),
+        _ = logger:warning("Query: ~p", [Query]),
         {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
             default_pool,
             Query,
@@ -137,7 +145,53 @@ search_objects(Request) ->
         ),
         {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
         Result = #domain_conf_v2_SearchResponse{
-            result = [marshall_to_object_info(Object) || Object <- Objects1],
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, object_type_not_found} ->
+            {error, object_type_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+search_full_objects(Request) ->
+    #domain_conf_v2_SearchRequestParams{
+        query = Query,
+        version = Version,
+        limit = Limit,
+        type = Type,
+        continuation_token = ContinuationToken
+    } = Request,
+
+    maybe
+        ok ?= maybe_check_entity_type_exists(Type),
+        {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
+            default_pool,
+            Query,
+            Version,
+            Type,
+            Limit,
+            maybe_from_string(ContinuationToken, 0)
+        ),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_SearchFullResponse{
+            result = [
+                #domain_conf_v2_VersionedObject{
+                    info = marshall_to_object_info(Object),
+                    object = Data
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
             total_count = length(Objects1),
             continuation_token = maybe_to_string(NewOffset, undefined)
         },
@@ -393,6 +447,10 @@ insert_object(Worker, Type, ID0, Version, References0, Data0) ->
         ok ->
             ID0;
         {error, Reason} ->
+            logger:error(
+                "insert_object Type: ~p, ID: ~p, Version: ~p, References: ~p, Data: ~p, SearchVector: ~p",
+                [Type, ID0, Version, References1, Data1, SearchVector]
+            ),
             throw({error, Reason})
     end.
 
@@ -508,14 +566,10 @@ get_target_object(Worker, Ref, Version) ->
                 {ok, Object} ->
                     add_created_by_to_object(Worker, Object);
                 {error, not_found} ->
-                    {error, {object_not_found, Ref}};
-                {error, Error} ->
-                    throw({error, Error})
+                    {error, {object_not_found, Ref}}
             end;
         false ->
-            {error, version_not_found};
-        {error, Error} ->
-            throw({error, Error})
+            {error, version_not_found}
     end.
 
 add_created_by_to_objects(Worker, Objects) ->
@@ -546,14 +600,10 @@ get_latest_target_object(Worker, Ref) ->
 
     case dmt_database:get_latest_object(Worker, Ref0) of
         {ok, LatestObject} ->
-            {ok, LatestObject};
+            add_created_by_to_object(Worker, LatestObject);
         {error, not_found} ->
-            {error, {object_not_found, Ref}};
-        {error, Error} ->
-            throw({error, Error})
+            {error, {object_not_found, Ref}}
     end.
 
 get_object_ref({Type, {_Object, ID, _Data}}) ->
-    {ok, {Type, ID}};
-get_object_ref(Obj) ->
-    {error, {is_not_domain_object, Obj}}.
+    {ok, {Type, ID}}.

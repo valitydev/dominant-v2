@@ -50,6 +50,15 @@ do_handle_function('SearchObjects', {RequestParams}, _Context, _Options) ->
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end;
+do_handle_function('SearchFullObjects', {RequestParams}, _Context, _Options) ->
+    case dmt_repository:search_full_objects(RequestParams) of
+        {ok, Result} ->
+            {ok, Result};
+        {error, object_type_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_ObjectTypeNotFound{});
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
+    end;
 do_handle_function('GetObjectHistory', {ObjectRef, RequestParams}, _Context, _Options) ->
     case dmt_repository:get_object_history(ObjectRef, RequestParams) of
         {ok, Result} ->

@@ -10,13 +10,15 @@
     get_all_objects_history/2,
     get_latest_version/1,
     commit/4,
-    search_objects/2
+    search_objects/2,
+    search_full_objects/2
 ]).
 
 -export([
     create_author/2,
     get_author/2,
-    delete_author/2
+    delete_author/2,
+    get_author_by_email/2
 ]).
 
 checkout_object(VersionRef, ObjectRef, Client) ->
@@ -42,6 +44,10 @@ search_objects(Request, Client) ->
     Args = [Request],
     dmt_client_api:call(repository, 'SearchObjects', Args, Client).
 
+search_full_objects(Request, Client) ->
+    Args = [Request],
+    dmt_client_api:call(repository, 'SearchFullObjects', Args, Client).
+
 create_author(Params, Client) ->
     Args = [Params],
     dmt_client_api:call(author, 'Create', Args, Client).
@@ -49,6 +55,10 @@ create_author(Params, Client) ->
 get_author(ID, Client) ->
     Args = [ID],
     dmt_client_api:call(author, 'Get', Args, Client).
+
+get_author_by_email(Email, Client) ->
+    Args = [Email],
+    dmt_client_api:call(author, 'GetByEmail', Args, Client).
 
 delete_author(ID, Client) ->
     Args = [ID],

@@ -33,6 +33,15 @@ do_handle_function('Get', {AuthorID}, _Context, _Options) ->
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
     end;
+do_handle_function('GetByEmail', {Email}, _Context, _Options) ->
+    case dmt_author:get_by_email(Email) of
+        {ok, Author} ->
+            {ok, Author};
+        {error, author_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_AuthorNotFound{});
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
+    end;
 do_handle_function('Delete', {AuthorID}, _Context, _Options) ->
     case dmt_author:delete(AuthorID) of
         ok ->

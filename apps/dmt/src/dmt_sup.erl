@@ -63,8 +63,13 @@ dbinit() ->
     MigrationsPath = WorkDir ++ "/migrations",
     Cmd = "run",
     case dmt_db_migration:process(["-d", MigrationsPath, Cmd]) of
-        ok -> ok;
-        {error, Reason} -> throw({migrations_error, Reason})
+        ok ->
+            _ = logger:warning("entity_type: ~p", [
+                epg_pool:query(default_pool, "SELECT * FROM entity_type;")
+            ]),
+            ok;
+        {error, Reason} ->
+            throw({migrations_error, Reason})
     end.
 
 set_database_url() ->
@@ -80,7 +85,8 @@ set_database_url() ->
     %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
     PgPortStr = erlang:integer_to_list(PgPort),
     Value =
-        "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++ DbName,
+        "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++
+            DbName,
     true = os:putenv("DATABASE_URL", Value).
 
 %% internal functions
