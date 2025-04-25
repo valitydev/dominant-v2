@@ -539,7 +539,7 @@ get_insert_object_id(Worker, Ref, _Type) ->
     Ref0 = dmt_mapper:to_string(Ref),
     case dmt_database:check_if_object_id_active(Worker, Ref0) of
         true ->
-            throw({error, {conflict, {forced_id_exists, Ref}}});
+            throw({error, {operation_error, {conflict, {forced_id_exists, Ref}}}});
         false ->
             Ref;
         {error, Reason} ->
