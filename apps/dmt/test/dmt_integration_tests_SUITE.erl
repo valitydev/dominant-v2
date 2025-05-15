@@ -61,7 +61,6 @@ all() ->
     [
         {group, author_tests},
         {group, repository_tests}
-        %%        {group, repository_client_tests}
     ].
 
 %% Define test groups
@@ -86,16 +85,9 @@ groups() ->
             get_object_history_test,
             get_object_history_pagination_test,
             get_object_history_nonexistent_test
-        ]},
-        {repository_client_tests, [], []}
+        ]}
     ].
 
-init_per_group(repository_client_tests, C) ->
-    Client = dmt_ct_helper:cfg(client, C),
-    [
-        {author_id, create_author(<<"repository_client_tests@tests">>, Client)}
-        | C
-    ];
 init_per_group(_, C) ->
     C.
 
@@ -588,9 +580,7 @@ get_all_objects_history_pagination_test(Config) ->
             lists:any(
                 fun(
                     #domain_conf_v2_LimitedVersionedObject{
-                        info = #domain_conf_v2_VersionedObjectInfo{
-                            ref = {category, #domain_CategoryRef{id = ObjId}}
-                        }
+                        ref = {category, #domain_CategoryRef{id = ObjId}}
                     }
                 ) ->
                     RefId =:= ObjId
@@ -731,11 +721,11 @@ get_object_history_test(Config) ->
     ?assertEqual(Revision1, V3, "First version should be last"),
 
     % Verify all objects have correct reference
-    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R1}} =
+    #domain_conf_v2_LimitedVersionedObject{ref = R1} =
         Version1,
-    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R2}} =
+    #domain_conf_v2_LimitedVersionedObject{ref = R2} =
         Version2,
-    #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{ref = R3}} =
+    #domain_conf_v2_LimitedVersionedObject{ref = R3} =
         Version3,
 
     ?assertEqual(ObjectRef, R1),
@@ -927,7 +917,8 @@ find_object_in_history(HistoryObjects, ObjectRef, ExpectedVersion) ->
     lists:foldl(
         fun(
             #domain_conf_v2_LimitedVersionedObject{
-                info = #domain_conf_v2_VersionedObjectInfo{ref = Ref, version = Version}
+                ref = Ref,
+                info = #domain_conf_v2_VersionedObjectInfo{version = Version}
             } = Obj,
             Acc
         ) ->

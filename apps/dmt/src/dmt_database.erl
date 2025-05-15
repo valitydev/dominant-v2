@@ -9,6 +9,7 @@
 -export([check_if_object_id_active/2]).
 -export([check_version_exists/2]).
 -export([get_object/3]).
+-export([get_objects/3]).
 -export([get_latest_object/2]).
 -export([get_version_creator/2]).
 -export([get_object_history/4]).
@@ -197,12 +198,38 @@ get_object(Worker, ID0, Version) ->
     LIMIT 1
     """,
 
-    case epg_pool:query(Worker, Request, [ID0, Version]) of
-        {ok, _Columns, []} ->
+    {ok, Columns, Rows} = epg_pool:query(Worker, Request, [ID0, Version]),
+    Result0 = dmt_mapper:to_marshalled_maps(Columns, Rows),
+    Result1 = dmt_object:filter_out_inactive_objects(Result0),
+    case Result1 of
+        [] ->
             {error, not_found};
-        {ok, Columns, Rows} ->
-            [Result | _] = dmt_mapper:to_marshalled_maps(Columns, Rows),
+        [Result | _] ->
             {ok, Result}
+    end.
+
+get_objects(Worker, IDs, Version) ->
+    Request = """
+    SELECT DISTINCT ON (id) id,
+           entity_type,
+           version,
+           references_to,
+           referenced_by,
+           data,
+           is_active,
+           created_at
+    FROM entity
+    WHERE id = ANY($1) AND version <= $2
+    ORDER BY id, version DESC;
+    """,
+
+    case epg_pool:query(Worker, Request, [IDs, Version]) of
+        {ok, Columns, Rows} ->
+            Results = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            {ok, dmt_object:filter_out_inactive_objects(Results)};
+        {error, Reason} ->
+            logger:error("Error fetching objects: ~p. IDs: ~p, Version: ~p", [Reason, IDs, Version]),
+            {error, Reason}
     end.
 
 get_latest_object(Worker, ID0) ->
@@ -221,11 +248,13 @@ get_latest_object(Worker, ID0) ->
     LIMIT 1
     """,
 
-    case epg_pool:query(Worker, Request, [ID0]) of
-        {ok, _Columns, []} ->
+    {ok, Columns, Rows} = epg_pool:query(Worker, Request, [ID0]),
+    Result0 = dmt_mapper:to_marshalled_maps(Columns, Rows),
+    Result1 = dmt_object:filter_out_inactive_objects(Result0),
+    case Result1 of
+        [] ->
             {error, not_found};
-        {ok, Columns, Rows} ->
-            [Result | _] = dmt_mapper:to_marshalled_maps(Columns, Rows),
+        [Result | _] ->
             {ok, Result}
     end.
 

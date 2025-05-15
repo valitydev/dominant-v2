@@ -6,6 +6,7 @@
 
 -export([commit/3]).
 -export([get_object/3]).
+-export([get_objects/3]).
 -export([get_latest_version/0]).
 -export([get_object_history/2]).
 -export([get_all_objects_history/1]).
@@ -36,7 +37,6 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
             {ok, #domain_conf_v2_VersionedObject{
                 info = #domain_conf_v2_VersionedObjectInfo{
                     version = Version,
-                    ref = ObjectRef,
                     changed_at = CreatedAt,
                     changed_by = CreatedBy
                 },
@@ -45,6 +45,53 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+get_objects(Worker, {version, V}, ObjectRefs) ->
+    case dmt_database:check_version_exists(Worker, V) of
+        true ->
+            % Convert references to strings
+            StringRefs = lists:map(fun dmt_mapper:to_string/1, ObjectRefs),
+            % Get objects from database
+            case dmt_database:get_objects(Worker, StringRefs, V) of
+                {ok, Objects0} ->
+                    Objects1 = sort_objects_by_ids(Objects0, ObjectRefs),
+                    % Add created_by information to objects
+                    {ok, EnrichedObjects} = add_created_by_to_objects(Worker, Objects1),
+                    % Map each object to VersionedObject format
+                    VersionedObjects = [
+                        #domain_conf_v2_VersionedObject{
+                            info = marshall_to_object_info(Object),
+                            object = maps:get(data, Object)
+                        }
+                     || Object <- EnrichedObjects
+                    ],
+                    {ok, VersionedObjects};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        false ->
+            {error, version_not_found}
+    end;
+get_objects(Worker, {head, #domain_conf_v2_Head{}}, ObjectRefs) ->
+    % For head, we need to get the latest version first
+    case dmt_database:get_latest_version(Worker) of
+        {ok, LatestVersion} ->
+            get_objects(Worker, {version, LatestVersion}, ObjectRefs);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+sort_objects_by_ids(Objects, IDs) ->
+    % Create a map of ID -> Object for easier lookup
+    ObjectsMap = maps:from_list([{maps:get(id, Obj), Obj} || Obj <- Objects]),
+
+    % Use list comprehension to order objects according to input IDs
+    % Skip IDs that don't have corresponding objects
+    [
+        maps:get(ID, ObjectsMap, undefined)
+     || ID <- IDs,
+        maps:is_key(ID, ObjectsMap)
+    ].
 
 get_object_history(ObjectRef, RequestParams) ->
     #domain_conf_v2_RequestParams{
@@ -61,6 +108,7 @@ get_object_history(ObjectRef, RequestParams) ->
             result = [
                 #domain_conf_v2_LimitedVersionedObject{
                     info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
                     name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
                     description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
                 }
@@ -95,6 +143,7 @@ get_all_objects_history(Request) ->
             result = [
                 #domain_conf_v2_LimitedVersionedObject{
                     info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
                     name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
                     description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
                 }
@@ -118,7 +167,6 @@ maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
 marshall_to_object_info(Object) ->
     #domain_conf_v2_VersionedObjectInfo{
         version = maps:get(version, Object),
-        ref = maps:get(id, Object),
         changed_at = maps:get(created_at, Object),
         changed_by = maps:get(created_by, Object)
     }.
@@ -134,7 +182,6 @@ search_objects(Request) ->
 
     maybe
         ok ?= maybe_check_entity_type_exists(Type),
-        _ = logger:warning("Query: ~p", [Query]),
         {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
             default_pool,
             Query,
@@ -148,6 +195,7 @@ search_objects(Request) ->
             result = [
                 #domain_conf_v2_LimitedVersionedObject{
                     info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
                     name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
                     description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
                 }

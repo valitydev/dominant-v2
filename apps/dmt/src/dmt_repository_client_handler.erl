@@ -23,4 +23,12 @@ do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options
             woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
         {error, {object_not_found, _Ref}} ->
             woody_error:raise(business, #domain_conf_v2_ObjectNotFound{})
+    end;
+do_handle_function('CheckoutObjects', {VersionRef, ObjectRefs}, _Context, _Options) ->
+    %% Fetch multiple objects based on VersionReference and Reference list
+    case dmt_repository:get_objects(?EPGPOOL, VersionRef, ObjectRefs) of
+        {ok, Objects} ->
+            {ok, Objects};
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{})
     end.

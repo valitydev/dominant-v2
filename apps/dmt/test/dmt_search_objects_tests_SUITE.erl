@@ -26,7 +26,8 @@
     search_full_objects_basic_test/1,
     search_full_objects_with_filter_test/1,
     search_full_objects_pagination_test/1,
-    search_objects_without_name_desc_test/1
+    search_objects_without_name_desc_test/1,
+    checkout_deleted_version_test/1
 ]).
 
 %% Initialize per suite
@@ -60,7 +61,8 @@ groups() ->
             search_invalid_query_test,
             search_full_objects_basic_test,
             search_full_objects_with_filter_test,
-            search_full_objects_pagination_test
+            search_full_objects_pagination_test,
+            checkout_deleted_version_test
         ]}
     ].
 
@@ -128,8 +130,8 @@ search_basic_test(Config) ->
     ?assertMatch(
         [
             #domain_conf_v2_LimitedVersionedObject{
+                ref = {category, CategoryRef},
                 info = #domain_conf_v2_VersionedObjectInfo{
-                    ref = {category, CategoryRef},
                     version = Version,
                     % Timestamp will vary
                     changed_at = _,
@@ -214,7 +216,7 @@ search_with_type_filter_test(Config) ->
     Types = lists:usort([
         Type
      || #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{ref = {Type, _}}
+            ref = {Type, _}
         } <- NoFilterResults
     ]),
     ?assertEqual([category, terminal], lists:sort(Types), "Should find both types without filter"),
@@ -237,7 +239,7 @@ search_with_type_filter_test(Config) ->
     % Verify we only have a category
     [
         #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{ref = {ResultType, _}}
+            ref = {ResultType, _}
         }
     ] = CategoryResults,
     ?assertEqual(category, ResultType, "Should only find category with category filter"),
@@ -260,7 +262,7 @@ search_with_type_filter_test(Config) ->
     % Verify we only have a terminal
     [
         #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{ref = {ResultType2, _}}
+            ref = {ResultType2, _}
         }
     ] = TerminalResults,
     ?assertEqual(terminal, ResultType2, "Should only find terminal with terminal filter").
@@ -364,7 +366,7 @@ search_pagination_test(Config) ->
     AllRefs = [
         Ref
      || #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+            ref = Ref
         } <- AllResults
     ],
     UniqueRefs = lists:usort(AllRefs),
@@ -444,7 +446,10 @@ search_with_version_filter_test(Config) ->
     ?assertEqual(1, CountV1, "Should find only one object at version 1"),
     [
         #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{version = V1}
+            ref = {category, CategoryRef},
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = V1
+            }
         }
     ] = ResultsV1,
     ?assertEqual(Revision1, V1, "Object should be from version 1"),
@@ -465,7 +470,10 @@ search_with_version_filter_test(Config) ->
     Versions2 = lists:usort([
         V
      || #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+            ref = {category, CategoryRef},
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = V
+            }
         } <- ResultsV2
     ]),
     ?assertEqual(
@@ -488,7 +496,10 @@ search_with_version_filter_test(Config) ->
     Versions3 = lists:usort([
         V
      || #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{version = V}
+            ref = {category, CategoryRef},
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = V
+            }
         } <- ResultsV3
     ]),
     ?assertEqual(
@@ -583,14 +594,14 @@ search_multiple_terms_test(Config) ->
     % The object found by the AND query should be included in both single-term result sets
     [
         #domain_conf_v2_LimitedVersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{ref = BothTermsRef}
+            ref = BothTermsRef
         }
     ] = Results3,
     ?assert(
         lists:any(
             fun(
                 #domain_conf_v2_LimitedVersionedObject{
-                    info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+                    ref = Ref
                 }
             ) ->
                 Ref =:= BothTermsRef
@@ -603,7 +614,7 @@ search_multiple_terms_test(Config) ->
         lists:any(
             fun(
                 #domain_conf_v2_LimitedVersionedObject{
-                    info = #domain_conf_v2_VersionedObjectInfo{ref = Ref}
+                    ref = Ref
                 }
             ) ->
                 Ref =:= BothTermsRef
@@ -737,7 +748,6 @@ search_full_objects_basic_test(Config) ->
     ?assertMatch(
         #domain_conf_v2_VersionedObject{
             info = #domain_conf_v2_VersionedObjectInfo{
-                ref = {category, CategoryRef},
                 version = Version
             },
             object =
@@ -842,7 +852,11 @@ search_full_objects_with_filter_test(Config) ->
     ?assertEqual(1, CategoryCount, "Should find only the category with type filter"),
 
     % Verify we only have a category
-    [#domain_conf_v2_VersionedObject{object = {ResultType, _}}] = CategoryResults,
+    [
+        #domain_conf_v2_VersionedObject{
+            object = {ResultType, _}
+        }
+    ] = CategoryResults,
     ?assertEqual(category, ResultType, "Should only find category with category filter"),
 
     % Search with terminal filter
@@ -861,7 +875,11 @@ search_full_objects_with_filter_test(Config) ->
     ?assertEqual(1, TerminalCount, "Should find only the terminal with type filter"),
 
     % Verify we only have a terminal
-    [#domain_conf_v2_VersionedObject{object = {ResultType2, _}}] = TerminalResults,
+    [
+        #domain_conf_v2_VersionedObject{
+            object = {ResultType2, _}
+        }
+    ] = TerminalResults,
     ?assertEqual(terminal, ResultType2, "Should only find terminal with terminal filter").
 
 % Test pagination of full objects
@@ -963,9 +981,7 @@ search_full_objects_pagination_test(Config) ->
     AllRefs = [
         Ref
      || #domain_conf_v2_VersionedObject{
-            info = #domain_conf_v2_VersionedObjectInfo{
-                ref = Ref
-            }
+            object = {_, #domain_DummyObject{ref = Ref}}
         } <- AllResults
     ],
     UniqueRefs = lists:usort(AllRefs),
@@ -1030,8 +1046,8 @@ search_objects_without_name_desc_test(Config) ->
     ?assertMatch(
         [
             #domain_conf_v2_LimitedVersionedObject{
+                ref = {dummy, DummyRef},
                 info = #domain_conf_v2_VersionedObjectInfo{
-                    ref = {dummy, DummyRef},
                     version = Version
                 },
                 name = undefined,
@@ -1072,7 +1088,6 @@ search_objects_without_name_desc_test(Config) ->
         [
             #domain_conf_v2_VersionedObject{
                 info = #domain_conf_v2_VersionedObjectInfo{
-                    ref = {dummy, DummyRef},
                     version = Version
                 },
                 object =
@@ -1084,6 +1099,63 @@ search_objects_without_name_desc_test(Config) ->
         ],
         FullResults,
         "Should return the full dummy object"
+    ).
+
+% Test that checking out an object at a version where it was subsequently deleted fails
+checkout_deleted_version_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"checkout_deleted_version_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Commit 1: Insert an object
+    Revision0 = 0,
+    CategoryName = <<"category_to_be_deleted">>,
+    CategoryDesc = <<"This category will be deleted">>,
+
+    InsertOperations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName,
+                    description = CategoryDesc
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version1,
+        new_objects = NewObjects1
+    }} = dmt_client:commit(Revision0, InsertOperations, AuthorID, Client),
+
+    [{category, #domain_CategoryObject{ref = CategoryRef}}] = ordsets:to_list(NewObjects1),
+
+    % Commit 2: Remove the object
+    RemoveOperations = [
+        {remove, #domain_conf_v2_RemoveOp{
+            ref = {category, CategoryRef}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        % Version after removal
+        version = Version2
+    }} = dmt_client:commit(Version1, RemoveOperations, AuthorID, Client),
+    % Ensure version incremented
+    ?assertNotEqual(Version1, Version2),
+
+    % Attempt to checkout the object at Version1 (where it existed but was later removed)
+    % We expect this to fail because the object is no longer considered valid at Version1
+    % after the removal operation in Version2.
+    CheckoutResult = dmt_client:checkout_object(
+        {version, Version2}, {category, CategoryRef}, Client
+    ),
+
+    ?assertMatch(
+        {exception, #domain_conf_v2_ObjectNotFound{}},
+        CheckoutResult,
+        "Should fail with ObjectNotFound when checking out a version that has been deleted"
     ).
 
 %% Helper function
