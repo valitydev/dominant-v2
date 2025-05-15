@@ -31,4 +31,12 @@ do_handle_function('CheckoutObjects', {VersionRef, ObjectRefs}, _Context, _Optio
             {ok, Objects};
         {error, version_not_found} ->
             woody_error:raise(business, #domain_conf_v2_VersionNotFound{})
+    end;
+do_handle_function('CheckoutSnapshot', {Version}, _Context, _Options) ->
+    %% Fetch all objects based on VersionReference
+    case dmt_repository:get_snapshot(?EPGPOOL, Version) of
+        {ok, Snapshot} ->
+            {ok, Snapshot};
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{})
     end.

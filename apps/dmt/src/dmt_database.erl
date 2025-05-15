@@ -12,10 +12,12 @@
 -export([get_objects/3]).
 -export([get_latest_object/2]).
 -export([get_version_creator/2]).
+-export([get_version/2]).
 -export([get_object_history/4]).
 -export([get_all_objects_history/3]).
 -export([search_objects/6]).
 -export([check_entity_type_exists/2]).
+-export([get_all_objects/2]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -273,6 +275,25 @@ get_version_creator(Worker, Version) ->
             {ok, CreatedBy}
     end.
 
+get_version(Worker, Version) ->
+    Request = """
+    SELECT version, created_at, created_by
+    FROM version
+    WHERE version = $1
+    LIMIT 1
+    """,
+
+    case epg_pool:query(Worker, Request, [Version]) of
+        {ok, _Columns, []} ->
+            {error, not_found};
+        {ok, _Columns, [{Version, CreatedAt, CreatedBy}]} ->
+            {ok, #{
+                version => Version,
+                created_at => CreatedAt,
+                created_by => CreatedBy
+            }}
+    end.
+
 get_object_history(Worker, Ref, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -517,4 +538,40 @@ check_entity_type_exists(Worker, Type) ->
         {error, Reason} ->
             _ = logger:error("Error checking for more search results: ~p", [Reason]),
             {error, object_type_not_found}
+    end.
+
+get_all_objects(Worker, Version) ->
+    Query = """
+    WITH LatestVersions AS (
+        -- Subquery to find the latest version for each entity ID
+        SELECT id, MAX(version) AS max_version
+        FROM entity
+        GROUP BY id
+    ),
+    LatestActiveStatus AS (
+        -- Subquery to get the is_active status of the latest version of each entity
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersions lv ON e.id = lv.id AND e.version = lv.max_version
+    )
+    SELECT e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN LatestActiveStatus las ON e.id = las.id
+    WHERE e.version <= $1 AND las.is_active = TRUE
+    ORDER BY e.id;
+    """,
+    case epg_pool:query(Worker, Query, [Version]) of
+        {ok, Columns, Rows} ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            {ok, Objects};
+        {error, Reason} ->
+            logger:error("Error fetching all objects for version ~p: ~p", [Version, Reason]),
+            {error, Reason}
     end.

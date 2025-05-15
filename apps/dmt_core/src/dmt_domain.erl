@@ -7,6 +7,7 @@
 %%
 
 -export([references/1]).
+-export([get_data/1]).
 -export([maybe_get_domain_object_data_field/2]).
 
 -define(DOMAIN, dmsl_domain_thrift).

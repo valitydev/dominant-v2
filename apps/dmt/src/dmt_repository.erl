@@ -7,6 +7,7 @@
 -export([commit/3]).
 -export([get_object/3]).
 -export([get_objects/3]).
+-export([get_snapshot/2]).
 -export([get_latest_version/0]).
 -export([get_object_history/2]).
 -export([get_all_objects_history/1]).
@@ -79,6 +80,37 @@ get_objects(Worker, {head, #domain_conf_v2_Head{}}, ObjectRefs) ->
             get_objects(Worker, {version, LatestVersion}, ObjectRefs);
         {error, Reason} ->
             {error, Reason}
+    end.
+
+get_snapshot(Worker, {head, #domain_conf_v2_Head{}}) ->
+    case dmt_database:get_latest_version(Worker) of
+        {ok, LatestVersion} ->
+            get_snapshot(Worker, {version, LatestVersion});
+        {error, Reason} ->
+            {error, Reason}
+    end;
+get_snapshot(Worker, {version, Version}) ->
+    case dmt_database:check_version_exists(Worker, Version) of
+        true ->
+            case dmt_database:get_all_objects(Worker, Version) of
+                {ok, Objects} ->
+                    {ok, #{
+                        created_at := CreatedAt,
+                        created_by := AuthorID
+                    }} = dmt_database:get_version(Worker, Version),
+                    {ok, Author} = dmt_author:get(AuthorID),
+                    Domain = #{K => V || #{id := K, data := V} <- Objects},
+                    {ok, #domain_conf_v2_Snapshot{
+                        version = Version,
+                        domain = Domain,
+                        created_at = dmt_mapper:datetime_to_binary(CreatedAt),
+                        changed_by = Author
+                    }};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        false ->
+            {error, version_not_found}
     end.
 
 sort_objects_by_ids(Objects, IDs) ->

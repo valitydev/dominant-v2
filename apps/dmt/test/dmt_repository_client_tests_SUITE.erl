@@ -20,7 +20,10 @@
     checkout_object_test/1,
     checkout_objects_test/1,
     checkout_objects_empty_result_test/1,
-    checkout_objects_partial_result_test/1
+    checkout_objects_partial_result_test/1,
+    checkout_snapshot_test/1,
+    checkout_snapshot_head_test/1,
+    checkout_snapshot_non_existent_version_test/1
 ]).
 
 %% Setup and Teardown
@@ -49,7 +52,10 @@ groups() ->
             checkout_object_test,
             checkout_objects_test,
             checkout_objects_empty_result_test,
-            checkout_objects_partial_result_test
+            checkout_objects_partial_result_test,
+            checkout_snapshot_test,
+            checkout_snapshot_head_test,
+            checkout_snapshot_non_existent_version_test
         ]}
     ].
 
@@ -242,6 +248,194 @@ checkout_objects_partial_result_test(Config) ->
 
     % Get objects by version reference
     {error, _Reason} = dmt_client:checkout_objects({version, Version}, MixedRefs, Client).
+
+checkout_snapshot_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    AuthorID = dmt_ct_helper:cfg(author_id, Config),
+
+    % Create a test category object
+    Category1Data = #domain_Category{
+        name = <<"Snapshot Test Category 1">>,
+        description = <<"Snapshot Test Category Description 1">>
+    },
+    InsertOp1 = #domain_conf_v2_InsertOp{object = {category, Category1Data}},
+
+    % Create a test term set hierarchy object
+    TermSetHierarchyData = #domain_TermSetHierarchy{
+        name = <<"Snapshot Test TermSet">>,
+        description = <<"Snapshot Test TermSet Description">>,
+        term_sets = []
+    },
+    InsertOp2 = #domain_conf_v2_InsertOp{object = {term_set_hierarchy, TermSetHierarchyData}},
+
+    % Insert the objects
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version,
+        new_objects = NewObjectsCommit
+    }} = dmt_client:commit(0, [{insert, InsertOp1}, {insert, InsertOp2}], AuthorID, Client),
+    ?assertEqual(2, ordsets:size(NewObjectsCommit)),
+
+    % Checkout snapshot by version
+    {ok, #domain_conf_v2_Snapshot{
+        version = SnapshotVersion,
+        domain = Domain,
+        changed_by = Author
+    }} = dmt_client:checkout_snapshot({version, Version}, Client),
+
+    ?assertEqual(Version, SnapshotVersion),
+    #domain_conf_v2_Author{id = SnapshotAuthorID} = Author,
+    ?assertEqual(AuthorID, SnapshotAuthorID),
+    ?assertEqual(2, maps:size(Domain)),
+
+    CreatedObjectsList = ordsets:to_list(NewObjectsCommit),
+
+    {category, CreatedCategoryObject} = lists:keyfind(category, 1, CreatedObjectsList),
+    #domain_CategoryObject{ref = CategoryRefID} = CreatedCategoryObject,
+    ?assert(maps:is_key({category, CategoryRefID}, Domain)),
+    {category, SnapCategoryDataRecord} = maps:get({category, CategoryRefID}, Domain),
+
+    #domain_CategoryObject{
+        data = #domain_Category{name = SnapCategoryName}
+    } = SnapCategoryDataRecord,
+    #domain_Category{name = InitialCategoryName} = Category1Data,
+    ?assertEqual(InitialCategoryName, SnapCategoryName),
+
+    {term_set_hierarchy, CreatedTermSetObject} = lists:keyfind(
+        term_set_hierarchy, 1, CreatedObjectsList
+    ),
+    #domain_TermSetHierarchyObject{ref = TermSetRefID} = CreatedTermSetObject,
+    ?assert(maps:is_key({term_set_hierarchy, TermSetRefID}, Domain)),
+    {term_set_hierarchy, SnapTermSetDataRecord} = maps:get(
+        {term_set_hierarchy, TermSetRefID}, Domain
+    ),
+
+    #domain_TermSetHierarchyObject{
+        data = #domain_TermSetHierarchy{name = SnapTermSetName}
+    } = SnapTermSetDataRecord,
+    #domain_TermSetHierarchy{name = InitialTermSetName} = TermSetHierarchyData,
+    ?assertEqual(InitialTermSetName, SnapTermSetName).
+
+checkout_snapshot_head_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    AuthorID = dmt_ct_helper:cfg(author_id, Config),
+
+    %% --- Commit 1: Initial objects ---
+    Category1Data = #domain_Category{
+        name = <<"Head Test Category 1">>,
+        description = <<"Initial version">>
+    },
+    TermSet1Data = #domain_TermSetHierarchy{
+        name = <<"Head Test TermSet 1">>,
+        description = <<"Initial version">>,
+        term_sets = []
+    },
+    InsertOpCategory1 = {insert, #domain_conf_v2_InsertOp{object = {category, Category1Data}}},
+    InsertOpTermSet1 =
+        {insert, #domain_conf_v2_InsertOp{object = {term_set_hierarchy, TermSet1Data}}},
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version1,
+        new_objects = NewObjectsVersion1
+    }} = dmt_client:commit(0, [InsertOpCategory1, InsertOpTermSet1], AuthorID, Client),
+    ?assertEqual(2, ordsets:size(NewObjectsVersion1)),
+
+    % Extract IDs from Commit 1
+    Version1ObjectsList = ordsets:to_list(NewObjectsVersion1),
+    {category, #domain_CategoryObject{ref = Cat1RefID}} = lists:keyfind(
+        category, 1, Version1ObjectsList
+    ),
+    {term_set_hierarchy, #domain_TermSetHierarchyObject{ref = TermSet1RefID}} = lists:keyfind(
+        term_set_hierarchy, 1, Version1ObjectsList
+    ),
+
+    % Checkout head after Commit 1 (optional check, can be removed if too verbose)
+    {ok, #domain_conf_v2_Snapshot{
+        version = Snapshot1Version,
+        domain = Snapshot1Domain
+    }} = dmt_client:checkout_snapshot({head, #domain_conf_v2_Head{}}, Client),
+    ?assertEqual(Version1, Snapshot1Version),
+    ?assertEqual(2, maps:size(Snapshot1Domain)),
+
+    %% --- Commit 2: Update Cat1 and Insert Cat2 (referencing Version1) ---
+    UpdatedCategory1Data = Category1Data#domain_Category{description = <<"Updated in V2">>},
+    UpdateOpCategory1 =
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = Cat1RefID,
+                    data = UpdatedCategory1Data
+                }}
+        }},
+    Category2Data = #domain_Category{
+        name = <<"Head Test Category 2">>,
+        description = <<"Added in V2">>
+    },
+    InsertOpCategory2 = {insert, #domain_conf_v2_InsertOp{object = {category, Category2Data}}},
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version2,
+        % Will contain Cat2, but not necessarily the updated Cat1
+        new_objects = NewObjectsVersion2
+    }} = dmt_client:commit(Version1, [UpdateOpCategory1, InsertOpCategory2], AuthorID, Client),
+
+    % Extract ID for Cat2 if present in new_objects (it should be)
+    Cat2RefID =
+        case ordsets:to_list(NewObjectsVersion2) of
+            [{category, #domain_CategoryObject{ref = RefCat2}}] ->
+                RefCat2;
+            Value ->
+                ct:fail(#{
+                    reason => "Category2 not found in NewObjectsVersion2 as expected",
+                    value => Value
+                })
+        end,
+
+    % Checkout head after Commit 2
+    {ok, #domain_conf_v2_Snapshot{
+        version = Snapshot2Version,
+        domain = Snapshot2Domain,
+        changed_by = Snapshot2Author
+    }} = dmt_client:checkout_snapshot({head, #domain_conf_v2_Head{}}, Client),
+
+    ?assertEqual(Version2, Snapshot2Version),
+    #domain_conf_v2_Author{id = Snapshot2AuthorID} = Snapshot2Author,
+    ?assertEqual(AuthorID, Snapshot2AuthorID),
+    % Cat1 (updated), TermSet1 (original), Cat2 (new)
+    ?assertEqual(3, maps:size(Snapshot2Domain)),
+
+    % Check updated Cat1
+    {category, #domain_CategoryObject{
+        data = #domain_Category{
+            description = Snapshot2Category1Description, name = Snapshot2Category1Name
+        }
+    }} = maps:get({category, Cat1RefID}, Snapshot2Domain),
+    ?assertEqual(UpdatedCategory1Data#domain_Category.description, Snapshot2Category1Description),
+    % Name should be original
+    ?assertEqual(Category1Data#domain_Category.name, Snapshot2Category1Name),
+
+    % Check TermSet1 (should be unchanged from Version1)
+    {term_set_hierarchy, #domain_TermSetHierarchyObject{
+        data = #domain_TermSetHierarchy{
+            name = Snapshot2TermSet1Name, description = Snapshot2TermSet1Description
+        }
+    }} = maps:get({term_set_hierarchy, TermSet1RefID}, Snapshot2Domain),
+    ?assertEqual(TermSet1Data#domain_TermSetHierarchy.name, Snapshot2TermSet1Name),
+    ?assertEqual(TermSet1Data#domain_TermSetHierarchy.description, Snapshot2TermSet1Description),
+
+    % Check new Cat2
+    {category, #domain_CategoryObject{
+        data = #domain_Category{
+            name = Snapshot2Category2Name, description = Snapshot2Category2Description
+        }
+    }} = maps:get({category, Cat2RefID}, Snapshot2Domain),
+    ?assertEqual(Category2Data#domain_Category.name, Snapshot2Category2Name),
+    ?assertEqual(Category2Data#domain_Category.description, Snapshot2Category2Description).
+
+checkout_snapshot_non_existent_version_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    {exception, #domain_conf_v2_VersionNotFound{}} = dmt_client:checkout_snapshot(
+        {version, 999999}, Client
+    ).
 
 % Helper functions
 
