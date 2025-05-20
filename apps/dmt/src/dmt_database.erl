@@ -74,17 +74,11 @@ clean_utf8_string(String) ->
     % Remove any invalid UTF-8 sequences
     case unicode:characters_to_binary(Binary, utf8, utf8) of
         {error, _Invalid, _Rest} ->
-            % If there are invalid characters, try to clean them
-            lists:foldl(
-                fun(Char, Acc) ->
-                    case unicode:characters_to_binary([Char], utf8, utf8) of
-                        {error, _, _} -> Acc;
-                        CleanChar -> <<Acc/binary, CleanChar/binary>>
-                    end
-                end,
-                <<>>,
-                binary_to_list(Binary)
-            );
+            % If there are invalid characters, assume the binary is Latin-1
+            % and convert it to UTF-8.
+            % binary_to_list(Binary) gives a list of bytes (0-255),
+            % which are treated as Latin-1 codepoints.
+            unicode:characters_to_binary(binary_to_list(Binary), utf8);
         CleanBinary ->
             CleanBinary
     end.
@@ -124,7 +118,8 @@ update_object(
     VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), $8);
     """,
 
-    Params = [ID1, Type, Version, References1, ReferencedBy1, Data1, SearchVector, IsActive],
+    CleanSearchVector = clean_utf8_string(SearchVector),
+    Params = [ID1, Type, Version, References1, ReferencedBy1, Data1, CleanSearchVector, IsActive],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->

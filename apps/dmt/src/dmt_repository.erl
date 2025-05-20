@@ -214,10 +214,11 @@ search_objects(Request) ->
 
     maybe
         ok ?= maybe_check_entity_type_exists(Type),
+        Version2 = get_version(default_pool, Version),
         {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
             default_pool,
             Query,
-            Version,
+            Version2,
             Type,
             Limit,
             maybe_from_string(ContinuationToken, 0)
@@ -255,10 +256,11 @@ search_full_objects(Request) ->
 
     maybe
         ok ?= maybe_check_entity_type_exists(Type),
+        Version2 = get_version(default_pool, Version),
         {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
             default_pool,
             Query,
-            Version,
+            Version2,
             Type,
             Limit,
             maybe_from_string(ContinuationToken, 0)
@@ -287,39 +289,72 @@ maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
 assemble_operations(Worker, Operations) ->
-    lists:foldl(
-        fun assemble_operations_/2,
+    {_, Inserts, Updates1, UpdatedObjects} = lists:foldl(
+        fun assemble_operations_parse/2,
         {Worker, [], #{}, []},
         Operations
-    ).
+    ),
+    {_, Updates2} = lists:foldl(
+        fun assemble_operations_refs_insert/2,
+        {Worker, Updates1},
+        Inserts
+    ),
+    {_, Updates3} = lists:foldl(
+        fun assemble_operations_refs_update/2,
+        {Worker, Updates2},
+        maps:values(Updates2)
+    ),
+    {Worker, Inserts, Updates3, UpdatedObjects}.
 
-assemble_operations_(
+assemble_operations_parse(
     Operation,
     {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
             {ok, NewObject} = dmt_object:new_object(InsertOp),
-            #{
-                tmp_id := TmpID,
-                references := Refers
-            } = NewObject,
 
-            Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
-            {Worker, [NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
+            {Worker, [NewObject | InsertsAcc], UpdatesAcc, UpdatedObjectsAcc};
         {update, #domain_conf_v2_UpdateOp{object = Object}} ->
             {ok, Ref} = get_object_ref(Object),
             {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
             {ok, ObjectUpdate} = dmt_object:update_object(Object, Changes),
-            UpdatesAcc1 = update_referenced_objects(Worker, Changes, ObjectUpdate, UpdatesAcc),
-            {Worker, InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
             {ok, OG} = get_original_object_changes(Worker, UpdatesAcc, Ref),
-            #{references := OriginalReferences} = OG,
-            UpdatesAcc1 = update_objects_removed_refs(Worker, Ref, OriginalReferences, UpdatesAcc),
 
             NewObjectState = dmt_object:remove_object(OG),
-            {Worker, InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
+    end.
+
+assemble_operations_refs_insert(
+    Insert,
+    {Worker, UpdatesAcc}
+) ->
+    #{
+        tmp_id := TmpID,
+        references := Refers
+    } = Insert,
+    Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
+    {Worker, Updates1}.
+
+assemble_operations_refs_update(
+    Update,
+    {Worker, UpdatesAcc}
+) ->
+    #{
+        id := Ref,
+        is_active := IsActive
+    } = Update,
+    {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
+    case IsActive of
+        true ->
+            UpdatesAcc1 = update_referenced_objects(Worker, Changes, Update, UpdatesAcc),
+            {Worker, UpdatesAcc1};
+        false ->
+            #{references := OriginalReferences} = Changes,
+            UpdatesAcc1 = update_objects_removed_refs(Worker, Ref, OriginalReferences, UpdatesAcc),
+            {Worker, UpdatesAcc1}
     end.
 
 update_referenced_objects(Worker, OriginalObjectChanges, ObjectChanges, Updates) ->
@@ -684,6 +719,12 @@ get_latest_target_object(Worker, Ref) ->
         {error, not_found} ->
             {error, {object_not_found, Ref}}
     end.
+
+get_version(Worker, undefined) ->
+    {ok, LatestVersion} = dmt_database:get_latest_version(Worker),
+    LatestVersion;
+get_version(_Worker, Version) ->
+    Version.
 
 get_object_ref({Type, {_Object, ID, _Data}}) ->
     {ok, {Type, ID}}.
