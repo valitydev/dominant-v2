@@ -404,8 +404,14 @@ search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
         end,
 
     Request = """
-    SELECT id, entity_type, version, references_to, referenced_by,
-    data, is_active, created_at
+    SELECT DISTINCT ON (id) id,
+           entity_type,
+           version,
+           references_to,
+           referenced_by,
+           data,
+           is_active,
+           created_at
     FROM entity
     WHERE version <= $1
     AND ($2 = 'NULL' OR entity_type = $2)
@@ -444,8 +450,14 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
         end,
 
     Request = """
-    SELECT id, entity_type, version, references_to, referenced_by,
-    data, is_active, created_at
+    SELECT DISTINCT ON (id) id,
+           entity_type,
+           version,
+           references_to,
+           referenced_by,
+           data,
+           is_active,
+           created_at
     FROM entity
     WHERE search_vector @@ plainto_tsquery('multilingual', $1)
     AND version <= $2
