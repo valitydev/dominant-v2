@@ -415,7 +415,7 @@ search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
     FROM entity
     WHERE version <= $1
     AND ($2 = 'NULL' OR entity_type = $2)
-    ORDER BY version DESC
+    ORDER BY id, version DESC
     LIMIT $3 OFFSET $4
     """,
 
@@ -462,7 +462,7 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     WHERE search_vector @@ plainto_tsquery('multilingual', $1)
     AND version <= $2
     AND ($3 = 'NULL' OR entity_type = $3)
-    ORDER BY version DESC, ts_rank(search_vector, plainto_tsquery('multilingual', $1)) DESC
+    ORDER BY id, version DESC, ts_rank(search_vector, plainto_tsquery('multilingual', $1)) DESC
     LIMIT $4 OFFSET $5
     """,
 
