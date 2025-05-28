@@ -181,49 +181,80 @@ check_version_exists(Worker, Version) ->
 
 get_object(Worker, ID0, Version) ->
     Request = """
-    SELECT id,
-           entity_type,
-           version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM entity
-    WHERE id = $1 AND version <= $2
-    ORDER BY version DESC
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for this entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE id = $1 AND version <= $2
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.id = $1 AND e.version <= $2 AND las.is_active = TRUE
+    ORDER BY e.version DESC
     LIMIT 1
     """,
 
-    {ok, Columns, Rows} = epg_pool:query(Worker, Request, [ID0, Version]),
-    Result0 = dmt_mapper:to_marshalled_maps(Columns, Rows),
-    Result1 = dmt_object:filter_out_inactive_objects(Result0),
-    case Result1 of
-        [] ->
+    case epg_pool:query(Worker, Request, [ID0, Version]) of
+        {ok, _Columns, []} ->
             {error, not_found};
-        [Result | _] ->
-            {ok, Result}
+        {ok, Columns, Rows} ->
+            Result = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            case Result of
+                [] ->
+                    {error, not_found};
+                [ResultObj | _] ->
+                    {ok, ResultObj}
+            end
     end.
 
 get_objects(Worker, IDs, Version) ->
     Request = """
-    SELECT DISTINCT ON (id) id,
-           entity_type,
-           version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM entity
-    WHERE id = ANY($1) AND version <= $2
-    ORDER BY id, version DESC;
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE id = ANY($1) AND version <= $2
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT DISTINCT ON (e.id) e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.id = ANY($1) AND e.version <= $2 AND las.is_active = TRUE
+    ORDER BY e.id, e.version DESC
     """,
 
     case epg_pool:query(Worker, Request, [IDs, Version]) of
         {ok, Columns, Rows} ->
             Results = dmt_mapper:to_marshalled_maps(Columns, Rows),
-            {ok, dmt_object:filter_out_inactive_objects(Results)};
+            {ok, Results};
         {error, Reason} ->
             logger:error("Error fetching objects: ~p. IDs: ~p, Version: ~p", [Reason, IDs, Version]),
             {error, Reason}
@@ -231,28 +262,39 @@ get_objects(Worker, IDs, Version) ->
 
 get_latest_object(Worker, ID0) ->
     Request = """
-    SELECT id,
-           entity_type,
-           version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM entity
-    WHERE id = $1
-    ORDER BY version DESC
+    WITH LatestVersion AS (
+        -- Find the latest version for this entity
+        SELECT id, MAX(version) AS max_version
+        FROM entity
+        WHERE id = $1
+        GROUP BY id
+    )
+    SELECT e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN LatestVersion lv ON e.id = lv.id AND e.version = lv.max_version
+    WHERE e.id = $1 AND e.is_active = TRUE
+    ORDER BY e.version DESC
     LIMIT 1
     """,
 
-    {ok, Columns, Rows} = epg_pool:query(Worker, Request, [ID0]),
-    Result0 = dmt_mapper:to_marshalled_maps(Columns, Rows),
-    Result1 = dmt_object:filter_out_inactive_objects(Result0),
-    case Result1 of
-        [] ->
+    case epg_pool:query(Worker, Request, [ID0]) of
+        {ok, _Columns, []} ->
             {error, not_found};
-        [Result | _] ->
-            {ok, Result}
+        {ok, Columns, Rows} ->
+            Result = dmt_mapper:to_marshalled_maps(Columns, Rows),
+            case Result of
+                [] ->
+                    {error, not_found};
+                [ResultObj | _] ->
+                    {ok, ResultObj}
+            end
     end.
 
 get_version_creator(Worker, Version) ->
@@ -404,18 +446,33 @@ search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
         end,
 
     Request = """
-    SELECT DISTINCT ON (id) id,
-           entity_type,
-           version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM entity
-    WHERE version <= $1
-    AND ($2 = 'NULL' OR entity_type = $2)
-    ORDER BY id, version DESC
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE version <= $1
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT DISTINCT ON (e.id) e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.version <= $1
+    AND ($2 = 'NULL' OR e.entity_type = $2)
+    AND las.is_active = TRUE
+    ORDER BY e.id, e.version DESC
     LIMIT $3 OFFSET $4
     """,
 
@@ -450,19 +507,34 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
         end,
 
     Request = """
-    SELECT DISTINCT ON (id) id,
-           entity_type,
-           version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM entity
-    WHERE search_vector @@ plainto_tsquery('multilingual', $1)
-    AND version <= $2
-    AND ($3 = 'NULL' OR entity_type = $3)
-    ORDER BY id, version DESC, ts_rank(search_vector, plainto_tsquery('multilingual', $1)) DESC
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE version <= $2
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT DISTINCT ON (e.id) e.id,
+           e.entity_type,
+           e.version,
+           e.references_to,
+           e.referenced_by,
+           e.data,
+           e.is_active,
+           e.created_at
+    FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+    AND e.version <= $2
+    AND ($3 = 'NULL' OR e.entity_type = $3)
+    AND las.is_active = TRUE
+    ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
     LIMIT $4 OFFSET $5
     """,
 
@@ -490,9 +562,24 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
 % Helper function to check if there are more search results
 has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
     CheckMoreQuery = """
-    SELECT 1 FROM entity
-    WHERE version <= $1
-    AND ($2 = 'NULL' OR entity_type = $2)
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE version <= $1
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT 1 FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.version <= $1
+    AND ($2 = 'NULL' OR e.entity_type = $2)
+    AND las.is_active = TRUE
     LIMIT 1 OFFSET $3
     """,
 
@@ -509,10 +596,25 @@ has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
     end;
 has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
     CheckMoreQuery = """
-    SELECT 1 FROM entity
-    WHERE search_vector @@ plainto_tsquery('multilingual', $1)
-    AND version <= $2
-    AND ($3 = 'NULL' OR entity_type = $3)
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity at or before the requested version
+        SELECT id, MAX(version) AS max_version_at_time
+        FROM entity
+        WHERE version <= $2
+        GROUP BY id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.id, e.is_active
+        FROM entity e
+        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+    )
+    SELECT 1 FROM entity e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+    WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+    AND e.version <= $2
+    AND ($3 = 'NULL' OR e.entity_type = $3)
+    AND las.is_active = TRUE
     LIMIT 1 OFFSET $4
     """,
 

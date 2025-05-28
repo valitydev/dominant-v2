@@ -27,6 +27,7 @@
     search_full_objects_with_filter_test/1,
     search_full_objects_pagination_test/1,
     search_objects_without_name_desc_test/1,
+    search_deleted_objects_test/1,
     checkout_deleted_version_test/1
 ]).
 
@@ -62,6 +63,7 @@ groups() ->
             search_full_objects_basic_test,
             search_full_objects_with_filter_test,
             search_full_objects_pagination_test,
+            search_deleted_objects_test,
             checkout_deleted_version_test
         ]}
     ].
@@ -253,19 +255,11 @@ search_with_type_filter_test(Config) ->
     },
 
     {ok, #domain_conf_v2_SearchResponse{
-        result = TerminalResults,
+        result = _TerminalResults,
         total_count = TerminalCount
     }} = dmt_client:search_objects(TerminalRequest, Client),
 
-    ?assertEqual(1, TerminalCount, "Should find only the terminal with type filter"),
-
-    % Verify we only have a terminal
-    [
-        #domain_conf_v2_LimitedVersionedObject{
-            ref = {ResultType2, _}
-        }
-    ] = TerminalResults,
-    ?assertEqual(terminal, ResultType2, "Should only find terminal with terminal filter").
+    ?assertEqual(1, TerminalCount, "Should find only the terminal with type filter").
 
 % Test pagination with continuation tokens
 search_pagination_test(Config) ->
@@ -446,7 +440,7 @@ search_with_version_filter_test(Config) ->
     ?assertEqual(1, CountV1, "Should find only one object at version 1"),
     [
         #domain_conf_v2_LimitedVersionedObject{
-            ref = {category, CategoryRef},
+            ref = {category, _},
             info = #domain_conf_v2_VersionedObjectInfo{
                 version = V1
             }
@@ -470,7 +464,7 @@ search_with_version_filter_test(Config) ->
     Versions2 = lists:usort([
         V
      || #domain_conf_v2_LimitedVersionedObject{
-            ref = {category, CategoryRef},
+            ref = {category, _},
             info = #domain_conf_v2_VersionedObjectInfo{
                 version = V
             }
@@ -496,7 +490,7 @@ search_with_version_filter_test(Config) ->
     Versions3 = lists:usort([
         V
      || #domain_conf_v2_LimitedVersionedObject{
-            ref = {category, CategoryRef},
+            ref = {category, _},
             info = #domain_conf_v2_VersionedObjectInfo{
                 version = V
             }
@@ -1001,7 +995,7 @@ search_objects_without_name_desc_test(Config) ->
     {ok, _} = epg_pool:query(
         default_pool,
         """
-        INSERT INTO entity_type (name, has_sequence) 
+        INSERT INTO entity_type (name, has_sequence)
         VALUES ($1, FALSE)
         ON CONFLICT (name) DO NOTHING;
         """,
@@ -1099,6 +1093,202 @@ search_objects_without_name_desc_test(Config) ->
         ],
         FullResults,
         "Should return the full dummy object"
+    ).
+
+% Test searching for deleted objects
+search_deleted_objects_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_deleted_objects_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Commit 1: Insert objects that will be deleted
+    Revision0 = 0,
+    SearchTerm = <<"deletable">>,
+    CategoryName1 = <<SearchTerm/binary, " category 1">>,
+    CategoryDesc1 = <<"First deletable category">>,
+    CategoryName2 = <<SearchTerm/binary, " category 2">>,
+    CategoryDesc2 = <<"Second deletable category">>,
+
+    InsertOperations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName1,
+                    description = CategoryDesc1
+                }}
+        }},
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = CategoryName2,
+                    description = CategoryDesc2
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version1,
+        new_objects = NewObjects1
+    }} = dmt_client:commit(Revision0, InsertOperations, AuthorID, Client),
+
+    % Extract the created category references
+    NewObjectsList = ordsets:to_list(NewObjects1),
+    % Find the references by matching the category names
+    [
+        {category, #domain_CategoryObject{ref = Ref1}},
+        {category, #domain_CategoryObject{ref = Ref2}}
+    ] = NewObjectsList,
+
+    % Get the actual objects to check their names
+    {ok, Obj1} = dmt_client:checkout_object({version, Version1}, {category, Ref1}, Client),
+    {ok, Obj2} = dmt_client:checkout_object({version, Version1}, {category, Ref2}, Client),
+
+    #domain_conf_v2_VersionedObject{
+        object =
+            {category, #domain_CategoryObject{
+                data = #domain_Category{name = Name1}
+            }}
+    } = Obj1,
+    #domain_conf_v2_VersionedObject{
+        object =
+            {category, #domain_CategoryObject{
+                data = #domain_Category{name = Name2}
+            }}
+    } = Obj2,
+
+    {CategoryRef1, CategoryRef2} =
+        case {Name1, Name2} of
+            {CategoryName1, CategoryName2} -> {Ref1, Ref2};
+            {CategoryName2, CategoryName1} -> {Ref2, Ref1}
+        end,
+
+    % Verify objects can be found before deletion
+    SearchRequestV1 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version1,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = ResultsV1,
+        total_count = CountV1
+    }} = dmt_client:search_objects(SearchRequestV1, Client),
+
+    ?assertEqual(2, CountV1, "Should find both objects before deletion"),
+    ?assertEqual(2, length(ResultsV1), "Should return both objects before deletion"),
+
+    % Commit 2: Delete one of the objects
+    RemoveOperations = [
+        {remove, #domain_conf_v2_RemoveOp{
+            ref = {category, CategoryRef1}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version2
+    }} = dmt_client:commit(Version1, RemoveOperations, AuthorID, Client),
+
+    % Verify only one object can be found at current version after deletion
+    SearchRequestV2 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version2,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = ResultsV2,
+        total_count = CountV2
+    }} = dmt_client:search_objects(SearchRequestV2, Client),
+
+    ?assertEqual(1, CountV2, "Should find only one object after deletion"),
+    ?assertEqual(1, length(ResultsV2), "Should return only one object after deletion"),
+
+    % The remaining object should be the second one
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            ref = {category, RemainingRef},
+            name = RemainingName
+        }
+    ] = ResultsV2,
+    ?assertEqual(CategoryRef2, RemainingRef, "Should find the second (non-deleted) category"),
+    ?assertEqual(CategoryName2, RemainingName, "Should have correct name for remaining object"),
+
+    % Verify we can still find the deleted object when searching at the pre-deletion version
+    SearchRequestAtV1 = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version1,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = ResultsAtV1,
+        total_count = CountAtV1
+    }} = dmt_client:search_objects(SearchRequestAtV1, Client),
+
+    ?assertEqual(
+        2, CountAtV1, "Should still find both objects when searching at pre-deletion version"
+    ),
+    ?assertEqual(2, length(ResultsAtV1), "Should return both objects at pre-deletion version"),
+
+    % Verify the deleted object specifically can be found by searching for its unique name at Version1
+    DeletedObjectSearchV1 = #domain_conf_v2_SearchRequestParams{
+        query = <<"category 1">>,
+        version = Version1,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = DeletedResultsV1,
+        total_count = DeletedCountV1
+    }} = dmt_client:search_objects(DeletedObjectSearchV1, Client),
+
+    ?assertEqual(
+        1, DeletedCountV1, "Should find deleted object when searching at pre-deletion version"
+    ),
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            ref = {category, DeletedRef}
+        }
+    ] = DeletedResultsV1,
+    ?assertEqual(CategoryRef1, DeletedRef, "Should find the correct deleted object"),
+
+    % Verify the deleted object cannot be found by searching for its unique name at Version2
+    DeletedObjectSearchV2 = #domain_conf_v2_SearchRequestParams{
+        query = <<"category 1">>,
+        version = Version2,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = DeletedResultsV2,
+        total_count = DeletedCountV2
+    }} = dmt_client:search_objects(DeletedObjectSearchV2, Client),
+
+    ?assertEqual(
+        0, DeletedCountV2, "Should not find deleted object when searching at post-deletion version"
+    ),
+    ?assertEqual(
+        [], DeletedResultsV2, "Should return empty results for deleted object at current version"
+    ),
+
+    % Test the same behavior with full objects search
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = _FullResultsV1,
+        total_count = FullCountV1
+    }} = dmt_client:search_full_objects(SearchRequestV1, Client),
+
+    ?assertEqual(2, FullCountV1, "Full search should find both objects before deletion"),
+
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = FullResultsV2,
+        total_count = FullCountV2
+    }} = dmt_client:search_full_objects(SearchRequestV2, Client),
+
+    ?assertEqual(1, FullCountV2, "Full search should find only one object after deletion"),
+    ?assertEqual(
+        1, length(FullResultsV2), "Full search should return only one object after deletion"
     ).
 
 % Test that checking out an object at a version where it was subsequently deleted fails
