@@ -1,126 +1,387 @@
 -module(dmt_repository).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
--include_lib("epgsql/include/epgsql.hrl").
 
 %% API
 
 -export([commit/3]).
--export([get_object/2]).
--export([get_local_versions/3]).
--export([get_global_versions/2]).
+-export([get_object/3]).
+-export([get_objects/3]).
+-export([get_snapshot/2]).
+-export([get_latest_version/0]).
+-export([get_object_history/2]).
+-export([get_all_objects_history/1]).
+-export([search_objects/1]).
+-export([search_full_objects/1]).
 
 %%
 
-get_object({version, V}, ObjectRef) ->
-    case get_target_object(ObjectRef, V) of
-        {ok, #{
-            global_version := GlobalVersion,
-            data := Data,
-            created_at := CreatedAt
-        }} ->
+get_object(Worker, {version, V}, ObjectRef) ->
+    case get_target_object(Worker, ObjectRef, V) of
+        {ok, #{data := Data} = Object} ->
             % io:format("get_object Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
-                global_version = GlobalVersion,
-                %% TODO implement local versions
-                local_version = 0,
-                object = Data,
-                created_at = CreatedAt
+                info = marshall_to_object_info(Object),
+                object = Data
             }};
         {error, Reason} ->
             {error, Reason}
     end;
-get_object({head, #domain_conf_v2_Head{}}, ObjectRef) ->
-    case get_latest_target_object(ObjectRef) of
+get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
+    case get_latest_target_object(Worker, ObjectRef) of
         {ok, #{
-            global_version := GlobalVersion,
+            version := Version,
             data := Data,
-            created_at := CreatedAt
+            created_at := CreatedAt,
+            created_by := CreatedBy
         }} ->
             {ok, #domain_conf_v2_VersionedObject{
-                global_version = GlobalVersion,
-                %% TODO implement local versions
-                local_version = 0,
-                object = Data,
-                created_at = CreatedAt
+                info = #domain_conf_v2_VersionedObjectInfo{
+                    version = Version,
+                    changed_at = CreatedAt,
+                    changed_by = CreatedBy
+                },
+                object = Data
             }};
         {error, Reason} ->
             {error, Reason}
     end.
 
-%% Retrieve local versions with pagination
-get_local_versions(_Ref, _Limit, _ContinuationToken) ->
-    not_impl.
-
-%% Retrieve global versions with pagination
-get_global_versions(_Limit, _ContinuationToken) ->
-    not_impl.
-
-assemble_operations(Commit) ->
-    try
-        lists:foldl(
-            fun assemble_operations_/2,
-            {[], #{}, []},
-            Commit#domain_conf_v2_Commit.ops
-        )
-    catch
-        {error, Error} ->
-            {error, Error}
+get_objects(Worker, {version, V}, ObjectRefs) ->
+    case dmt_database:check_version_exists(Worker, V) of
+        true ->
+            % Convert references to strings
+            StringRefs = lists:map(fun dmt_mapper:to_string/1, ObjectRefs),
+            % Get objects from database
+            case dmt_database:get_objects(Worker, StringRefs, V) of
+                {ok, Objects0} ->
+                    Objects1 = sort_objects_by_ids(Objects0, ObjectRefs),
+                    % Add created_by information to objects
+                    {ok, EnrichedObjects} = add_created_by_to_objects(Worker, Objects1),
+                    % Map each object to VersionedObject format
+                    VersionedObjects = [
+                        #domain_conf_v2_VersionedObject{
+                            info = marshall_to_object_info(Object),
+                            object = maps:get(data, Object)
+                        }
+                     || Object <- EnrichedObjects
+                    ],
+                    {ok, VersionedObjects};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        false ->
+            {error, version_not_found}
+    end;
+get_objects(Worker, {head, #domain_conf_v2_Head{}}, ObjectRefs) ->
+    % For head, we need to get the latest version first
+    case dmt_database:get_latest_version(Worker) of
+        {ok, LatestVersion} ->
+            get_objects(Worker, {version, LatestVersion}, ObjectRefs);
+        {error, Reason} ->
+            {error, Reason}
     end.
 
-assemble_operations_(
+get_snapshot(Worker, {head, #domain_conf_v2_Head{}}) ->
+    case dmt_database:get_latest_version(Worker) of
+        {ok, LatestVersion} ->
+            get_snapshot(Worker, {version, LatestVersion});
+        {error, Reason} ->
+            {error, Reason}
+    end;
+get_snapshot(Worker, {version, Version}) ->
+    case dmt_database:check_version_exists(Worker, Version) of
+        true ->
+            case dmt_database:get_all_objects(Worker, Version) of
+                {ok, Objects} ->
+                    {ok, #{
+                        created_at := CreatedAt,
+                        created_by := AuthorID
+                    }} = dmt_database:get_version(Worker, Version),
+                    {ok, Author} = dmt_author:get(AuthorID),
+                    Domain = #{K => V || #{id := K, data := V} <- Objects},
+                    {ok, #domain_conf_v2_Snapshot{
+                        version = Version,
+                        domain = Domain,
+                        created_at = dmt_mapper:datetime_to_binary(CreatedAt),
+                        changed_by = Author
+                    }};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        false ->
+            {error, version_not_found}
+    end.
+
+sort_objects_by_ids(Objects, IDs) ->
+    % Create a map of ID -> Object for easier lookup
+    ObjectsMap = maps:from_list([{maps:get(id, Obj), Obj} || Obj <- Objects]),
+
+    % Use list comprehension to order objects according to input IDs
+    % Skip IDs that don't have corresponding objects
+    [
+        maps:get(ID, ObjectsMap, undefined)
+     || ID <- IDs,
+        maps:is_key(ID, ObjectsMap)
+    ].
+
+get_object_history(ObjectRef, RequestParams) ->
+    #domain_conf_v2_RequestParams{
+        limit = Limit,
+        continuation_token = Offset0
+    } = RequestParams,
+    Offset1 = maybe_from_string(Offset0, 0),
+    maybe
+        StringRef = dmt_mapper:to_string(ObjectRef),
+        {ok, Objects0, NewOffset} ?=
+            dmt_database:get_object_history(default_pool, StringRef, Limit, Offset1),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_ObjectVersionsResponse{
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, not_found} ->
+            {error, not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+% Done this way to keep hierarchy of calls
+get_latest_version() ->
+    dmt_database:get_latest_version(default_pool).
+
+get_all_objects_history(Request) ->
+    #domain_conf_v2_RequestParams{
+        limit = Limit,
+        continuation_token = Offset0
+    } = Request,
+    Offset1 = maybe_from_string(Offset0, 0),
+    maybe
+        {ok, Objects0, NewOffset} ?=
+            dmt_database:get_all_objects_history(default_pool, Limit, Offset1),
+        {ok, Objects1} ?= add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_ObjectVersionsResponse{
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+maybe_to_string(undefined, Default) -> Default;
+maybe_to_string(Value, _) -> dmt_mapper:to_string(Value).
+
+maybe_from_string(undefined, Default) -> Default;
+maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
+
+marshall_to_object_info(Object) ->
+    #domain_conf_v2_VersionedObjectInfo{
+        version = maps:get(version, Object),
+        changed_at = maps:get(created_at, Object),
+        changed_by = maps:get(created_by, Object)
+    }.
+
+search_objects(Request) ->
+    #domain_conf_v2_SearchRequestParams{
+        query = Query,
+        version = Version,
+        limit = Limit,
+        type = Type,
+        continuation_token = ContinuationToken
+    } = Request,
+
+    maybe
+        ok ?= maybe_check_entity_type_exists(Type),
+        Version2 = get_version(default_pool, Version),
+        {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
+            default_pool,
+            Query,
+            Version2,
+            Type,
+            Limit,
+            maybe_from_string(ContinuationToken, 0)
+        ),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_SearchResponse{
+            result = [
+                #domain_conf_v2_LimitedVersionedObject{
+                    info = marshall_to_object_info(Object),
+                    ref = maps:get(id, Object),
+                    name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
+                    description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, object_type_not_found} ->
+            {error, object_type_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+search_full_objects(Request) ->
+    #domain_conf_v2_SearchRequestParams{
+        query = Query,
+        version = Version,
+        limit = Limit,
+        type = Type,
+        continuation_token = ContinuationToken
+    } = Request,
+
+    maybe
+        ok ?= maybe_check_entity_type_exists(Type),
+        Version2 = get_version(default_pool, Version),
+        {ok, {Objects0, NewOffset}} = dmt_database:search_objects(
+            default_pool,
+            Query,
+            Version2,
+            Type,
+            Limit,
+            maybe_from_string(ContinuationToken, 0)
+        ),
+        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Result = #domain_conf_v2_SearchFullResponse{
+            result = [
+                #domain_conf_v2_VersionedObject{
+                    info = marshall_to_object_info(Object),
+                    object = Data
+                }
+             || #{data := Data} = Object <- Objects1
+            ],
+            total_count = length(Objects1),
+            continuation_token = maybe_to_string(NewOffset, undefined)
+        },
+        {ok, Result}
+    else
+        {error, object_type_not_found} ->
+            {error, object_type_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+maybe_check_entity_type_exists(undefined) -> ok;
+maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
+
+assemble_operations(Worker, Operations) ->
+    {_, Inserts, Updates1, UpdatedObjects} = lists:foldl(
+        fun assemble_operations_parse/2,
+        {Worker, [], #{}, []},
+        Operations
+    ),
+    {_, Updates2} = lists:foldl(
+        fun assemble_operations_refs_insert/2,
+        {Worker, Updates1},
+        Inserts
+    ),
+    {_, Updates3} = lists:foldl(
+        fun assemble_operations_refs_update/2,
+        {Worker, Updates2},
+        maps:values(Updates2)
+    ),
+    {Worker, Inserts, Updates3, UpdatedObjects}.
+
+assemble_operations_parse(
     Operation,
-    {InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
+    {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
             {ok, NewObject} = dmt_object:new_object(InsertOp),
-            #{
-                tmp_id := TmpID,
-                references := Refers
-            } = NewObject,
 
-            Updates1 = update_objects_added_refs({temporary, TmpID}, Refers, UpdatesAcc),
-            {[NewObject | InsertsAcc], Updates1, UpdatedObjectsAcc};
-        {update, #domain_conf_v2_UpdateOp{targeted_ref = Ref} = UpdateOp} ->
-            Changes = get_original_object_changes(UpdatesAcc, Ref),
-            {ok, ObjectUpdate} = dmt_object:update_object(UpdateOp, Changes),
-            UpdatesAcc1 = update_referenced_objects(Changes, ObjectUpdate, UpdatesAcc),
-            {InsertsAcc, UpdatesAcc1#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
+            {Worker, [NewObject | InsertsAcc], UpdatesAcc, UpdatedObjectsAcc};
+        {update, #domain_conf_v2_UpdateOp{object = Object}} ->
+            {ok, Ref} = get_object_ref(Object),
+            {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
+            {ok, ObjectUpdate} = dmt_object:update_object(Object, Changes),
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
-            #{
-                references := OriginalReferences
-            } = OG = get_original_object_changes(UpdatesAcc, Ref),
-            UpdatesAcc1 = update_objects_removed_refs(Ref, OriginalReferences, UpdatesAcc),
+            {ok, OG} = get_original_object_changes(Worker, UpdatesAcc, Ref),
 
             NewObjectState = dmt_object:remove_object(OG),
-            {InsertsAcc, UpdatesAcc1#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
     end.
 
-update_referenced_objects(OriginalObjectChanges, ObjectChanges, Updates) ->
+assemble_operations_refs_insert(
+    Insert,
+    {Worker, UpdatesAcc}
+) ->
+    #{
+        tmp_id := TmpID,
+        references := Refers
+    } = Insert,
+    Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
+    {Worker, Updates1}.
+
+assemble_operations_refs_update(
+    Update,
+    {Worker, UpdatesAcc}
+) ->
+    #{
+        id := Ref,
+        is_active := IsActive
+    } = Update,
+    {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
+    case IsActive of
+        true ->
+            UpdatesAcc1 = update_referenced_objects(Worker, Changes, Update, UpdatesAcc),
+            {Worker, UpdatesAcc1};
+        false ->
+            #{references := OriginalReferences} = Changes,
+            UpdatesAcc1 = update_objects_removed_refs(Worker, Ref, OriginalReferences, UpdatesAcc),
+            {Worker, UpdatesAcc1}
+    end.
+
+update_referenced_objects(Worker, OriginalObjectChanges, ObjectChanges, Updates) ->
     #{
         id := ObjectID,
+        type := ObjectType,
         references := OriginalReferences
     } = OriginalObjectChanges,
+    ObjectRef = {ObjectType, ObjectID},
     #{references := NewVersionReferences} = ObjectChanges,
     ORS = ordsets:from_list(OriginalReferences),
     NVRS = ordsets:from_list(NewVersionReferences),
     AddedRefs = ordsets:subtract(NVRS, ORS),
     RemovedRefs = ordsets:subtract(ORS, NVRS),
 
-    Updates1 = update_objects_added_refs(ObjectID, AddedRefs, Updates),
-    update_objects_removed_refs(ObjectID, RemovedRefs, Updates1).
+    Updates1 = update_objects_added_refs(Worker, ObjectRef, AddedRefs, Updates),
+    update_objects_removed_refs(Worker, ObjectRef, RemovedRefs, Updates1).
 
-update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
+update_objects_added_refs(Worker, ObjectID, AddedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
+            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
             #{
-                id := UpdatedObjectID,
                 referenced_by := RefdBy0
-            } = OG = get_original_object_changes(Acc, Ref),
-
+            } = OG,
             Acc#{
-                UpdatedObjectID =>
+                Ref =>
                     OG#{
                         referenced_by => [ObjectID | RefdBy0]
                     }
@@ -130,17 +391,17 @@ update_objects_added_refs(ObjectID, AddedRefs, Updates) ->
         AddedRefs
     ).
 
-update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
+update_objects_removed_refs(Worker, ObjectID, RemovedRefs, Updates) ->
     lists:foldl(
         fun(Ref, Acc) ->
+            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
             #{
-                id := UpdatedObjectID,
                 referenced_by := RefdBy0
-            } = OG = get_original_object_changes(Acc, Ref),
+            } = OG,
             RefdBy1 = ordsets:from_list(RefdBy0),
             RefdBy2 = ordsets:del_element(ObjectID, RefdBy1),
             Acc#{
-                UpdatedObjectID =>
+                Ref =>
                     OG#{
                         referenced_by => ordsets:to_list(RefdBy2)
                     }
@@ -150,43 +411,70 @@ update_objects_removed_refs(ObjectID, RemovedRefs, Updates) ->
         RemovedRefs
     ).
 
-get_original_object_changes(Updates, Ref) ->
-    case Updates of
-        #{Ref := Object} ->
-            Object;
-        _ ->
-            {ok, Res} = get_latest_target_object(Ref),
-            {Type, _} = Ref,
-            Res#{
-                type => Type
-            }
+get_referenced_object_changes(Worker, Updates, ReferencedRef, OriginalRef) ->
+    try get_original_object_changes(Worker, Updates, ReferencedRef) of
+        {ok, Object} ->
+            {ok, Object}
+    catch
+        throw:{error, {operation_error, {conflict, {object_not_found, Ref}}}} = Error ->
+            logger:error(
+                "get_referenced_object_changes ReferencedRef ~p OriginalRef ~p",
+                [Ref, OriginalRef]
+            ),
+            throw(Error)
     end.
 
-commit(Version, Commit, CreatedBy) ->
-    {InsertObjects, UpdateObjects0, ChangedObjectIds} = assemble_operations(Commit),
+get_original_object_changes(Worker, Updates, Ref) ->
+    case Updates of
+        #{Ref := Object} ->
+            {ok, Object};
+        _ ->
+            case get_latest_target_object(Worker, Ref) of
+                {ok, Res} ->
+                    {ok, Res};
+                {error, {object_not_found, Ref}} ->
+                    throw({error, {operation_error, {conflict, {object_not_found, Ref}}}})
+            end
+    end.
 
+commit(Version, Operations, AuthorID) ->
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
-            ok = check_versions_sql(Worker, ChangedObjectIds, Version),
-            NewVersion = get_new_version(Worker, CreatedBy),
-            PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
-            UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
-            ok = update_objects(Worker, UpdateObjects1, NewVersion),
-            {ok, NewVersion, maps:values(PermanentIDsMaps)}
+            try
+                {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds} =
+                    assemble_operations(Worker, Operations),
+                ok = check_versions_sql(Worker, ChangedObjectIds, Version),
+                NewVersion = get_new_version(Worker, AuthorID),
+                PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
+                UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
+                ok = update_objects(Worker, UpdateObjects1, NewVersion),
+                NewObjects = lists:map(
+                    fun(#{data := Data}) ->
+                        Data
+                    end,
+                    get_target_objects(Worker, maps:values(PermanentIDsMaps), NewVersion)
+                ),
+                {ok, NewVersion, NewObjects}
+            catch
+                Class:ExceptionPattern:Stacktrace ->
+                    logger:error(
+                        "Class:ExceptionPattern:Stacktrace ~p:~p:~p~n",
+                        [Class, ExceptionPattern, Stacktrace]
+                    ),
+                    ExceptionPattern
+            end
         end
     ),
     case Result of
-        {ok, ResVersion, NewObjectsIDs} ->
-            NewObjects = lists:map(
-                fun(#{data := Data}) ->
-                    Data
-                end,
-                get_target_objects(NewObjectsIDs, ResVersion)
-            ),
+        {ok, ResVersion, NewObjects} ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
+        {rollback, {error, {conflict, _} = Error}} ->
+            {error, {operation_error, Error}};
+        {rollback, {error, {invalid, _} = Error}} ->
+            {error, {operation_error, Error}};
         {error, Error} ->
             {error, Error}
     end.
@@ -220,39 +508,26 @@ replace_referenced_by_ids(ReferencedBy, PermanentIDsMaps) ->
 
 check_versions_sql(Worker, ChangedObjectIds, Version) ->
     lists:foreach(
-        fun({ChangedObjectType, ChangedObjectRef0} = ChangedObjectId) ->
-            ChangedObjectRef1 = to_string(ChangedObjectRef0),
-            Query0 =
-                io_lib:format("""
-                SELECT id, global_version
-                FROM ~p
-                WHERE id = $1
-                ORDER BY global_version DESC
-                LIMIT 1
-                """, [ChangedObjectType]),
-            case epg_pool:query(Worker, Query0, [ChangedObjectRef1]) of
-                {ok, _Columns, []} ->
-                    throw({unknown_object_update, ChangedObjectId});
-                {ok, _Columns, [{ChangedObjectRef, MostRecentVersion}]} when MostRecentVersion > Version ->
-                    throw({object_update_too_old, {ChangedObjectRef, MostRecentVersion}});
-                {ok, _Columns, [{_ChangedObjectRef, _MostRecentVersion}]} ->
+        fun(ChangedObjectId) ->
+            ChangedObjectId0 = dmt_mapper:to_string(ChangedObjectId),
+            case dmt_database:get_object_latest_version(Worker, ChangedObjectId0) of
+                {ok, MostRecentVersion} when MostRecentVersion > Version ->
+                    throw({object_update_too_old, {ChangedObjectId, MostRecentVersion}});
+                {ok, _MostRecentVersion} ->
                     ok;
-                {error, Reason} ->
-                    throw({error, Reason})
+                {error, not_found} ->
+                    {error, {unknown_object_update, ChangedObjectId}};
+                {error, Error} ->
+                    throw(Error)
             end
         end,
         ChangedObjectIds
     ),
     ok.
 
-get_new_version(Worker, CreatedBy) ->
-    Query1 =
-        """
-        INSERT INTO GLOBAL_VERSION (CREATED_BY)
-        VALUES ($1::uuid) RETURNING version;
-        """,
-    case epg_pool:query(Worker, Query1, [CreatedBy]) of
-        {ok, 1, _Columns, [{NewVersion}]} ->
+get_new_version(Worker, AuthorID) ->
+    case dmt_database:get_new_version(Worker, AuthorID) of
+        {ok, NewVersion} ->
             NewVersion;
         {error, Reason} ->
             throw({error, Reason})
@@ -268,41 +543,29 @@ insert_objects(Worker, InsertObjects, Version) ->
                 references := References,
                 data := Data0
             } = InsertObject,
-            {ID, Sequence} = get_insert_object_id(Worker, ForcedID, Type),
-            Data1 = give_data_id(Data0, ID),
-            ID = insert_object(Worker, Type, ID, Sequence, Version, References, Data1),
-            Acc#{TmpID => {Type, ID}}
+            Ref = get_insert_object_id(Worker, ForcedID, Type),
+            Data1 = give_data_id(Data0, Ref),
+            Ref = insert_object(Worker, Type, Ref, Version, References, Data1),
+            Acc#{TmpID => Ref}
         end,
         #{},
         InsertObjects
     ).
 
-insert_object(Worker, Type, ID0, Sequence, Version, References0, Data0) ->
-    ID1 = to_string(ID0),
-    Data1 = to_string(Data0),
-    References1 = lists:map(fun to_string/1, References0),
-    Params0 = [Version, References1, [], Data1],
-    {Query, Params1} =
-        case check_if_force_id_required(Worker, Type) of
-            true ->
-                Query0 =
-                    io_lib:format("""
-                    INSERT INTO ~p (id, global_version, references_to, referenced_by, data, is_active)
-                        VALUES ($1, $2, $3, $4, $5, TRUE);
-                    """, [Type]),
-                {Query0, [ID1 | Params0]};
-            false ->
-                Query1 =
-                    io_lib:format("""
-                    INSERT INTO ~p (id, sequence, global_version, references_to, referenced_by, data, is_active)
-                        VALUES ($1, $2, $3, $4, $5, $6, TRUE);
-                    """, [Type]),
-                {Query1, [ID1, Sequence | Params0]}
-        end,
-    case epg_pool:query(Worker, Query, Params1) of
-        {ok, 1} ->
+insert_object(Worker, Type, ID0, Version, References0, Data0) ->
+    ID1 = dmt_mapper:to_string(ID0),
+    Data1 = dmt_mapper:to_string(Data0),
+    References1 = lists:map(fun dmt_mapper:to_string/1, References0),
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
+
+    case dmt_database:insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) of
+        ok ->
             ID0;
         {error, Reason} ->
+            logger:error(
+                "insert_object Type: ~p, ID: ~p, Version: ~p, References: ~p, Data: ~p, SearchVector: ~p",
+                [Type, ID0, Version, References1, Data1, SearchVector]
+            ),
             throw({error, Reason})
     end.
 
@@ -328,41 +591,48 @@ give_data_id({Tag, Data}, Ref) ->
     Second = get_object_field(SecondField, Data, Ref),
     {Tag, {RecordName, First, Second}}.
 
-get_object_field({_, _, _, ref, _}, _Data, Ref) ->
+get_object_field({_, _, _, ref, _}, _Data, {_Type, Ref}) ->
     Ref;
 get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
 update_objects(Worker, UpdateObjects, Version) ->
     maps:foreach(
-        fun({_, ID}, UpdateObject) ->
+        fun(Ref, UpdateObject) ->
             #{
-                id := ID,
+                id := Ref,
                 type := Type,
                 references := References,
                 referenced_by := ReferencedBy,
                 data := Data,
                 is_active := IsActive
             } = UpdateObject,
-            ok = update_object(Worker, Type, ID, References, ReferencedBy, IsActive, Data, Version)
+            ok = update_object(Worker, Type, Ref, References, ReferencedBy, IsActive, Data, Version)
         end,
         UpdateObjects
     ).
 
 update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Version) ->
-    Data1 = to_string(Data0),
-    ID1 = to_string(ID0),
-    References1 = lists:map(fun to_string/1, References0),
-    ReferencedBy1 = lists:map(fun to_string/1, ReferencedBy0),
-    Query =
-        io_lib:format("""
-        INSERT INTO ~p
-        (id, global_version, references_to, referenced_by, data, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6);
-        """, [Type]),
-    Params = [ID1, Version, References1, ReferencedBy1, Data1, IsActive],
-    case epg_pool:query(Worker, Query, Params) of
-        {ok, 1} ->
+    Data1 = dmt_mapper:to_string(Data0),
+    ID1 = dmt_mapper:to_string(ID0),
+    References1 = lists:map(fun dmt_mapper:to_string/1, References0),
+    ReferencedBy1 = lists:map(fun dmt_mapper:to_string/1, ReferencedBy0),
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
+
+    case
+        dmt_database:update_object(
+            Worker,
+            ID1,
+            Type,
+            Version,
+            References1,
+            ReferencedBy1,
+            Data1,
+            SearchVector,
+            IsActive
+        )
+    of
+        ok ->
             ok;
         {error, Reason} ->
             throw({error, Reason})
@@ -371,103 +641,28 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
 get_insert_object_id(Worker, undefined, Type) ->
     %%  Check if sequence column exists in table
     %%  -- if it doesn't, then raise exception
-    case check_if_force_id_required(Worker, Type) of
-        true ->
+    case dmt_database:get_next_sequence(Worker, Type) of
+        {ok, NewID} ->
+            % TODO need to do it without hardcode
+            {Type, dmt_object_id:get_numerical_object_id(Type, NewID)};
+        {error, sequence_not_enabled} ->
             throw({error, {object_type_requires_forced_id, Type}});
-        false ->
-            {ok, LastSequenceInType} = get_last_sequence(Worker, Type),
-            case get_new_object_id(Worker, LastSequenceInType, Type) of
-                {undefined, Seq} ->
-                    throw({error, {free_id_not_found, Seq, Type}});
-                {NewID, NewSequence} ->
-                    {NewID, NewSequence}
-            end
+        {error, Reason} ->
+            throw({error, Reason})
     end;
-get_insert_object_id(Worker, {Type, ForcedID}, Type) ->
-    case check_if_id_exists(Worker, ForcedID, Type) of
+get_insert_object_id(Worker, Ref, _Type) ->
+    Ref0 = dmt_mapper:to_string(Ref),
+    case dmt_database:check_if_object_id_active(Worker, Ref0) of
         true ->
-            throw({error, {forced_id_exists, ForcedID}});
+            throw({error, {operation_error, {conflict, {forced_id_exists, Ref}}}});
         false ->
-            {ForcedID, null}
-    end.
-
-check_if_force_id_required(Worker, Type) ->
-    Query = """
-    SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = $1 AND column_name = 'sequence';
-    """,
-    case epg_pool:query(Worker, Query, [Type]) of
-        {ok, _Columns, []} ->
-            true;
-        {ok, _Columns, Rows} ->
-            has_sequence_column(Rows);
+            Ref;
         {error, Reason} ->
             throw({error, Reason})
     end.
 
-has_sequence_column(Rows) ->
-    lists:all(
-        fun(Row) ->
-            case Row of
-                {<<"sequence">>} ->
-                    false;
-                _ ->
-                    true
-            end
-        end,
-        Rows
-    ).
-
-get_last_sequence(Worker, Type) ->
-    Query = io_lib:format("""
-    SELECT MAX(sequence)
-    FROM ~p;
-    """, [Type]),
-    case epg_pool:query(Worker, Query) of
-        {ok, _Columns, [{null}]} ->
-            {ok, 0};
-        {ok, _Columns, [{LastID}]} ->
-            {ok, LastID};
-        {error, Reason} ->
-            throw({error, Reason})
-    end.
-
-get_new_object_id(Worker, LastSequenceInType, Type) ->
-    genlib_list:foldl_while(
-        fun(_I, {ID, Sequence}) ->
-            NextSequence = Sequence + 1,
-            NewID = dmt_object_id:get_numerical_object_id(Type, NextSequence),
-            case check_if_id_exists(Worker, NewID, Type) of
-                false ->
-                    {halt, {NewID, NextSequence}};
-                true ->
-                    {cont, {ID, NextSequence}}
-            end
-        end,
-        {undefined, LastSequenceInType},
-        lists:seq(1, 100)
-    ).
-
-check_if_id_exists(Worker, ID0, Type0) ->
-    %%    Type1 = atom_to_list(Type0),
-    Query = io_lib:format("""
-    SELECT id
-    FROM ~p
-    WHERE id = $1;
-    """, [Type0]),
-    ID1 = to_string(ID0),
-    case epg_pool:query(Worker, Query, [ID1]) of
-        {ok, _Columns, []} ->
-            false;
-        {ok, _Columns, [{ID1}]} ->
-            true;
-        {error, Reason} ->
-            throw({error, Reason})
-    end.
-
-get_target_objects(Refs, Version) ->
-    get_target_objects(default_pool, Refs, Version).
+% get_target_objects(Refs, Version) ->
+%     get_target_objects(default_pool, Refs, Version).
 
 get_target_objects(Worker, Refs, Version) ->
     lists:map(
@@ -478,142 +673,58 @@ get_target_objects(Worker, Refs, Version) ->
         Refs
     ).
 
-get_target_object(Ref, Version) ->
-    get_target_object(default_pool, Ref, Version).
-
 get_target_object(Worker, Ref, Version) ->
-    % First check if the version exists
-    case check_version_exists(Worker, Version) of
-        {ok, exists} ->
-            fetch_object(Worker, Ref, Version);
-        {ok, not_exists} ->
-            {error, global_version_not_found};
-        Error ->
-            Error
+    Ref0 = dmt_mapper:to_string(Ref),
+    case dmt_database:check_version_exists(Worker, Version) of
+        true ->
+            case dmt_database:get_object(Worker, Ref0, Version) of
+                {ok, Object} ->
+                    add_created_by_to_object(Worker, Object);
+                {error, not_found} ->
+                    {error, {object_not_found, Ref}}
+            end;
+        false ->
+            {error, version_not_found}
     end.
 
-check_version_exists(Worker, Version) ->
-    VersionRequest = """
-    SELECT 1
-    FROM global_version
-    WHERE version = $1
-    LIMIT 1
-    """,
-    case epg_pool:query(Worker, VersionRequest, [Version]) of
-        {ok, _Columns, []} ->
-            {ok, not_exists};
-        {ok, _Columns, [_Row]} ->
-            {ok, exists};
-        Error ->
-            Error
+add_created_by_to_objects(Worker, Objects) ->
+    Versions = lists:uniq([Version || #{version := Version} <- Objects]),
+    AuthorsOfVersions =
+        #{
+            Version => Author
+         || Version <- Versions,
+            {ok, AuthorID} <- [dmt_database:get_version_creator(Worker, Version)],
+            {ok, Author} <- [dmt_author:get(AuthorID)]
+        },
+    EnrichedObjects = [
+        Object#{
+            created_by => maps:get(Version, AuthorsOfVersions, undefined)
+        }
+     || #{version := Version} = Object <- Objects
+    ],
+    {ok, EnrichedObjects}.
+
+add_created_by_to_object(Worker, Object) ->
+    #{version := Version} = Object,
+    {ok, AuthorID} = dmt_database:get_version_creator(Worker, Version),
+    {ok, Author} = dmt_author:get(AuthorID),
+    {ok, Object#{created_by => Author}}.
+
+get_latest_target_object(Worker, Ref) ->
+    Ref0 = dmt_mapper:to_string(Ref),
+
+    case dmt_database:get_latest_object(Worker, Ref0) of
+        {ok, LatestObject} ->
+            add_created_by_to_object(Worker, LatestObject);
+        {error, not_found} ->
+            {error, {object_not_found, Ref}}
     end.
 
-fetch_object(Worker, Ref, Version) ->
-    {Type, ID} = Ref,
-    ID0 = to_string(ID),
-    Request = io_lib:format("""
-    SELECT id,
-           global_version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM ~p
-    WHERE id = $1 AND global_version <= $2
-    ORDER BY global_version DESC
-    LIMIT 1
-    """, [Type]),
-    case epg_pool:query(Worker, Request, [ID0, Version]) of
-        {ok, _Columns, []} ->
-            {error, object_not_found};
-        {ok, Columns, Rows} ->
-            [Result | _] = to_marshalled_maps(Columns, Rows),
-            {ok, Result}
-    end.
+get_version(Worker, undefined) ->
+    {ok, LatestVersion} = dmt_database:get_latest_version(Worker),
+    LatestVersion;
+get_version(_Worker, Version) ->
+    Version.
 
-get_latest_target_object(Ref) ->
-    {Type, ID} = Ref,
-    ID0 = to_string(ID),
-    Request = io_lib:format("""
-    SELECT id,
-           global_version,
-           references_to,
-           referenced_by,
-           data,
-           is_active,
-           created_at
-    FROM ~p
-    WHERE id = $1
-    ORDER BY global_version DESC
-    LIMIT 1
-    """, [Type]),
-    case epg_pool:query(default_pool, Request, [ID0]) of
-        {ok, _Columns, []} ->
-            {error, {object_not_found, Ref}};
-        {ok, Columns, Rows} ->
-            [Result | _] = to_marshalled_maps(Columns, Rows),
-            {ok, Result}
-    end.
-
-to_marshalled_maps(Columns, Rows) ->
-    to_maps(Columns, Rows, fun marshall_object/1).
-
-to_maps(Columns, Rows, TransformRowFun) ->
-    ColNumbers = erlang:length(Columns),
-    Seq = lists:seq(1, ColNumbers),
-    lists:map(
-        fun(Row) ->
-            Data = lists:foldl(
-                fun(Pos, Acc) ->
-                    #column{name = Field, type = Type} = lists:nth(Pos, Columns),
-                    Acc#{Field => convert(Type, erlang:element(Pos, Row))}
-                end,
-                #{},
-                Seq
-            ),
-            TransformRowFun(Data)
-        end,
-        Rows
-    ).
-
-%% for reference https://github.com/epgsql/epgsql#data-representation
-convert(timestamp, Value) ->
-    datetime_to_binary(Value);
-convert(timestamptz, Value) ->
-    datetime_to_binary(Value);
-convert(_Type, Value) ->
-    Value.
-
-datetime_to_binary({Date, {Hour, Minute, Second}}) when is_float(Second) ->
-    datetime_to_binary({Date, {Hour, Minute, trunc(Second)}});
-datetime_to_binary(DateTime) ->
-    UnixTime = genlib_time:daytime_to_unixtime(DateTime),
-    genlib_rfc3339:format(UnixTime, second).
-
-marshall_object(#{
-    <<"id">> := ID,
-    <<"global_version">> := Version,
-    <<"references_to">> := ReferencesTo,
-    <<"referenced_by">> := ReferencedBy,
-    <<"data">> := Data,
-    <<"created_at">> := CreatedAt,
-    <<"is_active">> := IsActive
-}) ->
-    dmt_object:just_object(
-        from_string(ID),
-        Version,
-        lists:map(fun from_string/1, ReferencesTo),
-        lists:map(fun from_string/1, ReferencedBy),
-        from_string(Data),
-        CreatedAt,
-        IsActive
-    ).
-
-to_string(A0) ->
-    A1 = term_to_binary(A0),
-    base64:encode_to_string(A1).
-
-from_string(B0) ->
-    B1 = base64:decode(B0),
-    binary_to_term(B1).
+get_object_ref({Type, {_Object, ID, _Data}}) ->
+    {ok, {Type, ID}}.

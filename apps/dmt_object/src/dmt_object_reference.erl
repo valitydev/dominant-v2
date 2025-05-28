@@ -153,6 +153,8 @@ indexfold(_Fun, Acc, _I, []) ->
 
 %% Common
 
+get_struct_info('LimitConfig') ->
+    dmsl_limiter_config_thrift:struct_info('LimitConfig');
 get_struct_info(StructName) ->
     dmsl_domain_thrift:struct_info(StructName).
 

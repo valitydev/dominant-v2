@@ -63,8 +63,13 @@ dbinit() ->
     MigrationsPath = WorkDir ++ "/migrations",
     Cmd = "run",
     case dmt_db_migration:process(["-d", MigrationsPath, Cmd]) of
-        ok -> ok;
-        {error, Reason} -> throw({migrations_error, Reason})
+        ok ->
+            _ = logger:warning("entity_type: ~p", [
+                epg_pool:query(default_pool, "SELECT * FROM entity_type;")
+            ]),
+            ok;
+        {error, Reason} ->
+            throw({migrations_error, Reason})
     end.
 
 set_database_url() ->
@@ -80,7 +85,8 @@ set_database_url() ->
     %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
     PgPortStr = erlang:integer_to_list(PgPort),
     Value =
-        "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++ DbName,
+        "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++
+            DbName,
     true = os:putenv("DATABASE_URL", Value).
 
 %% internal functions
@@ -102,13 +108,13 @@ get_repository_handlers() ->
             repository => dmt_repository_client_handler,
             default_handling_timeout => DefaultTimeout
         }),
-        get_handler(user_op, #{
-            repository => dmt_user_op_handler,
+        get_handler(author, #{
+            repository => dmt_author_handler,
             default_handling_timeout => DefaultTimeout
         })
     ].
 
--spec get_handler(repository | repository_client | user_op, woody:options()) ->
+-spec get_handler(repository | repository_client | author, woody:options()) ->
     woody:http_handler(woody:th_handler()).
 get_handler(repository, Options) ->
     {"/v1/domain/repository", {
@@ -120,18 +126,18 @@ get_handler(repository_client, Options) ->
         get_service(repository_client),
         {dmt_repository_client_handler, Options}
     }};
-get_handler(user_op, Options) ->
-    {"/v1/domain/user_op", {
-        get_service(user_op),
-        {dmt_user_op_handler, Options}
+get_handler(author, Options) ->
+    {"/v1/domain/author", {
+        get_service(author),
+        {dmt_author_handler, Options}
     }}.
 
 get_service(repository) ->
     {dmsl_domain_conf_v2_thrift, 'Repository'};
 get_service(repository_client) ->
     {dmsl_domain_conf_v2_thrift, 'RepositoryClient'};
-get_service(user_op) ->
-    {dmsl_domain_conf_v2_thrift, 'UserOpManagement'}.
+get_service(author) ->
+    {dmsl_domain_conf_v2_thrift, 'AuthorManagement'}.
 
 -spec enable_health_logging(erl_health:check()) -> erl_health:check().
 enable_health_logging(Check) ->

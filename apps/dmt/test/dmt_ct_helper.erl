@@ -49,13 +49,13 @@ start_app(dmt = AppName) ->
             }},
             {services, #{
                 repository => #{
-                    url => <<"http://dmt:8022/v1/domain/repository">>
+                    url => <<"http://dmt.default:8022/v1/domain/repository">>
                 },
                 repository_client => #{
-                    url => <<"http://dmt:8022/v1/domain/repository_client">>
+                    url => <<"http://dmt.default:8022/v1/domain/repository_client">>
                 },
-                user_op => #{
-                    url => <<"http://dmt:8022/v1/domain/user_op">>
+                author => #{
+                    url => <<"http://dmt.default:8022/v1/domain/author">>
                 }
             }}
         ]),
@@ -66,7 +66,7 @@ start_app(epg_connector = AppName) ->
         start_app(AppName, [
             {databases, #{
                 default_db => #{
-                    host => "db",
+                    host => "dmt_db",
                     port => 5432,
                     username => "postgres",
                     password => "postgres",
@@ -78,7 +78,7 @@ start_app(epg_connector = AppName) ->
                     database => default_db,
                     size => 10
                 },
-                user_op_pool => #{
+                author_pool => #{
                     database => default_db,
                     size => 10
                 }
@@ -153,6 +153,7 @@ cleanup_db() ->
             FROM information_schema.tables
             WHERE table_schema='public'
             AND NOT table_name = '__migrations'
+            AND NOT table_name = 'entity_type'
             ) LOOP
             -- Execute the TRUNCATE command on each table
             EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.table_name) || ' RESTART IDENTITY CASCADE';

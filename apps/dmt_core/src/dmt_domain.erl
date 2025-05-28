@@ -7,10 +7,13 @@
 %%
 
 -export([references/1]).
+-export([get_data/1]).
+-export([maybe_get_domain_object_data_field/2]).
 
 -define(DOMAIN, dmsl_domain_thrift).
 
 -export_type([operation_error/0]).
+-export_type([domain_object/0]).
 
 %%
 
@@ -40,7 +43,9 @@ references(Object, DataType) ->
 
 references(undefined, _StructInfo, Refs) ->
     Refs;
-references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when is_list(FieldsInfo) ->
+references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when
+    is_list(FieldsInfo)
+->
     case get_field_info(Tag, StructInfo) of
         false ->
             erlang:error({<<"field info not found">>, Tag, StructInfo});
@@ -112,6 +117,18 @@ get_data(DomainObject) ->
 
 get_domain_object_field(Field, {Tag, Struct}) ->
     get_field(Field, Struct, get_domain_object_schema(Tag)).
+
+maybe_get_domain_object_data_field(Field, {Tag, Struct}) ->
+    {_, Data} = get_data({Tag, Struct}),
+    SchemaInfo = get_struct_info('ReflessDomainObject'),
+    {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
+    DomainObjectSchema = get_struct_info(ObjectStructName),
+    case get_field_index(Field, DomainObjectSchema) of
+        {FieldIndex, _} ->
+            element(FieldIndex, Data);
+        false ->
+            undefined
+    end.
 
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),

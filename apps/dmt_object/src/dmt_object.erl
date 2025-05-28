@@ -7,7 +7,8 @@
 -export([new_object/1]).
 -export([update_object/2]).
 -export([remove_object/1]).
--export([just_object/7]).
+-export([just_object/8]).
+-export([filter_out_inactive_objects/1]).
 
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
@@ -37,7 +38,7 @@
 -type object() :: #{
     id := object_id(),
     type := object_type(),
-    global_version := string(),
+    version := string(),
     references := [{object_type(), object_id()}],
     referenced_by := [{object_type(), object_id()}],
     data := binary(),
@@ -55,7 +56,8 @@ new_object(#domain_conf_v2_InsertOp{
                 tmp_id => uuid:get_v4_urandom(),
                 type => Type,
                 forced_id => ForcedRef,
-                references => list_term_to_binary(dmt_object_reference:refless_object_references(NewObject)),
+                references =>
+                    dmt_object_reference:refless_object_references(NewObject),
                 data => NewObject
             }};
         {error, Error} ->
@@ -63,22 +65,20 @@ new_object(#domain_conf_v2_InsertOp{
     end.
 
 update_object(
-    #domain_conf_v2_UpdateOp{
-        targeted_ref = {_, ID} = TargetedRef,
-        new_object = NewObject
-    },
+    Object,
     ExistingUpdate
 ) ->
     maybe
-        {ok, Type} ?= get_checked_type(TargetedRef, NewObject),
-        ok ?= check_domain_object_refs(TargetedRef, NewObject),
+        {ok, Type} ?= get_object_type(Object),
+        {ok, ID} ?= get_object_ref(Object),
         {ok, ExistingUpdate#{
             id => ID,
             type => Type,
             %%          NOTE this will just provide all the refs that already exist,
             %%          it doesn't give us diff, but maybe it's not needed
-            references => dmt_object_reference:domain_object_references(NewObject),
-            data => NewObject
+            references =>
+                dmt_object_reference:domain_object_references(Object),
+            data => Object
         }}
     end.
 
@@ -90,6 +90,7 @@ remove_object(OG) ->
 
 just_object(
     ID,
+    Type,
     Version,
     ReferencesTo,
     ReferencedBy,
@@ -97,11 +98,10 @@ just_object(
     CreatedAt,
     IsActive
 ) ->
-    {Type, _} = ID,
     #{
         id => ID,
         type => Type,
-        global_version => Version,
+        version => Version,
         references => ReferencesTo,
         referenced_by => ReferencedBy,
         data => Data,
@@ -116,10 +116,20 @@ get_checked_type({Type, _}, {Type, _}) ->
 get_checked_type(Ref, Object) ->
     {error, {type_mismatch, Ref, Object}}.
 
-check_domain_object_refs({Type, Ref}, {Type, {_Object, Ref, _Data}}) ->
-    ok;
-check_domain_object_refs(Ref, Object) ->
-    {error, {reference_mismatch, Ref, Object}}.
+get_object_type({Type, {_Object, _Ref, _Data}}) ->
+    {ok, Type};
+get_object_type(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
 
-list_term_to_binary(Terms) ->
-    lists:map(fun(Term) -> term_to_binary(Term) end, Terms).
+get_object_ref({Type, {_Object, ID, _Data}}) ->
+    {ok, {Type, ID}};
+get_object_ref(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
+
+filter_out_inactive_objects(Objects) ->
+    lists:filter(
+        fun(Obj) ->
+            maps:get(is_active, Obj)
+        end,
+        Objects
+    ).

@@ -31,7 +31,7 @@ transform_function(is_reference_type = Name, 1, FormWas) ->
     % ...
     % is_reference_type(_) -> false.
     % ```
-    {struct, union, StructInfo} = get_struct_info('Reference'),
+    {struct, union, StructInfo} = dmsl_domain_thrift:struct_info('Reference'),
     ok = validate_reference_struct('Reference', StructInfo),
     Clauses =
         [
@@ -64,9 +64,6 @@ transform_function(is_reference_type, 2, _FormWas) ->
     delete;
 transform_function(_, _, Form) ->
     Form.
-
-get_struct_info(StructName) ->
-    dmsl_domain_thrift:struct_info(StructName).
 
 validate_reference_struct(StructName, StructInfo) ->
     Mappings = lists:foldl(

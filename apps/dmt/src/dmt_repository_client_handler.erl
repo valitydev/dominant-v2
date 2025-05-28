@@ -2,6 +2,8 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
+-define(EPGPOOL, default_pool).
+
 -export([handle_function/4]).
 
 handle_function(Function, Args, WoodyContext0, Options) ->
@@ -14,48 +16,27 @@ default_handling_timeout(#{default_handling_timeout := Timeout}) ->
 
 do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options) ->
     %% Fetch the object based on VersionReference and Reference
-    case dmt_repository:get_object(VersionRef, ObjectRef) of
+    case dmt_repository:get_object(?EPGPOOL, VersionRef, ObjectRef) of
         {ok, Object} ->
             {ok, Object};
-        {error, global_version_not_found} ->
-            woody_error:raise(business, #domain_conf_v2_GlobalVersionNotFound{});
-        {error, object_not_found} ->
-            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
-        {error, Reason} ->
-            woody_error:raise(system, {internal, Reason})
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
+        {error, {object_not_found, _Ref}} ->
+            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{})
+    end;
+do_handle_function('CheckoutObjects', {VersionRef, ObjectRefs}, _Context, _Options) ->
+    %% Fetch multiple objects based on VersionReference and Reference list
+    case dmt_repository:get_objects(?EPGPOOL, VersionRef, ObjectRefs) of
+        {ok, Objects} ->
+            {ok, Objects};
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{})
+    end;
+do_handle_function('CheckoutSnapshot', {Version}, _Context, _Options) ->
+    %% Fetch all objects based on VersionReference
+    case dmt_repository:get_snapshot(?EPGPOOL, Version) of
+        {ok, Snapshot} ->
+            {ok, Snapshot};
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{})
     end.
-% TODO
-% do_handle_function('GetLocalVersions', {Request}, _Context, _Options) ->
-%     #domain_conf_v2_GetLocalVersionsRequest{
-%         ref = Ref,
-%         limit = Limit,
-%         continuation_token = ContinuationToken
-%     } = Request,
-%     %% Retrieve local versions with pagination
-%     case dmt_repository:get_local_versions(Ref, Limit, ContinuationToken) of
-%         {ok, Versions, NewToken} ->
-%             {ok, #domain_conf_v2_GetVersionsResponse{
-%                 result = Versions,
-%                 continuation_token = NewToken
-%             }};
-%         {error, object_not_found} ->
-%             woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
-%         {error, Reason} ->
-%             woody_error:raise(system, {internal, Reason})
-%     end;
-% TODO
-% do_handle_function('GetGlobalVersions', {Request}, _Context, _Options) ->
-%     #domain_conf_v2_GetGlobalVersionsRequest{
-%         limit = Limit,
-%         continuation_token = ContinuationToken
-%     } = Request,
-%     %% Retrieve global versions with pagination
-%     case dmt_repository:get_global_versions(Limit, ContinuationToken) of
-%         {ok, Versions, NewToken} ->
-%             {ok, #domain_conf_v2_GetVersionsResponse{
-%                 result = Versions,
-%                 continuation_token = NewToken
-%             }};
-%         {error, Reason} ->
-%             woody_error:raise(system, {internal, Reason})
-%     end.
