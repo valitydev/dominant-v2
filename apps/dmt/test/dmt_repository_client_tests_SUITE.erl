@@ -153,7 +153,8 @@ checkout_objects_test(Config) ->
     }} = dmt_client:commit(0, InsertOps, AuthorID, Client),
 
     % Extract the {Type, ID} references for the created objects
-    % NewObjectsCommit is an ordset of {Type, SpecificObject}, order maintained by ordsets:to_list/1 if underlying IDs are sortable/consistent.
+    % NewObjectsCommit is an ordset of {Type, SpecificObject},
+    % order maintained by ordsets:to_list/1 if underlying IDs are sortable/consistent.
     CreatedObjectRefsForCheckout = lists:map(
         fun({category, CategoryDomainObject}) ->
             % CategoryDomainObject is #domain_CategoryObject
@@ -183,7 +184,8 @@ checkout_objects_test(Config) ->
     ?assertEqual(2, length(HeadObjects)),
 
     % Verify object IDs were preserved in order from the request
-    % ExpectedObjectIds should be the list of binary IDs, in the order they were requested (and hopefully returned by commit)
+    % ExpectedObjectIds should be the list of binary IDs,
+    % in the order they were requested (and hopefully returned by commit)
 
     % Extracts the ID part
     ExpectedObjectIds = [element(2, RefTuple) || RefTuple <- CreatedObjectRefsForCheckout],
