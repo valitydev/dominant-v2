@@ -30,6 +30,7 @@ start_link() ->
 %%                  modules => modules()}   % optional
 init(_) ->
     ok = dbinit(),
+    ok = init_kafka(),
     {ok, IP} = inet:parse_address(genlib_app:env(?APP, ip, "::")),
     HealthCheck = enable_health_logging(genlib_app:env(?APP, health_check, #{})),
     EventHandlers = genlib_app:env(?APP, woody_event_handlers, [scoper_woody_event_handler]),
@@ -90,6 +91,17 @@ set_database_url() ->
     true = os:putenv("DATABASE_URL", Value).
 
 %% internal functions
+
+init_kafka() ->
+    case dmt_kafka_publisher:start_client() of
+        ok ->
+            logger:info("Kafka client initialized successfully"),
+            ok;
+        {error, Reason} ->
+            logger:warning("Failed to initialize Kafka client: ~p", [Reason]),
+            % Don't fail application startup if Kafka is not available
+            ok
+    end.
 
 get_env_var(Name) ->
     case os:getenv(Name) of

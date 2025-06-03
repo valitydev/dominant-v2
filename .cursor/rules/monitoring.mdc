@@ -1,0 +1,440 @@
+---
+description: Observability patterns, metrics collection, distributed tracing, and performance monitoring
+globs: 
+alwaysApply: false
+---
+# Monitoring & Observability Rules
+
+## OpenTelemetry Tracing
+
+### Span Management
+```erlang
+% Always use scoper for request tracing
+-include_lib("scoper/include/scoper.hrl").
+
+% Start spans for significant operations
+-spec with_operation_span(Operation :: binary(), Fun :: fun()) -> term().
+with_operation_span(Operation, Fun) ->
+    ?with_span(Operation, #{}, Fun).
+
+% Add metadata to spans
+-spec add_span_metadata(Metadata :: map()) -> ok.
+add_span_metadata(Metadata) ->
+    scoper:add_meta(Metadata).
+
+% Example usage in business operations
+handle_create_object(Object, Context) ->
+    ?with_span(<<"dmt.create_object">>, #{
+        object_type => maps:get(type, Object, unknown),
+        object_id => maps:get(id, Object, undefined)
+    }, fun() ->
+        case validate_object(Object) of
+            ok ->
+                create_object_impl(Object, Context);
+            {error, Reason} ->
+                scoper:add_meta(#{error => validation_failed, reason => Reason}),
+                {error, {validation_failed, Reason}}
+        end
+    end).
+```
+
+### Distributed Tracing
+```erlang
+% Propagate trace context across service calls
+-spec call_external_service(Service :: atom(), Function :: atom(), 
+                           Args :: tuple(), Context :: woody_context:ctx()) ->
+    {ok, term()} | {error, term()}.
+call_external_service(Service, Function, Args, Context) ->
+    SpanName = iolist_to_binary([atom_to_binary(Service), ".", atom_to_binary(Function)]),
+    ?with_span(SpanName, #{
+        service => Service,
+        function => Function,
+        direction => outbound
+    }, fun() ->
+        try
+            Result = woody_client:call({Service, 'Interface'}, Function, Args, Context),
+            scoper:add_meta(#{result => success}),
+            {ok, Result}
+        catch
+            error:{woody_error, {Class, Details}} ->
+                scoper:add_meta(#{
+                    result => error,
+                    error_class => Class,
+                    error_details => format_error_details(Details)
+                }),
+                {error, {external_service_error, {Class, Details}}}
+        end
+    end).
+```
+
+### Error Tracing
+```erlang
+% Record errors in spans
+-spec handle_with_error_tracing(Fun :: fun()) -> term().
+handle_with_error_tracing(Fun) ->
+    try
+        Fun()
+    catch
+        Class:Reason:Stacktrace ->
+            scoper:add_meta(#{
+                error => true,
+                error_class => Class,
+                error_reason => format_error_reason(Reason),
+                stacktrace => format_stacktrace(Stacktrace)
+            }),
+            erlang:raise(Class, Reason, Stacktrace)
+    end.
+
+% Format error details for tracing
+format_error_reason({woody_error, {ErrorClass, Details}}) ->
+    #{woody_error => #{class => ErrorClass, details => Details}};
+format_error_reason(Reason) when is_atom(Reason) ->
+    Reason;
+format_error_reason(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+```
+
+## Prometheus Metrics
+
+### Business Metrics
+```erlang
+% Define metrics at module level
+-define(OBJECT_OPERATIONS_TOTAL, dmt_object_operations_total).
+-define(OBJECT_OPERATION_DURATION, dmt_object_operation_duration_seconds).
+-define(DATABASE_OPERATIONS_TOTAL, dmt_database_operations_total).
+
+% Initialize metrics
+init_metrics() ->
+    prometheus_counter:declare([
+        {name, ?OBJECT_OPERATIONS_TOTAL},
+        {help, "Total number of domain object operations"},
+        {labels, [operation, status]}
+    ]),
+    prometheus_histogram:declare([
+        {name, ?OBJECT_OPERATION_DURATION},
+        {help, "Duration of domain object operations in seconds"},
+        {labels, [operation]},
+        {buckets, [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0]}
+    ]),
+    prometheus_counter:declare([
+        {name, ?DATABASE_OPERATIONS_TOTAL},
+        {help, "Total number of database operations"},
+        {labels, [query_type, status]}
+    ]).
+
+% Instrument operations
+-spec with_metrics(Operation :: atom(), Fun :: fun()) -> term().
+with_metrics(Operation, Fun) ->
+    StartTime = erlang:monotonic_time(),
+    try
+        Result = Fun(),
+        record_success_metrics(Operation, StartTime),
+        Result
+    catch
+        Class:Reason:Stacktrace ->
+            record_error_metrics(Operation, Class, Reason, StartTime),
+            erlang:raise(Class, Reason, Stacktrace)
+    end.
+
+record_success_metrics(Operation, StartTime) ->
+    Duration = (erlang:monotonic_time() - StartTime) / 1_000_000_000,
+    prometheus_counter:inc(?OBJECT_OPERATIONS_TOTAL, [Operation, success]),
+    prometheus_histogram:observe(?OBJECT_OPERATION_DURATION, [Operation], Duration).
+
+record_error_metrics(Operation, _Class, _Reason, StartTime) ->
+    Duration = (erlang:monotonic_time() - StartTime) / 1_000_000_000,
+    prometheus_counter:inc(?OBJECT_OPERATIONS_TOTAL, [Operation, error]),
+    prometheus_histogram:observe(?OBJECT_OPERATION_DURATION, [Operation], Duration).
+```
+
+### System Metrics
+```erlang
+% Monitor system resources
+-define(MEMORY_USAGE_BYTES, dmt_memory_usage_bytes).
+-define(PROCESS_COUNT, dmt_process_count).
+-define(CONNECTION_POOL_SIZE, dmt_connection_pool_size).
+
+init_system_metrics() ->
+    prometheus_gauge:declare([
+        {name, ?MEMORY_USAGE_BYTES},
+        {help, "Memory usage in bytes"},
+        {labels, [type]}
+    ]),
+    prometheus_gauge:declare([
+        {name, ?PROCESS_COUNT},
+        {help, "Number of Erlang processes"}
+    ]),
+    prometheus_gauge:declare([
+        {name, ?CONNECTION_POOL_SIZE},
+        {help, "Database connection pool size"},
+        {labels, [pool_name, state]}
+    ]).
+
+% Update system metrics periodically
+update_system_metrics() ->
+    % Memory metrics
+    {Total, Allocated, _} = memsup:get_memory_data(),
+    prometheus_gauge:set(?MEMORY_USAGE_BYTES, [total], Total),
+    prometheus_gauge:set(?MEMORY_USAGE_BYTES, [allocated], Allocated),
+    
+    % Process count
+    ProcessCount = erlang:system_info(process_count),
+    prometheus_gauge:set(?PROCESS_COUNT, [], ProcessCount),
+    
+    % Connection pool metrics
+    update_pool_metrics().
+
+update_pool_metrics() ->
+    case epgsql_pool:status(dmt_pool) of
+        {ok, Stats} ->
+            prometheus_gauge:set(?CONNECTION_POOL_SIZE, [dmt_pool, active],
+                                maps:get(active, Stats, 0)),
+            prometheus_gauge:set(?CONNECTION_POOL_SIZE, [dmt_pool, idle],
+                                maps:get(idle, Stats, 0)),
+            prometheus_gauge:set(?CONNECTION_POOL_SIZE, [dmt_pool, waiting],
+                                maps:get(waiting, Stats, 0));
+        {error, _} ->
+            ok
+    end.
+```
+
+### Custom Metrics
+```erlang
+% Domain-specific metrics
+-define(DOMAIN_OBJECT_COUNT, dmt_domain_objects_total).
+-define(REVISION_LAG, dmt_revision_lag).
+-define(VALIDATION_ERRORS, dmt_validation_errors_total).
+
+init_domain_metrics() ->
+    prometheus_gauge:declare([
+        {name, ?DOMAIN_OBJECT_COUNT},
+        {help, "Total number of domain objects"},
+        {labels, [object_type]}
+    ]),
+    prometheus_gauge:declare([
+        {name, ?REVISION_LAG},
+        {help, "Difference between latest and current revision"}
+    ]),
+    prometheus_counter:declare([
+        {name, ?VALIDATION_ERRORS},
+        {help, "Total number of validation errors"},
+        {labels, [error_type]}
+    ]).
+
+% Update domain metrics
+update_domain_metrics() ->
+    case get_object_counts_by_type() of
+        {ok, Counts} ->
+            maps:foreach(fun(Type, Count) ->
+                prometheus_gauge:set(?DOMAIN_OBJECT_COUNT, [Type], Count)
+            end, Counts);
+        {error, _} ->
+            ok
+    end,
+    
+    case get_revision_lag() of
+        {ok, Lag} ->
+            prometheus_gauge:set(?REVISION_LAG, [], Lag);
+        {error, _} ->
+            ok
+    end.
+
+% Record validation errors
+record_validation_error(ErrorType) ->
+    prometheus_counter:inc(?VALIDATION_ERRORS, [ErrorType]).
+```
+
+## Logging
+
+### Structured Logging
+```erlang
+% Use structured logging with request context
+-spec log_operation(Level :: logger:level(), Message :: binary(), 
+                   Metadata :: map(), Context :: woody_context:ctx()) -> ok.
+log_operation(Level, Message, Metadata, Context) ->
+    RequestId = woody_context:get_meta(Context, request_id, undefined),
+    UserId = woody_context:get_meta(Context, user_id, undefined),
+    
+    LogMetadata = maps:merge(Metadata, #{
+        request_id => RequestId,
+        user_id => UserId,
+        service => dmt,
+        timestamp => calendar:system_time_to_universal_time(
+                        erlang:system_time(second), second)
+    }),
+    
+    logger:log(Level, Message, LogMetadata).
+
+% Log business operations
+log_business_operation(Operation, ObjectId, Result, Context) ->
+    Metadata = #{
+        operation => Operation,
+        object_id => ObjectId,
+        result => Result,
+        category => business_operation
+    },
+    Message = <<"Business operation completed">>,
+    log_operation(info, Message, Metadata, Context).
+
+% Log system events
+log_system_event(Event, Details) ->
+    Metadata = #{
+        event => Event,
+        details => Details,
+        category => system_event,
+        node => node()
+    },
+    logger:log(info, <<"System event occurred">>, Metadata).
+```
+
+### Error Logging
+```erlang
+% Log errors with context
+-spec log_error(Error :: term(), Context :: map()) -> ok.
+log_error(Error, Context) ->
+    Metadata = maps:merge(Context, #{
+        error => format_error(Error),
+        category => error,
+        severity => error
+    }),
+    logger:log(error, <<"Operation failed">>, Metadata).
+
+% Log performance issues
+log_slow_operation(Operation, Duration, Threshold) when Duration > Threshold ->
+    Metadata = #{
+        operation => Operation,
+        duration_ms => Duration,
+        threshold_ms => Threshold,
+        category => performance,
+        severity => warning
+    },
+    logger:log(warning, <<"Slow operation detected">>, Metadata);
+log_slow_operation(_, _, _) ->
+    ok.
+```
+
+## Health Checks
+
+### Service Health
+```erlang
+% Comprehensive health check
+-spec check_service_health() -> {ok, health_status()} | {error, term()}.
+check_service_health() ->
+    Checks = [
+        {database, fun check_database_health/0},
+        {external_services, fun check_external_services_health/0},
+        {memory, fun check_memory_health/0},
+        {disk, fun check_disk_health/0}
+    ],
+    
+    Results = run_health_checks(Checks),
+    OverallStatus = determine_overall_status(Results),
+    
+    {ok, #{
+        status => OverallStatus,
+        checks => Results,
+        timestamp => calendar:universal_time(),
+        version => get_service_version()
+    }}.
+
+run_health_checks(Checks) ->
+    maps:from_list([
+        {Name, run_single_check(Check)} || {Name, Check} <- Checks
+    ]).
+
+run_single_check(CheckFun) ->
+    try
+        case CheckFun() of
+            ok -> #{status => healthy, details => <<"OK">>};
+            {ok, Details} -> #{status => healthy, details => Details};
+            {error, Reason} -> #{status => unhealthy, details => Reason}
+        end
+    catch
+        Class:Reason:_ ->
+            #{
+                status => unhealthy,
+                details => #{
+                    error_class => Class,
+                    error_reason => Reason
+                }
+            }
+    end.
+
+% Specific health checks
+check_database_health() ->
+    case dmt_database:check_connection() of
+        ok -> 
+            case dmt_database:check_migration_status() of
+                {ok, up_to_date} -> ok;
+                {ok, Status} -> {error, {migration_status, Status}};
+                {error, Reason} -> {error, {migration_check_failed, Reason}}
+            end;
+        {error, Reason} -> 
+            {error, {database_connection_failed, Reason}}
+    end.
+
+check_external_services_health() ->
+    Services = get_external_services(),
+    Results = [{Service, check_service_availability(Service)} || Service <- Services],
+    FailedServices = [{S, R} || {S, {error, R}} <- Results],
+    case FailedServices of
+        [] -> ok;
+        Failed -> {error, {external_services_failed, Failed}}
+    end.
+
+check_memory_health() ->
+    {Total, Allocated, _} = memsup:get_memory_data(),
+    UsagePercent = (Allocated / Total) * 100,
+    case UsagePercent > 90 of
+        true -> {error, {high_memory_usage, UsagePercent}};
+        false -> {ok, #{memory_usage_percent => UsagePercent}}
+    end.
+```
+
+## Alerting Integration
+
+### Alert Definitions
+```erlang
+% Define alert thresholds
+-define(ALERT_THRESHOLDS, #{
+    error_rate => 0.05,        % 5% error rate
+    response_time_p99 => 2.0,  % 2 seconds
+    memory_usage => 0.9,       % 90% memory usage
+    connection_pool_usage => 0.8 % 80% pool usage
+}).
+
+% Check alert conditions
+check_alert_conditions() ->
+    Thresholds = ?ALERT_THRESHOLDS,
+    Conditions = [
+        {error_rate, check_error_rate_alert(maps:get(error_rate, Thresholds))},
+        {response_time, check_response_time_alert(maps:get(response_time_p99, Thresholds))},
+        {memory_usage, check_memory_usage_alert(maps:get(memory_usage, Thresholds))},
+        {connection_pool, check_connection_pool_alert(maps:get(connection_pool_usage, Thresholds))}
+    ],
+    
+    Alerts = [{Name, Details} || {Name, {alert, Details}} <- Conditions],
+    case Alerts of
+        [] -> ok;
+        _ -> {alerts, Alerts}
+    end.
+
+% Send alerts to external systems
+send_alert(AlertType, Details) ->
+    AlertData = #{
+        alert_type => AlertType,
+        details => Details,
+        timestamp => calendar:universal_time(),
+        service => dmt,
+        node => node(),
+        severity => determine_alert_severity(AlertType, Details)
+    },
+    
+    % Send to alerting system (e.g., Slack, PagerDuty)
+    case get_alerting_config() of
+        {ok, Config} ->
+            send_alert_notification(Config, AlertData);
+        {error, _} ->
+            logger:log(error, <<"Failed to send alert - no alerting config">>, AlertData)
+    end.
+``` 

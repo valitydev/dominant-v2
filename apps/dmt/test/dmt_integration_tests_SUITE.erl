@@ -227,6 +227,7 @@ insert_remove_referencing_object_success_test(Config) ->
                 {provider, #domain_Provider{
                     name = <<"name">>,
                     description = <<"description">>,
+                    realm = test,
                     proxy = #domain_Proxy{
                         ref = ProxyRef,
                         additional = #{}
