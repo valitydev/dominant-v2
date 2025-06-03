@@ -27,17 +27,6 @@
 -define(TEST_TOPIC, <<"test-domain_changes-integration">>).
 -define(CLIENT_ID, dmt_kafka_test_client).
 
--define(KAFKA_CONFIG, #{
-    brokers => [{"kafka", 29092}],
-    topic => ?TEST_TOPIC,
-    producer => #{
-        required_acks => -1,
-        ack_timeout => 5000,
-        max_retries => 3,
-        retry_backoff_ms => 500
-    }
-}).
-
 %%====================================================================
 %% CT Callbacks
 %%====================================================================
@@ -55,18 +44,21 @@ all() ->
 init_per_suite(Config) ->
     ct:pal("Starting Kafka integration test suite"),
 
-    % Ensure required applications are started
-    {ok, _} = application:ensure_all_started(damsel),
-    {ok, _} = application:ensure_all_started(jsx),
-    {ok, _} = application:ensure_all_started(brod),
+    % Start required applications with brod configured via ct_helper first
+    {Apps, _} = dmt_ct_helper:start_apps([
+        damsel, jsx, brod
+    ]),
 
-    % Wait for Kafka to be ready
+    % Enable Kafka publishing for tests via environment variables
+    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
+    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
+    true = os:putenv("DMT_KAFKA_TOPICS", binary_to_list(?TEST_TOPIC)),
+
+    % Wait for Kafka to be ready after brod is started
     case wait_for_kafka_ready(30) of
         ok ->
             ct:pal("Kafka is ready for testing"),
-            % Set test Kafka configuration
-            application:set_env(dmt, kafka, ?KAFKA_CONFIG),
-            Config;
+            [{apps, Apps} | Config];
         {error, timeout} ->
             ct:fail("Kafka not ready after 30 seconds")
     end.
@@ -80,8 +72,10 @@ end_per_suite(_Config) ->
     % Stop test client if running
     catch brod:stop_client(?CLIENT_ID),
 
-    % Unset test configuration
-    application:unset_env(dmt, kafka),
+    % Clean up environment variables
+    os:unsetenv("DMT_KAFKA_ENABLED"),
+    os:unsetenv("DMT_KAFKA_BROKERS"),
+    os:unsetenv("DMT_KAFKA_TOPICS"),
 
     ok.
 
@@ -216,29 +210,31 @@ test_kafka_configuration_validation(_Config) ->
     catch brod:stop_client(dmt_kafka_client),
     timer:sleep(500),
 
-    % Test with missing configuration - should handle gracefully
-    application:unset_env(dmt, kafka),
+    % Test with Kafka publishing disabled - should handle gracefully
+    true = os:putenv("DMT_KAFKA_ENABLED", "false"),
     try
         Result1 = dmt_kafka_publisher:start_client(),
-        ct:pal("Result with missing config: ~p", [Result1])
+        ct:pal("Result with Kafka disabled: ~p", [Result1]),
+        % Should return ok when disabled
+        ?assertEqual(ok, Result1)
     catch
         Class1:Error1 ->
-            ct:pal("Exception with missing config: ~p:~p", [Class1, Error1])
+            ct:pal("Exception with Kafka disabled: ~p:~p", [Class1, Error1])
     end,
 
     % Clean up before next test
     catch brod:stop_client(dmt_kafka_client),
     timer:sleep(500),
 
-    % Test with invalid configuration (empty brokers list) - should handle gracefully
-    InvalidConfig = #{brokers => [], topic => <<"test">>},
-    application:set_env(dmt, kafka, InvalidConfig),
+    % Test with invalid broker configuration - should handle gracefully
+    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
+    true = os:putenv("DMT_KAFKA_BROKERS", "invalid_host:9999"),
     try
         Result2 = dmt_kafka_publisher:start_client(),
-        ct:pal("Result with invalid config: ~p", [Result2])
+        ct:pal("Result with invalid brokers: ~p", [Result2])
     catch
         Class2:Error2 ->
-            ct:pal("Exception with invalid config: ~p:~p", [Class2, Error2])
+            ct:pal("Exception with invalid brokers: ~p:~p", [Class2, Error2])
     end,
 
     % Clean up before next test
@@ -246,7 +242,7 @@ test_kafka_configuration_validation(_Config) ->
     timer:sleep(500),
 
     % Test with valid configuration - should work
-    application:set_env(dmt, kafka, ?KAFKA_CONFIG),
+    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
     try
         Result3 = dmt_kafka_publisher:start_client(),
         ct:pal("Result with valid config: ~p", [Result3]),
@@ -263,7 +259,8 @@ test_end_to_end_workflow(_Config) ->
     ct:pal("Testing end-to-end Kafka workflow"),
 
     % Ensure we have valid configuration
-    application:set_env(dmt, kafka, ?KAFKA_CONFIG),
+    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
+    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
 
     % Start Kafka client
     ok = dmt_kafka_publisher:start_client(),

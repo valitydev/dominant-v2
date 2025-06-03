@@ -86,6 +86,28 @@ start_app(epg_connector = AppName) ->
         ]),
         #{}
     };
+start_app(brod = AppName) ->
+    {
+        start_app(AppName, [
+            {clients, [
+                {dmt_kafka_client, [
+                    {endpoints, [{"kafka", 29092}]},
+                    {reconnect_cool_down_seconds, 10},
+                    {auto_start_producers, true},
+                    {default_producer_config, [
+                        {required_acks, -1},
+                        {ack_timeout, 5000},
+                        {partition_buffer_limit, 256},
+                        {partition_onwire_limit, 1},
+                        {max_batch_size, 16384},
+                        {max_retries, 3},
+                        {retry_backoff_ms, 500}
+                    ]}
+                ]}
+            ]}
+        ]),
+        #{}
+    };
 start_app(AppName) ->
     {genlib_app:start_application(AppName), #{}}.
 

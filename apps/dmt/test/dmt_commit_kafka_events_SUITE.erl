@@ -27,14 +27,6 @@
 % For brod specific consumer client
 -define(KAFKA_TEST_CLIENT_ID, dmt_commit_kafka_test_client).
 
--define(KAFKA_CONFIG, #{
-    brokers => [{"kafka", 29092}],
-    topic => ?TEST_TOPIC,
-    producer => #{
-        required_acks => -1, ack_timeout => 5000, max_retries => 3, retry_backoff_ms => 500
-    }
-}).
-
 %%====================================================================
 %% CT Callbacks
 %%====================================================================
@@ -50,14 +42,17 @@ all() ->
 init_per_suite(Config) ->
     ct:pal("Starting Commit Kafka Events test suite"),
 
-    % Set Kafka configuration BEFORE starting applications
-    application:set_env(dmt, kafka, ?KAFKA_CONFIG),
+    % Enable Kafka publishing for tests via environment variables
+    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
+    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
+    true = os:putenv("DMT_KAFKA_TOPICS", binary_to_list(?TEST_TOPIC)),
 
-    % Start dependent applications
+    % Start dependent applications with brod configured via ct_helper
     {Apps, _} = dmt_ct_helper:start_apps([
         damsel, jsx, brod, woody, scoper, epg_connector, dmt
     ]),
 
+    % Wait for Kafka to be ready after applications are started
     case wait_for_kafka_ready(30) of
         ok ->
             ct:pal("Kafka is ready for testing"),
@@ -76,15 +71,22 @@ end_per_suite(_Config) ->
     % Stop the main publisher's client
     dmt_kafka_publisher:stop_client(),
 
-    application:unset_env(dmt, kafka),
+    % Clean up environment variables
+    os:unsetenv("DMT_KAFKA_ENABLED"),
+    os:unsetenv("DMT_KAFKA_BROKERS"),
+    os:unsetenv("DMT_KAFKA_TOPICS"),
+
     dmt_ct_helper:cleanup_db(),
     % Consider stopping apps if dmt_ct_helper provided a way
     ok.
 
 init_per_testcase(TestCase, Config) ->
     ct:pal("Starting test case: ~p", [TestCase]),
-    % Ensure kafka config is set for dmt_kafka_publisher for this test
-    application:set_env(dmt, kafka, ?KAFKA_CONFIG),
+    % Ensure environment variables are set for this test
+    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
+    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
+    true = os:putenv("DMT_KAFKA_TOPICS", binary_to_list(?TEST_TOPIC)),
+
     % Ensure dmt_kafka_publisher starts with our test config
     case dmt_kafka_publisher:start_client() of
         ok -> ok;
@@ -344,8 +346,8 @@ wait_for_kafka_ready(Retries) ->
     CheckClient = list_to_atom(
         "kafka_check_client_" ++ integer_to_list(erlang:unique_integer([positive]))
     ),
-    KafkaConfig = application:get_env(dmt, kafka, ?KAFKA_CONFIG),
-    KafkaNodes = maps:get(brokers, KafkaConfig, [{"kafka", 29092}]),
+    % Use hardcoded kafka broker for connection testing
+    KafkaNodes = [{"kafka", 29092}],
     try_kafka_connection(KafkaNodes, CheckClient, Retries).
 
 try_kafka_connection(KafkaNodes, CheckClient, Retries) ->

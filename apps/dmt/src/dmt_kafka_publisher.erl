@@ -35,27 +35,16 @@
 %%====================================================================
 
 %% @doc Start the Kafka client for DMT events
+%% Relies on brod application configuration for client setup
 -spec start_client() -> ok | {error, term()}.
 start_client() ->
-    case get_kafka_config() of
-        undefined ->
-            logger:warning("Kafka configuration not found, skipping Kafka client startup"),
+    case is_kafka_enabled() of
+        false ->
+            logger:info("Kafka publishing disabled, skipping client startup"),
             ok;
-        Config ->
-            Brokers = maps:get(brokers, Config, [{"localhost", 9092}]),
-            ClientConfig = build_client_config(Config),
-            case brod:start_client(Brokers, ?CLIENT_ID, ClientConfig) of
-                ok ->
-                    ok = start_producer(Config),
-                    logger:info("DMT Kafka client started successfully"),
-                    ok;
-                {error, {already_started, _}} ->
-                    logger:info("DMT Kafka client already started"),
-                    ok;
-                {error, Reason} ->
-                    logger:error("Failed to start DMT Kafka client: ~p", [Reason]),
-                    {error, Reason}
-            end
+        true ->
+            % Try to start client directly, let brod handle if it's already started
+            start_client_manually()
     end.
 
 %% @doc Stop the Kafka client
@@ -90,11 +79,11 @@ publish_commit_event(Topic, HistoricalCommit) ->
             <<"version">> => HistoricalCommit#domain_conf_v2_HistoricalCommit.version
         },
         fun(_SpanCtx) ->
-            case get_kafka_config() of
-                undefined ->
+            case is_kafka_enabled() of
+                false ->
                     logger:debug("Kafka not configured, skipping event publishing"),
                     ok;
-                _Config ->
+                true ->
                     publish_event_internal(Topic, HistoricalCommit)
             end
         end
@@ -104,54 +93,108 @@ publish_commit_event(Topic, HistoricalCommit) ->
 %% Internal functions
 %%====================================================================
 
-%% @doc Get Kafka configuration from application environment
--spec get_kafka_config() -> map() | undefined.
-get_kafka_config() ->
-    case application:get_env(dmt, kafka) of
-        {ok, Config} when is_map(Config) ->
-            Config;
-        {ok, Config} when is_list(Config) ->
-            maps:from_list(Config);
-        _ ->
-            undefined
+%% @doc Check if Kafka publishing is enabled
+%% Can be controlled by DMT_KAFKA_ENABLED environment variable
+-spec is_kafka_enabled() -> boolean().
+is_kafka_enabled() ->
+    case os:getenv("DMT_KAFKA_ENABLED") of
+        % Default to enabled if not set
+        false -> true;
+        "false" -> false;
+        "0" -> false;
+        _ -> true
     end.
 
-%% @doc Build client configuration for brod
--spec build_client_config(map()) -> [tuple()].
-build_client_config(Config) ->
-    BaseConfig = [
-        {reconnect_cool_down_seconds, maps:get(reconnect_cool_down_seconds, Config, 10)},
-        {auto_start_producers, true},
-        {default_producer_config, build_producer_config(Config)}
-    ],
-
-    % Add SASL configuration if present
-    case maps:get(sasl, Config, undefined) of
-        undefined ->
-            BaseConfig;
-        SaslConfig ->
-            [{sasl, SaslConfig} | BaseConfig]
+%% @doc Start Kafka client manually with default configuration
+-spec start_client_manually() -> ok | {error, term()}.
+start_client_manually() ->
+    Brokers = get_kafka_brokers(),
+    ClientConfig = get_default_client_config(),
+    case brod:start_client(Brokers, ?CLIENT_ID, ClientConfig) of
+        ok ->
+            ok = start_producers(),
+            logger:info("DMT Kafka client started successfully"),
+            ok;
+        {error, {already_started, _}} ->
+            logger:info("DMT Kafka client already started"),
+            ok;
+        {error, Reason} ->
+            logger:error("Failed to start DMT Kafka client: ~p", [Reason]),
+            {error, Reason}
     end.
 
-%% @doc Build producer configuration
--spec build_producer_config(map()) -> [tuple()].
-build_producer_config(Config) ->
-    ProducerConfig = maps:get(producer, Config, #{}),
+%% @doc Get Kafka broker endpoints from environment or use defaults
+-spec get_kafka_brokers() -> [brod:endpoint()].
+get_kafka_brokers() ->
+    case os:getenv("DMT_KAFKA_BROKERS") of
+        false ->
+            [{"localhost", 9092}];
+        BrokersStr ->
+            parse_brokers(BrokersStr)
+    end.
+
+%% @doc Parse broker string like "host1:port1,host2:port2"
+-spec parse_brokers(string()) -> [brod:endpoint()].
+parse_brokers(BrokersStr) ->
+    BrokerPairs = string:split(BrokersStr, ",", all),
+    lists:map(fun parse_broker/1, BrokerPairs).
+
+%% @doc Parse single broker string like "host:port"
+-spec parse_broker(string()) -> brod:endpoint().
+parse_broker(BrokerStr) ->
+    case string:split(BrokerStr, ":") of
+        [Host, PortStr] ->
+            Port = list_to_integer(PortStr),
+            {Host, Port};
+        [Host] ->
+            % Default port
+            {Host, 9092}
+    end.
+
+%% @doc Get default client configuration
+-spec get_default_client_config() -> [tuple()].
+get_default_client_config() ->
     [
-        {required_acks, maps:get(required_acks, ProducerConfig, all)},
-        {ack_timeout, maps:get(ack_timeout, ProducerConfig, 10000)},
-        {partition_buffer_limit, maps:get(partition_buffer_limit, ProducerConfig, 256)},
-        {partition_onwire_limit, maps:get(partition_onwire_limit, ProducerConfig, 1)},
-        {max_batch_size, maps:get(max_batch_size, ProducerConfig, 16384)},
-        {max_retries, maps:get(max_retries, ProducerConfig, 3)},
-        {retry_backoff_ms, maps:get(retry_backoff_ms, ProducerConfig, 500)}
+        {reconnect_cool_down_seconds, 10},
+        {auto_start_producers, true},
+        {default_producer_config, get_default_producer_config()}
     ].
 
-%% @doc Start the producer for the default topic
--spec start_producer(map()) -> ok | {error, term()}.
-start_producer(Config) ->
-    Topic = maps:get(topic, Config, ?DEFAULT_TOPIC),
-    ProducerConfig = build_producer_config(Config),
+%% @doc Get default producer configuration
+-spec get_default_producer_config() -> [tuple()].
+get_default_producer_config() ->
+    [
+        {required_acks, -1},
+        {ack_timeout, 10000},
+        {partition_buffer_limit, 256},
+        {partition_onwire_limit, 1},
+        {max_batch_size, 16384},
+        {max_retries, 3},
+        {retry_backoff_ms, 500}
+    ].
+
+%% @doc Start producers for configured topics
+-spec start_producers() -> ok.
+start_producers() ->
+    Topics = get_kafka_topics(),
+    lists:foreach(fun start_producer_for_topic/1, Topics),
+    ok.
+
+%% @doc Get list of topics to create producers for
+-spec get_kafka_topics() -> [binary()].
+get_kafka_topics() ->
+    case os:getenv("DMT_KAFKA_TOPICS") of
+        false ->
+            [?DEFAULT_TOPIC];
+        TopicsStr ->
+            TopicList = string:split(TopicsStr, ",", all),
+            [list_to_binary(string:trim(Topic)) || Topic <- TopicList]
+    end.
+
+%% @doc Start producer for a specific topic
+-spec start_producer_for_topic(binary()) -> ok.
+start_producer_for_topic(Topic) ->
+    ProducerConfig = get_default_producer_config(),
     case brod:start_producer(?CLIENT_ID, Topic, ProducerConfig) of
         ok ->
             ok;
@@ -170,19 +213,14 @@ start_producer(Config) ->
 %% @doc Ensure producer is started for the given topic
 -spec ensure_producer_started(binary()) -> ok | {error, term()}.
 ensure_producer_started(Topic) ->
-    case get_kafka_config() of
-        undefined ->
-            {error, no_kafka_config};
-        Config ->
-            ProducerConfig = build_producer_config(Config),
-            case brod:start_producer(?CLIENT_ID, Topic, ProducerConfig) of
-                ok ->
-                    ok;
-                {error, {already_started, _}} ->
-                    ok;
-                {error, Reason} ->
-                    {error, Reason}
-            end
+    ProducerConfig = get_default_producer_config(),
+    case brod:start_producer(?CLIENT_ID, Topic, ProducerConfig) of
+        ok ->
+            ok;
+        {error, {already_started, _}} ->
+            ok;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 %% @doc Internal function to publish event to Kafka
