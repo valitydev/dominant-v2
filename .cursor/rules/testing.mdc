@@ -1,0 +1,383 @@
+---
+description: 
+globs: "**/test/**", "**/*_SUITE.erl", "**/*_tests.erl", "**/*_test.erl"
+alwaysApply: false
+---
+# Testing Rules
+
+## Test Organization
+
+### Test Suite Structure
+```erlang
+% Common Test suite structure
+-module(dmt_repository_SUITE).
+-compile(export_all).
+
+-include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
+%% CT callbacks
+-export([all/0, groups/0, init_per_suite/1, end_per_suite/1,
+         init_per_group/2, end_per_group/2,
+         init_per_testcase/2, end_per_testcase/2]).
+
+%% Test cases
+-export([
+    test_create_object/1,
+    test_get_object/1,
+    test_update_object/1,
+    test_delete_object/1
+]).
+
+all() ->
+    [
+        {group, repository_operations},
+        {group, error_scenarios}
+    ].
+
+groups() ->
+    [
+        {repository_operations, [parallel], [
+            test_create_object,
+            test_get_object,
+            test_update_object
+        ]},
+        {error_scenarios, [sequential], [
+            test_object_not_found,
+            test_validation_errors
+        ]}
+    ].
+```
+
+### Test Data Management
+```erlang
+% Use fixtures for test data
+-define(TEST_OBJECT, #{
+    id => 123,
+    revision => 1,
+    data => #{
+        name => <<"Test Object">>,
+        type => test
+    },
+    created_at => {{2023, 1, 1}, {12, 0, 0}},
+    updated_at => {{2023, 1, 1}, {12, 0, 0}}
+}).
+
+% Helper functions for test data
+create_test_object() ->
+    create_test_object(#{}).
+
+create_test_object(Overrides) ->
+    maps:merge(?TEST_OBJECT, Overrides).
+
+% Test data generators
+-spec gen_domain_object() -> domain_object().
+gen_domain_object() ->
+    #{
+        id => rand:uniform(1000000),
+        revision => rand:uniform(100),
+        data => gen_object_data(),
+        created_at => calendar:universal_time(),
+        updated_at => calendar:universal_time()
+    }.
+
+gen_object_data() ->
+    #{
+        name => gen_binary(),
+        type => gen_atom(),
+        attributes => gen_attributes()
+    }.
+```
+
+## Unit Testing with EUnit
+
+### Function Testing Patterns
+```erlang
+% Group related tests
+validation_test_() ->
+    [
+        {"validates required fields", fun test_validate_required_fields/0},
+        {"rejects invalid data types", fun test_validate_data_types/0},
+        {"validates business rules", fun test_validate_business_rules/0}
+    ].
+
+% Individual test functions
+test_validate_required_fields() ->
+    Object = #{data => #{}}, % Missing required fields
+    ?assertEqual({error, missing_required_fields}, validate_object(Object)).
+
+test_validate_data_types() ->
+    Object = #{id => "not_an_integer"}, % Wrong type
+    ?assertEqual({error, invalid_type}, validate_object(Object)).
+
+% Property-based testing with proper
+prop_object_roundtrip() ->
+    ?FORALL(Object, gen_domain_object(),
+        begin
+            Encoded = encode_object(Object),
+            Decoded = decode_object(Encoded),
+            Object =:= Decoded
+        end).
+```
+
+### Testing Private Functions
+```erlang
+% Export internal functions for testing
+-ifdef(TEST).
+-export([
+    internal_validation_function/1,
+    transform_data/2,
+    calculate_checksum/1
+]).
+-endif.
+
+% Use conditional compilation for test-only code
+-ifdef(TEST).
+test_internal_validation() ->
+    % Test internal functions directly
+    ?assertEqual(ok, internal_validation_function(valid_data())),
+    ?assertEqual({error, invalid}, internal_validation_function(invalid_data())).
+-endif.
+```
+
+## Integration Testing with Common Test
+
+### Database Testing
+```erlang
+% Test database operations
+init_per_suite(Config) ->
+    % Setup test database
+    ok = dmt_database:create_test_tables(),
+    Config.
+
+end_per_suite(_Config) ->
+    % Cleanup test database
+    ok = dmt_database:drop_test_tables().
+
+init_per_testcase(_TestCase, Config) ->
+    % Start transaction for isolation
+    {ok, TxId} = dmt_database:begin_transaction(),
+    [{tx_id, TxId} | Config].
+
+end_per_testcase(_TestCase, Config) ->
+    % Rollback transaction
+    TxId = ?config(tx_id, Config),
+    ok = dmt_database:rollback_transaction(TxId).
+
+test_repository_operations(Config) ->
+    % Test with real database operations
+    Object = create_test_object(),
+    {ok, CreatedObject} = dmt_repository:create_object(Object),
+    
+    % Verify object was created
+    {ok, FetchedObject} = dmt_repository:get_object(maps:get(id, CreatedObject)),
+    ?assertEqual(CreatedObject, FetchedObject).
+```
+
+### Service Testing
+```erlang
+% Test Woody handlers
+test_handler_create_object(_Config) ->
+    Context = woody_context:new(),
+    ThriftObject = #'DomainObject'{
+        id = 123,
+        data = #{}
+    },
+    
+    % Mock dependencies
+    meck:new(dmt_repository),
+    meck:expect(dmt_repository, create_object, 
+                fun(_) -> {ok, expected_object()} end),
+    
+    try
+        Result = dmt_handler:handle_function('CreateObject', {ThriftObject}, Context, #{}),
+        ?assertEqual(expected_thrift_object(), Result)
+    after
+        meck:unload(dmt_repository)
+    end.
+```
+
+## Mocking Strategies
+
+### External Dependencies
+```erlang
+% Mock external services
+setup_service_mocks() ->
+    meck:new(external_service_client, [non_strict]),
+    meck:expect(external_service_client, call_service,
+                fun(Request) ->
+                    case Request of
+                        valid_request -> {ok, expected_response()};
+                        invalid_request -> {error, validation_failed};
+                        timeout_request -> {error, timeout}
+                    end
+                end).
+
+cleanup_service_mocks() ->
+    meck:unload(external_service_client).
+
+% Use mocks in tests
+test_external_service_integration(_Config) ->
+    setup_service_mocks(),
+    try
+        {ok, Result} = my_service:process_request(valid_request),
+        ?assertEqual(expected_result(), Result)
+    after
+        cleanup_service_mocks()
+    end.
+```
+
+### Database Mocking
+```erlang
+% Mock database operations
+setup_database_mocks() ->
+    meck:new(epgsql_pool, [unstick, passthrough]),
+    meck:expect(epgsql_pool, with_connection,
+                fun(PoolName, Fun) ->
+                    MockConnection = mock_connection,
+                    Fun(MockConnection)
+                end),
+    
+    meck:new(epgsql, [unstick]),
+    meck:expect(epgsql, prepared_query,
+                fun(Conn, QueryName, Params) ->
+                    handle_mock_query(QueryName, Params)
+                end).
+
+handle_mock_query("get_object_by_id", [Id]) ->
+    case Id of
+        123 -> {ok, [], [mock_row()]};
+        999 -> {ok, [], []};
+        _ -> {error, database_error}
+    end.
+```
+
+## Error Testing
+
+### Error Scenarios
+```erlang
+% Test all error paths
+error_handling_test_() ->
+    [
+        {"handles not found errors", fun test_not_found_error/0},
+        {"handles validation errors", fun test_validation_error/0},
+        {"handles system errors", fun test_system_error/0},
+        {"handles timeout errors", fun test_timeout_error/0}
+    ].
+
+test_not_found_error() ->
+    ?assertEqual(
+        {error, not_found},
+        dmt_repository:get_object(nonexistent_id)
+    ).
+
+% Test error propagation
+test_error_propagation() ->
+    meck:new(dmt_database),
+    meck:expect(dmt_database, get_object, fun(_) -> {error, timeout} end),
+    
+    try
+        ?assertEqual(
+            {error, {database_error, timeout}},
+            dmt_repository:get_object(123)
+        )
+    after
+        meck:unload(dmt_database)
+    end.
+```
+
+### Woody Error Testing
+```erlang
+% Test Woody error mappings
+test_woody_error_handling(_Config) ->
+    Context = woody_context:new(),
+    
+    % Mock to return internal error
+    meck:new(dmt_repository),
+    meck:expect(dmt_repository, get_object, fun(_) -> {error, not_found} end),
+    
+    try
+        ?assertThrow(
+            {woody_error, {business, #'ObjectNotFound'{}}},
+            dmt_handler:handle_function('GetObject', {123}, Context, #{})
+        )
+    after
+        meck:unload(dmt_repository)
+    end.
+```
+
+## Test Utilities
+
+### Assertion Helpers
+```erlang
+% Custom assertions for domain objects
+assert_valid_object(Object) ->
+    ?assert(is_map(Object)),
+    ?assert(maps:is_key(id, Object)),
+    ?assert(maps:is_key(revision, Object)),
+    ?assert(maps:is_key(data, Object)).
+
+assert_objects_equal(Expected, Actual) ->
+    % Compare objects ignoring timestamps
+    ExpectedWithoutTs = maps:without([created_at, updated_at], Expected),
+    ActualWithoutTs = maps:without([created_at, updated_at], Actual),
+    ?assertEqual(ExpectedWithoutTs, ActualWithoutTs).
+
+% Matchers for complex assertions
+assert_error_type(ExpectedType, {error, {ErrorType, _Details}}) ->
+    ?assertEqual(ExpectedType, ErrorType);
+assert_error_type(ExpectedType, {error, ErrorType}) ->
+    ?assertEqual(ExpectedType, ErrorType).
+```
+
+### Test Configuration
+```erlang
+% Test-specific configuration
+get_test_config() ->
+    [
+        {database, #{
+            host => "localhost",
+            port => 5432,
+            database => "dmt_test"
+        }},
+        {timeouts, #{
+            short => 1000,
+            medium => 5000,
+            long => 30000
+        }}
+    ].
+
+% Environment setup
+setup_test_environment() ->
+    application:set_env(dmt, database_config, get_test_config()),
+    ok = application:start(sasl),
+    ok = application:start(dmt).
+```
+
+## Performance Testing
+
+### Load Testing
+```erlang
+% Concurrent operation testing
+test_concurrent_operations(_Config) ->
+    NumProcesses = 100,
+    NumOperations = 1000,
+    
+    Self = self(),
+    Pids = [spawn_link(fun() ->
+        perform_operations(NumOperations),
+        Self ! {done, self()}
+    end) || _ <- lists:seq(1, NumProcesses)],
+    
+    % Wait for all processes
+    [receive {done, Pid} -> ok end || Pid <- Pids],
+    
+    % Verify system is still responsive
+    ?assertEqual({ok, test_object()}, dmt_repository:get_object(1)).
+
+perform_operations(0) -> ok;
+perform_operations(N) ->
+    Object = create_test_object(#{id => N}),
+    {ok, _} = dmt_repository:create_object(Object),
+    perform_operations(N - 1).
+``` 

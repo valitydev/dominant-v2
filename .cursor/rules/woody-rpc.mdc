@@ -1,0 +1,316 @@
+---
+description: 
+globs: "**/*handler*.erl", "**/woody_*.erl", "**/rpc_*.erl", "**/*client*.erl"
+alwaysApply: false
+---
+# Woody RPC Framework Rules
+
+## Handler Patterns
+
+### Standard Handler Structure
+All Woody handlers should follow this pattern:
+
+```erlang
+-module(service_handler).
+-behaviour(woody_server_thrift_handler).
+
+%% Woody handler behaviour
+-export([handle_function/4]).
+
+%% Types
+-include_lib("damsel/include/service_types.hrl").
+
+-type context() :: woody_context:ctx().
+-type args() :: tuple().
+-type result() :: term().
+
+%% Handler implementation
+-spec handle_function(
+    FunctionName :: atom(),
+    Args :: args(),
+    Context :: context(),
+    Options :: map()
+) -> result() | no_return().
+
+handle_function('GetObject', {Id}, Context, _Options) ->
+    handle_get_object(Id, Context);
+handle_function('CreateObject', {Object}, Context, _Options) ->
+    handle_create_object(Object, Context);
+handle_function('UpdateObject', {Id, Updates}, Context, _Options) ->
+    handle_update_object(Id, Updates, Context).
+```
+
+### Error Handling in Handlers
+```erlang
+% Always use woody_error for RPC errors
+handle_get_object(Id, Context) ->
+    try
+        case dmt_repository:get_object(Id) of
+            {ok, Object} ->
+                to_thrift_object(Object);
+            {error, not_found} ->
+                woody_error:raise(business, #'ObjectNotFound'{id = Id});
+            {error, Reason} ->
+                woody_error:raise(system, {internal_error, Reason})
+        end
+    catch
+        error:Reason ->
+            woody_error:raise(system, {handler_error, Reason})
+    end.
+
+% Standard error mappings
+map_internal_error({validation_error, Fields}) ->
+    woody_error:raise(business, #'ValidationFailed'{fields = Fields});
+map_internal_error({conflict, Id}) ->
+    woody_error:raise(business, #'ConflictError'{id = Id});
+map_internal_error(timeout) ->
+    woody_error:raise(system, {timeout, <<"Database operation timeout">>});
+map_internal_error(Reason) ->
+    woody_error:raise(system, {internal_error, Reason}).
+```
+
+## Context Handling
+
+### Request Tracing
+```erlang
+% Always use woody context for tracing
+-spec handle_with_tracing(Operation :: fun(), Context :: context()) -> 
+    result() | no_return().
+handle_with_tracing(Operation, Context) ->
+    SpanName = <<"domain_operation">>,
+    SpanCtx = woody_context:new_req_span(Context, SpanName),
+    try
+        woody_context:with_span(SpanCtx, Operation)
+    catch
+        Class:Reason:Stacktrace ->
+            woody_context:add_span_error(SpanCtx, Class, Reason, Stacktrace),
+            erlang:raise(Class, Reason, Stacktrace)
+    end.
+
+% Add metadata to spans
+add_operation_metadata(Context, Metadata) ->
+    woody_context:add_meta(Context, maps:merge(#{
+        service => <<"dmt">>,
+        version => <<"1.0">>
+    }, Metadata)).
+```
+
+### Request Correlation
+```erlang
+% Always propagate request IDs
+-spec get_request_id(Context :: context()) -> request_id().
+get_request_id(Context) ->
+    case woody_context:get_meta(Context, request_id) of
+        undefined ->
+            RequestId = generate_request_id(),
+            woody_context:set_meta(Context, request_id, RequestId),
+            RequestId;
+        RequestId ->
+            RequestId
+    end.
+
+% Include request ID in all logs
+log_operation(Context, Level, Message, Metadata) ->
+    RequestId = get_request_id(Context),
+    logger:log(Level, Message, Metadata#{request_id => RequestId}).
+```
+
+## Service Client Patterns
+
+### Client Configuration
+```erlang
+% Standard client configuration
+-spec get_client_config() -> woody_client:config().
+get_client_config() ->
+    #{
+        url => get_service_url(),
+        event_handler => get_event_handler(),
+        transport_opts => #{
+            pool => service_pool,
+            timeout => 30000,
+            max_connections => 100
+        }
+    }.
+
+% Client call with proper error handling
+-spec call_external_service(Function :: atom(), Args :: tuple(), Context :: context()) ->
+    {ok, term()} | {error, term()}.
+call_external_service(Function, Args, Context) ->
+    try
+        Config = get_client_config(),
+        Result = woody_client:call(
+            {service_thrift, 'Service'},
+            Function,
+            Args,
+            Context,
+            Config
+        ),
+        {ok, Result}
+    catch
+        error:{woody_error, {external, result_unexpected, Details}} ->
+            {error, {external_service_error, Details}};
+        error:{woody_error, {system, {internal, resource_unavailable, _}}} ->
+            {error, service_unavailable};
+        error:{woody_error, {system, {external, result_unknown, _}}} ->
+            {error, timeout};
+        error:Reason ->
+            {error, {client_error, Reason}}
+    end.
+```
+
+## Data Transformation
+
+### Thrift Mapping
+```erlang
+% Internal to Thrift representation
+-spec to_thrift_object(Internal :: domain_object()) -> thrift_object().
+to_thrift_object(#{
+    id := Id,
+    revision := Revision,
+    data := Data,
+    created_at := CreatedAt
+}) ->
+    #'DomainObject'{
+        id = Id,
+        revision = Revision,
+        data = encode_data(Data),
+        created_at = format_timestamp(CreatedAt)
+    }.
+
+% Thrift to internal representation
+-spec from_thrift_object(Thrift :: thrift_object()) -> domain_object().
+from_thrift_object(#'DomainObject'{
+    id = Id,
+    revision = Revision,
+    data = Data,
+    created_at = CreatedAt
+}) ->
+    #{
+        id => Id,
+        revision => Revision,
+        data => decode_data(Data),
+        created_at => parse_timestamp(CreatedAt)
+    }.
+
+% Handle optional fields properly
+-spec safe_get_optional(Field :: term(), Default :: term()) -> term().
+safe_get_optional(undefined, Default) -> Default;
+safe_get_optional(Value, _Default) -> Value.
+```
+
+## Service Health & Monitoring
+
+### Health Checks
+```erlang
+% Implement health check handler
+handle_function('Health', {}, Context, _Options) ->
+    case check_service_health() of
+        ok ->
+            #'HealthStatus'{status = up, details = <<"Service operational">>};
+        {error, Reason} ->
+            woody_error:raise(system, {health_check_failed, Reason})
+    end.
+
+-spec check_service_health() -> ok | {error, term()}.
+check_service_health() ->
+    Checks = [
+        fun check_database_connectivity/0,
+        fun check_external_dependencies/0,
+        fun check_resource_availability/0
+    ],
+    run_health_checks(Checks).
+```
+
+### Request Metrics
+```erlang
+% Add metrics to handlers
+handle_with_metrics(Function, Args, Context, Handler) ->
+    StartTime = erlang:monotonic_time(),
+    try
+        Result = Handler(Function, Args, Context),
+        record_success_metric(Function, StartTime),
+        Result
+    catch
+        Class:Reason:Stacktrace ->
+            record_error_metric(Function, Class, Reason, StartTime),
+            erlang:raise(Class, Reason, Stacktrace)
+    end.
+
+record_success_metric(Function, StartTime) ->
+    Duration = erlang:monotonic_time() - StartTime,
+    prometheus_histogram:observe(
+        woody_request_duration_seconds,
+        [atom_to_list(Function), "success"],
+        Duration
+    ).
+```
+
+## Authentication & Authorization
+
+### Security Context
+```erlang
+% Extract and validate authentication
+-spec authenticate_request(Context :: context()) -> 
+    {ok, user_context()} | {error, auth_error()}.
+authenticate_request(Context) ->
+    case woody_context:get_meta(Context, auth_token) of
+        undefined ->
+            {error, missing_auth_token};
+        Token ->
+            case validate_auth_token(Token) of
+                {ok, UserContext} ->
+                    {ok, UserContext};
+                {error, Reason} ->
+                    {error, {invalid_token, Reason}}
+            end
+    end.
+
+% Authorize operation
+-spec authorize_operation(UserContext :: user_context(), Operation :: atom()) ->
+    ok | {error, access_denied}.
+authorize_operation(UserContext, Operation) ->
+    case check_permission(UserContext, Operation) of
+        true -> ok;
+        false -> {error, access_denied}
+    end.
+
+% Secure handler wrapper
+secure_handle_function(Function, Args, Context, Handler) ->
+    case authenticate_request(Context) of
+        {ok, UserContext} ->
+            case authorize_operation(UserContext, Function) of
+                ok ->
+                    EnrichedContext = add_user_context(Context, UserContext),
+                    Handler(Function, Args, EnrichedContext);
+                {error, access_denied} ->
+                    woody_error:raise(business, #'AccessDenied'{
+                        operation = atom_to_binary(Function)
+                    })
+            end;
+        {error, AuthError} ->
+            woody_error:raise(business, #'AuthenticationFailed'{
+                reason = format_auth_error(AuthError)
+            })
+    end.
+```
+
+## Testing Woody Services
+
+### Handler Testing
+```erlang
+% Test handler with mock context
+test_handler_success() ->
+    Context = woody_context:new(),
+    Args = {123},
+    Result = service_handler:handle_function('GetObject', Args, Context, #{}),
+    ?assertEqual(expected_result(), Result).
+
+% Test error scenarios
+test_handler_not_found() ->
+    Context = woody_context:new(),
+    Args = {999},
+    ?assertThrow(
+        {woody_error, {business, #'ObjectNotFound'{id = 999}}},
+        service_handler:handle_function('GetObject', Args, Context, #{})
+    ).
+``` 
