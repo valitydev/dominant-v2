@@ -79,7 +79,7 @@
  {<<"jsx">>,{pkg,<<"jsx">>,<<"3.1.0">>},0},
  {<<"kafka_protocol">>,{pkg,<<"kafka_protocol">>,<<"4.2.5">>},1},
  {<<"metrics">>,{pkg,<<"metrics">>,<<"1.0.1">>},2},
- {<<"mimerl">>,{pkg,<<"mimerl">>,<<"1.3.0">>},2},
+ {<<"mimerl">>,{pkg,<<"mimerl">>,<<"1.4.0">>},2},
  {<<"opentelemetry">>,{pkg,<<"opentelemetry">>,<<"1.5.0">>},0},
  {<<"opentelemetry_api">>,{pkg,<<"opentelemetry_api">>,<<"1.4.0">>},0},
  {<<"opentelemetry_exporter">>,
@@ -110,9 +110,9 @@
        {ref,"3a60e5dc5bbd709495024f26e100b041c3547fd9"}},
   1},
  {<<"tls_certificate_check">>,
-  {pkg,<<"tls_certificate_check">>,<<"1.23.0">>},
+  {pkg,<<"tls_certificate_check">>,<<"1.28.0">>},
   1},
- {<<"unicode_util_compat">>,{pkg,<<"unicode_util_compat">>,<<"0.7.0">>},2},
+ {<<"unicode_util_compat">>,{pkg,<<"unicode_util_compat">>,<<"0.7.1">>},2},
  {<<"uuid">>,
   {git,"https://github.com/okeuday/uuid.git",
        {ref,"63e32cdad70693495163ab131456905e827a5e36"}},
@@ -159,8 +159,8 @@
  {<<"quantile_estimator">>, <<"ECD281D40110FDD9BA62685531E4435E0839A52FD1058DA5564F1763E4642EF7">>},
  {<<"ranch">>, <<"8C7A100A139FD57F17327B6413E4167AC559FBC04CA7448E9BE9057311597A1D">>},
  {<<"ssl_verify_fun">>, <<"354C321CF377240C7B8716899E182CE4890C5938111A1296ADD3EC74CF1715DF">>},
- {<<"tls_certificate_check">>, <<"BB7869C629DE4EC72D4652520C1AD2255BB5712AD09A6568C41B0294B3CEC78F">>},
- {<<"unicode_util_compat">>, <<"BC84380C9AB48177092F43AC89E4DFA2C6D62B40B8BD132B1059ECC7232F9A78">>}]},
+ {<<"tls_certificate_check">>, <<"C39BF21F67C2D124AE905454FAD00F27E625917E8AB1009146E916E1DF6AB275">>},
+ {<<"unicode_util_compat">>, <<"A48703A25C170EEDADCA83B11E88985AF08D35F37C6F664D6DCFB106A97782FC">>}]},
 {pkg_hash_ext,[
  {<<"accept">>, <<"CA69388943F5DAD2E7232A5478F16086E3C872F48E32B88B378E1885A59F5649">>},
  {<<"acceptor_pool">>, <<"0CBCD83FDC8B9AD2EEE2067EF8B91A14858A5883CB7CD800E6FCD5803E158788">>},
@@ -194,6 +194,6 @@
  {<<"quantile_estimator">>, <<"DB404793D6384995A1AC6DD973E2CEE5BE9FCC128765BDBA53D87C564E296B64">>},
  {<<"ranch">>, <<"49FBCFD3682FAB1F5D109351B61257676DA1A2FDBE295904176D5E521A2DDFE5">>},
  {<<"ssl_verify_fun">>, <<"FE4C190E8F37401D30167C8C405EDA19469F34577987C76DDE613E838BBC67F8">>},
- {<<"tls_certificate_check">>, <<"79D0C84EFFC7C81AC1E85FA38B1C33572FE2976FB8FAFDFB2F0140DE0442D494">>},
- {<<"unicode_util_compat">>, <<"25EEE6D67DF61960CF6A794239566599B09E17E668D3700247BC498638152521">>}]}
+ {<<"tls_certificate_check">>, <<"3AB058C3F9457FFFCA916729587415F0DDC822048A0E5B5E2694918556D92DF1">>},
+ {<<"unicode_util_compat">>, <<"B3A917854CE3AE233619744AD1E0102E05673136776FB2FA76234F3E03B23642">>}]}
 ].

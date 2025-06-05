@@ -132,4 +132,3 @@ services:
   #     - POSTGRES_DB=shumway
   #     - POSTGRES_USER=postgres
   #     - POSTGRES_PASSWORD=postgres
-
