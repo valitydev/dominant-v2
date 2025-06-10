@@ -8,7 +8,7 @@
  {<<"cache">>,{pkg,<<"cache">>,<<"2.3.3">>},1},
  {<<"canal">>,
   {git,"https://github.com/valitydev/canal",
-       {ref,"29f965ad7ea2a410e440a5329990e941af135f1e"}},
+       {ref,"61c91d122dae4c7dba5e67b55831f0dd97e2cbe2"}},
   0},
  {<<"certifi">>,{pkg,<<"certifi">>,<<"2.8.0">>},2},
  {<<"cg_mon">>,
