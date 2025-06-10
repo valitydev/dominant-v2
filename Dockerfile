@@ -16,6 +16,8 @@ RUN git config --global url."https://${FETCH_TOKEN}@github.com/".insteadOf ssh:/
     mkdir /build
 COPY . /build/
 
+RUN apt-get update && apt-get install -y cmake
+
 # Build the release
 WORKDIR /build
 RUN rebar3 compile && \
