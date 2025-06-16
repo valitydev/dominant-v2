@@ -52,12 +52,15 @@ get_object_latest_version(Worker, ChangedObjectId) ->
     end.
 
 get_new_version(Worker, AuthorID) ->
+    {ok, #{
+        git_ref := GitRef
+    }} = application:get_env(dmt, damsel_version_info),
     Query1 =
         """
-        INSERT INTO version (CREATED_BY)
-        VALUES ($1::uuid) RETURNING version;
+        INSERT INTO version (CREATED_BY, protocol_version)
+        VALUES ($1::uuid, $2) RETURNING version;
         """,
-    case epg_pool:query(Worker, Query1, [AuthorID]) of
+    case epg_pool:query(Worker, Query1, [AuthorID, GitRef]) of
         {ok, 1, _Columns, [{NewVersion}]} ->
             {ok, NewVersion};
         {error, Reason} ->

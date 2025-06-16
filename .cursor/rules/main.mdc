@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+You are working on DMT (Domain Management Tool), a distributed financial services application built with Erlang/OTP, Woody RPC, and PostgreSQL. Apply domain-specific expertise contextually and prioritize production-ready, maintainable code.
+
+When implementing changes, work incrementally - make small, focused changes that can be tested and verified before proceeding to the next step. Break down large tasks into smaller, manageable pieces that build upon each other.

@@ -1,0 +1,55 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+
+# Override .gitignore to include dependencies for better IntelliSense
+# The ! prefix means "don't ignore this" (include it in indexing)
+# !_build/
+# !_build/default/
+# !_build/default/lib/
+
+# However, we still want to exclude some parts of _build for performance
+_build/test/
+_build/prod/
+_build/*/lib/*/doc/
+_build/*/lib/*/test/
+_build/*/lib/*/.git/
+
+# Large text files that don't need indexing
+RevisionBig*.txt
+
+# Crash dumps and logs
+*.dump
+erl_crash.dump
+
+# OS specific files
+.DS_Store
+
+# IDE specific directories (optional - you might want these for some projects)
+.idea/
+.vscode/
+
+# Git directory (usually not needed for code completion)
+.git/
+
+# Binary and compiled artifacts (but we want to keep _build/default/lib for dependencies)
+# Exclude only the beam files and other binaries within dependencies
+**/*.beam
+**/*.so
+**/*.dll
+**/*.dylib
+
+# Keep the main dependency source code for indexing
+# This means _build/default/lib/ will be indexed for better IntelliSense
+
+# Alternative approach: If you want to include only specific dependencies, uncomment the following
+# and comment out the lines above. This excludes all dependencies except the ones you specify:
+
+# _build/default/lib/
+!_build/default/lib/woody/
+!_build/default/lib/damsel/
+# !_build/default/lib/epgsql/
+# !_build/default/lib/cowboy/
+# !_build/default/lib/thrift/
+# !_build/default/lib/jsx/
+# !_build/default/lib/jsone/
+
+!.env

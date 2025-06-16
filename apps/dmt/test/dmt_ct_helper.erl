@@ -47,6 +47,7 @@ start_app(dmt = AppName) ->
                     }
                 }
             }},
+            {epg_db_name, dmt},
             {services, #{
                 repository => #{
                     url => <<"http://dmt.default:8022/v1/domain/repository">>
@@ -65,7 +66,7 @@ start_app(epg_connector = AppName) ->
     {
         start_app(AppName, [
             {databases, #{
-                default_db => #{
+                dmt => #{
                     host => "dmt_db",
                     port => 5432,
                     username => "postgres",
@@ -75,14 +76,36 @@ start_app(epg_connector = AppName) ->
             }},
             {pools, #{
                 default_pool => #{
-                    database => default_db,
+                    database => dmt,
                     size => 10
                 },
                 author_pool => #{
-                    database => default_db,
+                    database => dmt,
                     size => 10
                 }
             }}
+        ]),
+        #{}
+    };
+start_app(brod = AppName) ->
+    {
+        start_app(AppName, [
+            {clients, [
+                {dmt_kafka_client, [
+                    {endpoints, [{"kafka", 29092}]},
+                    {reconnect_cool_down_seconds, 10},
+                    {auto_start_producers, true},
+                    {default_producer_config, [
+                        {required_acks, -1},
+                        {ack_timeout, 5000},
+                        {partition_buffer_limit, 256},
+                        {partition_onwire_limit, 1},
+                        {max_batch_size, 16384},
+                        {max_retries, 3},
+                        {retry_backoff_ms, 500}
+                    ]}
+                ]}
+            ]}
         ]),
         #{}
     };

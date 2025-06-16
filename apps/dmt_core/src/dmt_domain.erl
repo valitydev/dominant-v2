@@ -35,8 +35,12 @@
     | {invalid, operation_invalid()}.
 
 references(DomainObject) ->
-    {DataType, Data} = get_data(DomainObject),
-    references(Data, DataType).
+    case get_data(DomainObject) of
+        {error, _} ->
+            [];
+        {DataType, Data} ->
+            references(Data, DataType)
+    end.
 
 references(Object, DataType) ->
     references(Object, DataType, []).
@@ -116,12 +120,31 @@ get_data(DomainObject) ->
     get_domain_object_field(data, DomainObject).
 
 get_domain_object_field(Field, {Tag, Struct}) ->
-    get_field(Field, Struct, get_domain_object_schema(Tag)).
+    case get_domain_object_schema(Tag) of
+        {error, _} = Error ->
+            Error;
+        Schema ->
+            get_field(Field, Struct, Schema)
+    end.
 
 maybe_get_domain_object_data_field(Field, {Tag, Struct}) ->
-    {_, Data} = get_data({Tag, Struct}),
+    case get_data({Tag, Struct}) of
+        {error, _} ->
+            undefined;
+        {_, Data} ->
+            maybe_extract_field_from_data(Field, Tag, Data)
+    end.
+
+maybe_extract_field_from_data(Field, Tag, Data) ->
     SchemaInfo = get_struct_info('ReflessDomainObject'),
-    {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
+    case get_field_info(Tag, SchemaInfo) of
+        {_, _, {struct, _, {_, ObjectStructName}}, _, _} ->
+            maybe_get_field_by_index(Field, ObjectStructName, Data);
+        false ->
+            undefined
+    end.
+
+maybe_get_field_by_index(Field, ObjectStructName, Data) ->
     DomainObjectSchema = get_struct_info(ObjectStructName),
     case get_field_index(Field, DomainObjectSchema) of
         {FieldIndex, _} ->
@@ -132,8 +155,12 @@ maybe_get_domain_object_data_field(Field, {Tag, Struct}) ->
 
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),
-    {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
-    get_struct_info(ObjectStructName).
+    case get_field_info(Tag, SchemaInfo) of
+        {_, _, {struct, _, {_, ObjectStructName}}, _, _} ->
+            get_struct_info(ObjectStructName);
+        false ->
+            {error, {unknown_domain_object_tag, Tag}}
+    end.
 
 get_field(Field, Struct, StructInfo) when is_atom(Field) ->
     {FieldIndex, {_, _, Type, _, _}} = get_field_index(Field, StructInfo),

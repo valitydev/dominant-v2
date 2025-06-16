@@ -1,0 +1,364 @@
+---
+description: 
+globs: "**/*repository*.erl", "**/*database*.erl", "**/migrations/*", "**/*sql*", "**/*epgsql*"
+alwaysApply: false
+---
+# Database Operations Rules
+
+## Connection Management
+
+### Pool Configuration
+```erlang
+% Use epgsql_pool for connection management
+-spec get_pool_config() -> epgsql_pool:config().
+get_pool_config() ->
+    #{
+        host => get_db_host(),
+        port => get_db_port(),
+        username => get_db_username(),
+        password => get_db_password(),
+        database => get_db_name(),
+        pool_size => 20,
+        pool_max_overflow => 10,
+        ssl => true,
+        ssl_opts => [
+            {verify, verify_peer},
+            {cacertfile, get_ca_cert_file()}
+        ]
+    }.
+
+% Always use pooled connections
+-spec with_connection(Fun :: fun((epgsql:connection()) -> {ok, term()} | {error, term()})) ->
+    {ok, term()} | {error, term()}.
+with_connection(Fun) ->
+    epgsql_pool:with_connection(dmt_pool, Fun).
+```
+
+### Transaction Patterns
+```erlang
+% Always wrap multi-operation database calls in transactions
+-spec transaction(Fun :: fun(() -> {ok, term()} | {error, term()})) ->
+    {ok, term()} | {error, term()}.
+transaction(Fun) ->
+    with_connection(fun(Conn) ->
+        case epgsql:with_transaction(Conn, Fun) of
+            {ok, Result} ->
+                {ok, Result};
+            {error, Reason} ->
+                {error, {transaction_failed, Reason}};
+            {rollback, Reason} ->
+                {error, {transaction_rollback, Reason}}
+        end
+    end).
+
+% Example transaction usage
+-spec update_domain_object(Id :: integer(), Updates :: map()) ->
+    {ok, domain_object()} | {error, term()}.
+update_domain_object(Id, Updates) ->
+    transaction(fun() ->
+        case get_object_for_update(Id) of
+            {ok, Object} ->
+                UpdatedObject = apply_updates(Object, Updates),
+                case validate_object(UpdatedObject) of
+                    ok ->
+                        save_object(UpdatedObject);
+                    {error, ValidationError} ->
+                        {error, {validation_failed, ValidationError}}
+                end;
+            {error, Reason} ->
+                {error, Reason}
+        end
+    end).
+```
+
+## Query Patterns
+
+### Prepared Statements
+```erlang
+% Use prepared statements for repeated queries
+-define(GET_OBJECT_BY_ID, "get_object_by_id").
+-define(INSERT_OBJECT, "insert_object").
+-define(UPDATE_OBJECT, "update_object").
+
+% Prepare statements at startup
+prepare_statements(Connection) ->
+    Statements = [
+        {?GET_OBJECT_BY_ID, 
+         "SELECT id, revision, data, created_at, updated_at FROM domain_objects WHERE id = $1"},
+        {?INSERT_OBJECT,
+         "INSERT INTO domain_objects (id, revision, data, created_at, updated_at) 
+          VALUES ($1, $2, $3, $4, $5) RETURNING *"},
+        {?UPDATE_OBJECT,
+         "UPDATE domain_objects SET revision = $2, data = $3, updated_at = $4 
+          WHERE id = $1 AND revision = $5 RETURNING *"}
+    ],
+    lists:foreach(fun({Name, SQL}) ->
+        {ok, _} = epgsql:prepare(Connection, Name, SQL)
+    end, Statements).
+
+% Use prepared statements
+-spec get_object_by_id(Id :: integer()) -> {ok, domain_object()} | {error, not_found}.
+get_object_by_id(Id) ->
+    with_connection(fun(Conn) ->
+        case epgsql:prepared_query(Conn, ?GET_OBJECT_BY_ID, [Id]) of
+            {ok, _Columns, [Row]} ->
+                {ok, row_to_object(Row)};
+            {ok, _Columns, []} ->
+                {error, not_found};
+            {error, Reason} ->
+                {error, {database_error, Reason}}
+        end
+    end).
+```
+
+### Row Mapping
+```erlang
+% Consistent row to record mapping
+-spec row_to_object(Row :: tuple()) -> domain_object().
+row_to_object({Id, Revision, DataJson, CreatedAt, UpdatedAt}) ->
+    Data = decode_json(DataJson),
+    #{
+        id => Id,
+        revision => Revision,
+        data => Data,
+        created_at => CreatedAt,
+        updated_at => UpdatedAt
+    }.
+
+% Record to parameter list for inserts
+-spec object_to_params(Object :: domain_object()) -> [term()].
+object_to_params(#{
+    id := Id,
+    revision := Revision,
+    data := Data,
+    created_at := CreatedAt,
+    updated_at := UpdatedAt
+}) ->
+    [Id, Revision, encode_json(Data), CreatedAt, UpdatedAt].
+
+% Safe JSON encoding/decoding
+-spec encode_json(Data :: term()) -> binary().
+encode_json(Data) ->
+    try
+        jsone:encode(Data)
+    catch
+        error:Reason ->
+            error({json_encode_failed, Reason, Data})
+    end.
+
+-spec decode_json(Json :: binary()) -> term().
+decode_json(Json) ->
+    try
+        jsone:decode(Json)
+    catch
+        error:Reason ->
+            error({json_decode_failed, Reason, Json})
+    end.
+```
+
+## Error Handling
+
+### Database Error Classification
+```erlang
+% Classify database errors properly
+-spec classify_db_error(Reason :: term()) -> classified_error().
+classify_db_error({error, {error, error, <<"23505">>, unique_violation, _}}) ->
+    {conflict, unique_constraint_violation};
+classify_db_error({error, {error, error, <<"23503">>, foreign_key_violation, _}}) ->
+    {validation_error, foreign_key_violation};
+classify_db_error({error, {error, error, <<"42P01">>, undefined_table, _}}) ->
+    {system_error, table_not_found};
+classify_db_error({error, timeout}) ->
+    {system_error, timeout};
+classify_db_error({error, closed}) ->
+    {system_error, connection_closed};
+classify_db_error({error, Reason}) ->
+    {system_error, {unknown_db_error, Reason}}.
+
+% Handle classified errors appropriately
+handle_db_error({conflict, unique_constraint_violation}) ->
+    {error, already_exists};
+handle_db_error({validation_error, foreign_key_violation}) ->
+    {error, invalid_reference};
+handle_db_error({system_error, timeout}) ->
+    {error, timeout};
+handle_db_error({system_error, connection_closed}) ->
+    {error, database_unavailable};
+handle_db_error({system_error, Reason}) ->
+    {error, {database_error, Reason}}.
+```
+
+### Retry Logic
+```erlang
+% Implement retry for transient failures
+-spec with_retry(Fun :: fun(() -> {ok, term()} | {error, term()}), 
+                MaxRetries :: non_neg_integer()) ->
+    {ok, term()} | {error, term()}.
+with_retry(Fun, MaxRetries) ->
+    with_retry(Fun, MaxRetries, 0).
+
+with_retry(Fun, MaxRetries, Attempt) when Attempt =< MaxRetries ->
+    case Fun() of
+        {ok, Result} ->
+            {ok, Result};
+        {error, Reason} when Attempt < MaxRetries ->
+            case is_retryable_error(Reason) of
+                true ->
+                    BackoffMs = backoff_delay(Attempt),
+                    timer:sleep(BackoffMs),
+                    with_retry(Fun, MaxRetries, Attempt + 1);
+                false ->
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end;
+with_retry(_Fun, _MaxRetries, _Attempt) ->
+    {error, max_retries_exceeded}.
+
+% Determine if error is retryable
+is_retryable_error(timeout) -> true;
+is_retryable_error(connection_closed) -> true;
+is_retryable_error(database_unavailable) -> true;
+is_retryable_error(_) -> false.
+
+% Exponential backoff
+backoff_delay(Attempt) ->
+    BaseDelay = 100, % 100ms
+    MaxDelay = 5000, % 5s
+    Delay = BaseDelay * math:pow(2, Attempt),
+    min(Delay, MaxDelay).
+```
+
+## Schema Migration
+
+### Migration Patterns
+```erlang
+% Migration module structure
+-module(dmt_migration_001_create_tables).
+-export([up/1, down/1]).
+
+-spec up(Connection :: epgsql:connection()) -> ok | {error, term()}.
+up(Connection) ->
+    SQL = "
+        CREATE TABLE domain_objects (
+            id BIGSERIAL PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 1,
+            data JSONB NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        );
+        
+        CREATE INDEX idx_domain_objects_revision ON domain_objects(revision);
+        CREATE INDEX idx_domain_objects_created_at ON domain_objects(created_at);
+    ",
+    case epgsql:squery(Connection, SQL) of
+        [{ok, [], []}, {ok, [], []}, {ok, [], []}] ->
+            ok;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+-spec down(Connection :: epgsql:connection()) -> ok | {error, term()}.
+down(Connection) ->
+    SQL = "DROP TABLE IF EXISTS domain_objects CASCADE;",
+    case epgsql:squery(Connection, SQL) of
+        {ok, [], []} ->
+            ok;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+```
+
+## Performance Optimization
+
+### Query Optimization
+```erlang
+% Use appropriate indexes
+% For range queries on timestamps
+"CREATE INDEX idx_objects_created_at_btree ON domain_objects USING btree(created_at);"
+
+% For JSON field queries
+"CREATE INDEX idx_objects_data_gin ON domain_objects USING gin(data);"
+
+% For partial indexes
+"CREATE INDEX idx_active_objects ON domain_objects(id) WHERE deleted_at IS NULL;"
+
+% Efficient pagination
+-spec get_objects_page(Limit :: pos_integer(), Offset :: non_neg_integer()) ->
+    {ok, [domain_object()], HasMore :: boolean()} | {error, term()}.
+get_objects_page(Limit, Offset) ->
+    % Query one extra record to determine if there are more
+    ActualLimit = Limit + 1,
+    SQL = "SELECT * FROM domain_objects ORDER BY id LIMIT $1 OFFSET $2",
+    with_connection(fun(Conn) ->
+        case epgsql:equery(Conn, SQL, [ActualLimit, Offset]) of
+            {ok, _Columns, Rows} when length(Rows) =:= ActualLimit ->
+                {Objects, _} = lists:split(Limit, [row_to_object(Row) || Row <- Rows]),
+                {ok, Objects, true};
+            {ok, _Columns, Rows} ->
+                Objects = [row_to_object(Row) || Row <- Rows],
+                {ok, Objects, false};
+            {error, Reason} ->
+                {error, {database_error, Reason}}
+        end
+    end).
+```
+
+### Connection Monitoring
+```erlang
+% Monitor connection health
+-spec check_connection_health() -> ok | {error, term()}.
+check_connection_health() ->
+    with_connection(fun(Conn) ->
+        case epgsql:squery(Conn, "SELECT 1") of
+            {ok, _, [{<<"1">>}]} ->
+                ok;
+            {error, Reason} ->
+                {error, {health_check_failed, Reason}}
+        end
+    end).
+
+% Monitor pool statistics
+get_pool_stats() ->
+    case epgsql_pool:status(dmt_pool) of
+        {ok, Stats} ->
+            #{
+                active_connections => maps:get(active, Stats, 0),
+                idle_connections => maps:get(idle, Stats, 0),
+                waiting_requests => maps:get(waiting, Stats, 0)
+            };
+        {error, Reason} ->
+            {error, {pool_status_error, Reason}}
+    end.
+```
+
+## Testing Database Code
+
+### Test Database Setup
+```erlang
+% Use separate test database
+setup_test_db() ->
+    Config = #{
+        host => "localhost",
+        port => 5432,
+        username => "test_user",
+        password => "test_password",
+        database => "dmt_test"
+    },
+    epgsql_pool:start_link(test_pool, Config).
+
+% Run tests in transactions that rollback
+with_test_transaction(TestFun) ->
+    with_connection(fun(Conn) ->
+        {ok, [], []} = epgsql:squery(Conn, "BEGIN"),
+        try
+            TestFun(Conn),
+            {ok, [], []} = epgsql:squery(Conn, "ROLLBACK")
+        catch
+            _:_ ->
+                {ok, [], []} = epgsql:squery(Conn, "ROLLBACK"),
+                error
+        end
+    end).
+``` 

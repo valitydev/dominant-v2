@@ -1,0 +1,248 @@
+---
+description: DMT domain model patterns, immutability, revision control, and business logic
+globs: 
+alwaysApply: false
+---
+# DMT Domain Model Rules
+
+## Domain Model Principles
+
+### Immutability
+- Domain objects MUST be immutable once created
+- Use records or maps with strict typing
+- Create new versions instead of modifying existing objects
+- All mutations return new instances
+
+### Revision Control
+```erlang
+-type revision() :: integer().
+-type domain_object() :: #{
+    id := object_id(),
+    revision := revision(),
+    data := term(),
+    created_at := calendar:datetime(),
+    updated_at := calendar:datetime()
+}.
+
+% Always include revision in operations
+-spec get_object(Id :: object_id(), Revision :: revision()) -> 
+    {ok, domain_object()} | {error, not_found | revision_mismatch}.
+```
+
+### Repository Patterns
+- All repository operations MUST be atomic
+- Use transactions for multi-object operations
+- Implement optimistic locking with revisions
+- Follow established patterns in `dmt_repository.erl`
+
+```erlang
+% Standard repository operation pattern
+-spec create_object(Object :: domain_object()) -> 
+    {ok, domain_object()} | {error, conflict | validation_error}.
+create_object(Object) ->
+    dmt_database:transaction(fun() ->
+        case validate_object(Object) of
+            ok ->
+                case insert_object(Object) of
+                    {ok, InsertedObject} ->
+                        {ok, InsertedObject};
+                    {error, Reason} ->
+                        {error, Reason}
+                end;
+            {error, ValidationError} ->
+                {error, {validation_error, ValidationError}}
+        end
+    end).
+```
+
+## Object Mapping
+
+### Use Consistent Mapper Patterns
+Follow patterns established in `dmt_mapper.erl`:
+
+```erlang
+% Internal to external representation
+-spec to_external(Internal :: internal_object()) -> external_object().
+to_external(#{id := Id, data := Data, revision := Rev}) ->
+    #external_object{
+        id = Id,
+        data = Data,
+        revision = Rev
+    }.
+
+% External to internal representation  
+-spec from_external(External :: external_object()) -> internal_object().
+from_external(#external_object{id = Id, data = Data, revision = Rev}) ->
+    #{
+        id => Id,
+        data => Data,
+        revision => Rev,
+        created_at => calendar:universal_time()
+    }.
+```
+
+### Validation Rules
+```erlang
+% Always validate domain objects
+-spec validate_domain_object(Object :: domain_object()) -> 
+    ok | {error, validation_errors()}.
+validate_domain_object(Object) ->
+    Validators = [
+        fun validate_required_fields/1,
+        fun validate_business_rules/1,
+        fun validate_relationships/1
+    ],
+    run_validators(Object, Validators).
+
+% Compose validation functions
+run_validators(Object, [Validator | Rest]) ->
+    case Validator(Object) of
+        ok -> run_validators(Object, Rest);
+        {error, Reason} -> {error, Reason}
+    end;
+run_validators(_Object, []) ->
+    ok.
+```
+
+## Business Logic Patterns
+
+### Domain Services
+```erlang
+% Keep business logic in domain services
+-module(dmt_domain_service).
+
+-spec apply_business_rule(Object :: domain_object(), Rule :: rule()) ->
+    {ok, domain_object()} | {error, rule_violation}.
+apply_business_rule(Object, Rule) ->
+    case check_rule_preconditions(Object, Rule) of
+        ok ->
+            {ok, apply_rule_transformation(Object, Rule)};
+        {error, Reason} ->
+            {error, {rule_violation, Reason}}
+    end.
+```
+
+### Event Sourcing (if applicable)
+```erlang
+% If using event sourcing, follow this pattern
+-type domain_event() :: #{
+    event_id := event_id(),
+    aggregate_id := aggregate_id(),
+    event_type := atom(),
+    event_data := term(),
+    timestamp := calendar:datetime(),
+    revision := revision()
+}.
+
+-spec apply_event(State :: domain_object(), Event :: domain_event()) -> 
+    domain_object().
+apply_event(State, #{event_type := created, event_data := Data}) ->
+    State#{data => Data, revision => 1};
+apply_event(State, #{event_type := updated, event_data := Updates}) ->
+    NewData = maps:merge(maps:get(data, State), Updates),
+    State#{
+        data => NewData, 
+        revision => maps:get(revision, State) + 1
+    }.
+```
+
+## Financial Domain Considerations
+
+### Money & Precision
+```erlang
+% Use integers for money amounts (in smallest currency unit)
+-type money_amount() :: integer(). % Amount in cents/kopecks
+-type currency_code() :: binary(). % <<"USD">>, <<"EUR">>, etc.
+
+-type money() :: #{
+    amount := money_amount(),
+    currency := currency_code()
+}.
+
+% Always validate currency operations
+-spec add_money(A :: money(), B :: money()) -> {ok, money()} | {error, currency_mismatch}.
+add_money(#{currency := Currency, amount := AmountA}, 
+          #{currency := Currency, amount := AmountB}) ->
+    {ok, #{currency => Currency, amount => AmountA + AmountB}};
+add_money(#{currency := CurrA}, #{currency := CurrB}) ->
+    {error, {currency_mismatch, CurrA, CurrB}}.
+```
+
+### Audit Trail
+```erlang
+% Always maintain audit information
+-type audit_info() :: #{
+    created_by := user_id(),
+    created_at := calendar:datetime(),
+    modified_by := user_id(),
+    modified_at := calendar:datetime(),
+    operation := atom()
+}.
+
+% Include audit info in all domain operations
+-spec update_object(Id :: object_id(), Updates :: map(), AuditInfo :: audit_info()) ->
+    {ok, domain_object()} | {error, term()}.
+```
+
+## Security & Compliance
+
+### Access Control
+```erlang
+% Always check permissions before domain operations
+-spec check_permission(User :: user(), Operation :: atom(), Resource :: term()) ->
+    ok | {error, access_denied}.
+
+% Include security context in domain operations
+-spec secure_operation(SecurityContext :: security_context(), 
+                      Operation :: fun()) -> 
+    {ok, term()} | {error, access_denied | term()}.
+secure_operation(SecurityContext, Operation) ->
+    case authorize_operation(SecurityContext) of
+        ok ->
+            try
+                Operation()
+            catch
+                Type:Reason ->
+                    log_security_event(SecurityContext, {Type, Reason}),
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            {error, {access_denied, Reason}}
+    end.
+```
+
+### Data Privacy
+```erlang
+% Implement data masking for sensitive information
+-spec mask_sensitive_data(Object :: domain_object(), ViewerRole :: role()) -> 
+    domain_object().
+mask_sensitive_data(Object, admin) ->
+    Object; % Admins see everything
+mask_sensitive_data(Object = #{data := Data}, user) ->
+    MaskedData = maps:without([ssn, bank_account], Data),
+    Object#{data => MaskedData}.
+```
+
+## Testing Domain Logic
+
+### Property-Based Testing
+```erlang
+% Use PropEr for domain invariants
+prop_domain_object_immutable() ->
+    ?FORALL(Object, domain_object(),
+        begin
+            OriginalObject = Object,
+            _ = some_operation(Object),
+            OriginalObject =:= Object
+        end).
+
+% Test business rules
+prop_business_rule_consistency() ->
+    ?FORALL({Object, Rule}, {domain_object(), business_rule()},
+        case apply_business_rule(Object, Rule) of
+            {ok, NewObject} ->
+                validate_domain_object(NewObject) =:= ok;
+            {error, _} ->
+                true
+        end).
+``` 
