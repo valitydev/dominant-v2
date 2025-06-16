@@ -12,6 +12,7 @@
 -export([init/1]).
 
 -export([get_service/1]).
+-export([get_damsel_version/0]).
 
 -define(APP, dmt).
 -define(DEFAULT_DB, default_db).
@@ -31,16 +32,17 @@ start_link() ->
 init(_) ->
     ok = dbinit(),
     ok = init_kafka(),
-    {ok, IP} = inet:parse_address(genlib_app:env(?APP, ip, "::")),
-    HealthCheck = enable_health_logging(genlib_app:env(?APP, health_check, #{})),
-    EventHandlers = genlib_app:env(?APP, woody_event_handlers, [scoper_woody_event_handler]),
+    ok = setup_damsel_version(),
+    {ok, IP} = inet:parse_address(application_get_env(?APP, ip, "::")),
+    HealthCheck = enable_health_logging(application_get_env(?APP, health_check, #{})),
+    EventHandlers = application_get_env(?APP, woody_event_handlers, [scoper_woody_event_handler]),
     API = woody_server:child_spec(
         ?MODULE,
         #{
             ip => IP,
-            port => genlib_app:env(?APP, port, 8022),
-            transport_opts => genlib_app:env(?APP, transport_opts, #{}),
-            protocol_opts => genlib_app:env(?APP, protocol_opts, #{}),
+            port => application_get_env(?APP, port, 8022),
+            transport_opts => application_get_env(?APP, transport_opts, #{}),
+            protocol_opts => application_get_env(?APP, protocol_opts, #{}),
             event_handler => EventHandlers,
             handlers => get_repository_handlers(),
             additional_routes => [
@@ -74,15 +76,16 @@ dbinit() ->
     end.
 
 set_database_url() ->
-    {ok, #{
-        ?DEFAULT_DB := #{
+    EpgDbName = application_get_env(?APP, epg_db_name, ?DEFAULT_DB),
+    #{
+        EpgDbName := #{
             host := PgHost,
             port := PgPort,
             username := PgUser,
             password := PgPassword,
             database := DbName
         }
-    }} = application:get_env(epg_connector, databases),
+    } = application_get_env(epg_connector, databases),
     %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
     PgPortStr = erlang:integer_to_list(PgPort),
     Value =
@@ -110,7 +113,7 @@ get_env_var(Name) ->
     end.
 
 get_repository_handlers() ->
-    DefaultTimeout = genlib_app:env(?APP, default_woody_handling_timeout, timer:seconds(30)),
+    DefaultTimeout = application_get_env(?APP, default_woody_handling_timeout, timer:seconds(30)),
     [
         get_handler(repository, #{
             repository => dmt_repository_handler,
@@ -159,3 +162,77 @@ enable_health_logging(Check) ->
 -spec get_prometheus_route() -> {iodata(), module(), _Opts :: any()}.
 get_prometheus_route() ->
     {"/metrics/[:registry]", prometheus_cowboy2_handler, []}.
+
+%% @doc Setup damsel version information from multiple sources
+setup_damsel_version() ->
+    DamselVersionInfo = get_damsel_version(),
+    logger:warning("Damsel version info: ~p", [DamselVersionInfo]),
+    ok = application:set_env(?APP, damsel_version_info, DamselVersionInfo).
+
+%% @doc Get comprehensive damsel version information
+-spec get_damsel_version() ->
+    #{
+        app_vsn => binary() | undefined,
+        git_ref => binary() | undefined,
+        source => rebar_lock | app_file
+    }.
+get_damsel_version() ->
+    % Try to get version from application
+    AppVsn =
+        case application:get_key(damsel, vsn) of
+            {ok, Vsn} -> list_to_binary(Vsn);
+            undefined -> undefined
+        end,
+
+    % Try to get git ref from rebar.lock
+    GitRef = get_damsel_git_ref_from_lock(),
+
+    #{
+        app_vsn => AppVsn,
+        git_ref => GitRef,
+        source =>
+            case GitRef of
+                undefined -> app_file;
+                _ -> rebar_lock
+            end
+    }.
+
+%% @doc Extract damsel git reference from rebar.lock file
+-spec get_damsel_git_ref_from_lock() -> binary() | undefined.
+get_damsel_git_ref_from_lock() ->
+    try
+        WorkDir = get_env_var("WORK_DIR"),
+        LockFile = WorkDir ++ "/rebar.lock",
+        case file:consult(LockFile) of
+            {ok, [LockData | _]} ->
+                case extract_damsel_ref_from_lock_data(LockData) of
+                    {ok, Ref} -> list_to_binary(Ref);
+                    error -> undefined
+                end;
+            {error, _} ->
+                undefined
+        end
+    catch
+        _:_ -> undefined
+    end.
+
+%% @doc Extract damsel reference from parsed rebar.lock data
+-spec extract_damsel_ref_from_lock_data(term()) -> {ok, string()} | error.
+extract_damsel_ref_from_lock_data({_LockVersion, Deps}) when is_list(Deps) ->
+    case lists:keyfind(<<"damsel">>, 1, Deps) of
+        {<<"damsel">>, {git, _Url, {ref, Ref}}, _Level} ->
+            {ok, Ref};
+        _ ->
+            error
+    end;
+extract_damsel_ref_from_lock_data(_) ->
+    error.
+
+application_get_env(App, Key) ->
+    application_get_env(App, Key, undefined).
+
+application_get_env(App, Key, Default) ->
+    case application:get_env(App, Key) of
+        {ok, Value} -> Value;
+        undefined -> Default
+    end.

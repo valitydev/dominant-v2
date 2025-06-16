@@ -47,6 +47,7 @@ start_app(dmt = AppName) ->
                     }
                 }
             }},
+            {epg_db_name, dmt},
             {services, #{
                 repository => #{
                     url => <<"http://dmt.default:8022/v1/domain/repository">>
@@ -65,7 +66,7 @@ start_app(epg_connector = AppName) ->
     {
         start_app(AppName, [
             {databases, #{
-                default_db => #{
+                dmt => #{
                     host => "dmt_db",
                     port => 5432,
                     username => "postgres",
@@ -75,11 +76,11 @@ start_app(epg_connector = AppName) ->
             }},
             {pools, #{
                 default_pool => #{
-                    database => default_db,
+                    database => dmt,
                     size => 10
                 },
                 author_pool => #{
-                    database => default_db,
+                    database => dmt,
                     size => 10
                 }
             }}

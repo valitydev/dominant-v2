@@ -13,6 +13,7 @@
 -export([get_all_objects_history/1]).
 -export([search_objects/1]).
 -export([search_full_objects/1]).
+-export([filter_search_results/1]).
 
 %%
 
@@ -223,7 +224,8 @@ search_objects(Request) ->
             Limit,
             maybe_from_string(ContinuationToken, 0)
         ),
-        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Objects1 = filter_search_results(Objects0),
+        {ok, Objects2} = add_created_by_to_objects(default_pool, Objects1),
         Result = #domain_conf_v2_SearchResponse{
             result = [
                 #domain_conf_v2_LimitedVersionedObject{
@@ -232,9 +234,9 @@ search_objects(Request) ->
                     name = dmt_domain:maybe_get_domain_object_data_field(name, Data),
                     description = dmt_domain:maybe_get_domain_object_data_field(description, Data)
                 }
-             || #{data := Data} = Object <- Objects1
+             || #{data := Data} = Object <- Objects2
             ],
-            total_count = length(Objects1),
+            total_count = length(Objects2),
             continuation_token = maybe_to_string(NewOffset, undefined)
         },
         {ok, Result}
@@ -265,16 +267,17 @@ search_full_objects(Request) ->
             Limit,
             maybe_from_string(ContinuationToken, 0)
         ),
-        {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
+        Objects1 = filter_search_results(Objects0),
+        {ok, Objects2} = add_created_by_to_objects(default_pool, Objects1),
         Result = #domain_conf_v2_SearchFullResponse{
             result = [
                 #domain_conf_v2_VersionedObject{
                     info = marshall_to_object_info(Object),
                     object = Data
                 }
-             || #{data := Data} = Object <- Objects1
+             || #{data := Data} = Object <- Objects2
             ],
-            total_count = length(Objects1),
+            total_count = length(Objects2),
             continuation_token = maybe_to_string(NewOffset, undefined)
         },
         {ok, Result}
@@ -284,6 +287,28 @@ search_full_objects(Request) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+filter_search_results(Objects) ->
+    lists:filter(
+        fun(Object) ->
+            ID = maps:get(id, Object),
+            Data = maps:get(data, Object),
+            case
+                {
+                    dmt_thrift_validator:validate_reference(ID),
+                    dmt_thrift_validator:validate_domain_object(Data)
+                }
+            of
+                {ok, ok} ->
+                    true;
+                {ErrorID, ErrorData} ->
+                    logger:error("Search validation error ID ~p ~p", [ID, ErrorID]),
+                    logger:error("Search validation error Data ~p ~p", [Data, ErrorData]),
+                    false
+            end
+        end,
+        Objects
+    ).
 
 maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
