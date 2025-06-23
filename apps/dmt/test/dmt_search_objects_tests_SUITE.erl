@@ -28,7 +28,8 @@
     search_full_objects_pagination_test/1,
     search_objects_without_name_desc_test/1,
     search_deleted_objects_test/1,
-    checkout_deleted_version_test/1
+    checkout_deleted_version_test/1,
+    search_updated_object_deduplication_test/1
 ]).
 
 %% Initialize per suite
@@ -64,7 +65,8 @@ groups() ->
             search_full_objects_with_filter_test,
             search_full_objects_pagination_test,
             search_deleted_objects_test,
-            checkout_deleted_version_test
+            checkout_deleted_version_test,
+            search_updated_object_deduplication_test
         ]}
     ].
 
@@ -1347,6 +1349,201 @@ checkout_deleted_version_test(Config) ->
         CheckoutResult,
         "Should fail with ObjectNotFound when checking out a version that has been deleted"
     ).
+
+% Test updated object deduplication
+search_updated_object_deduplication_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    % Create author
+    Email = <<"search_updated_object_deduplication_test@test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Commit 1: Create initial object
+    Revision0 = 0,
+    SearchTerm = <<"updatable_object">>,
+    InitialName = <<SearchTerm/binary, " version 1">>,
+    InitialDesc = <<"Initial description">>,
+
+    InsertOperations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = InitialName,
+                    description = InitialDesc
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version1,
+        new_objects = NewObjects1
+    }} = dmt_client:commit(Revision0, InsertOperations, AuthorID, Client),
+
+    % Extract the created category reference
+    [{category, #domain_CategoryObject{ref = CategoryRef}}] = ordsets:to_list(NewObjects1),
+
+    % Commit 2: Update the same object
+    UpdatedName1 = <<SearchTerm/binary, " version 2">>,
+    UpdatedDesc1 = <<"Updated description first time">>,
+
+    UpdateOperations1 = [
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef,
+                    data = #domain_Category{
+                        name = UpdatedName1,
+                        description = UpdatedDesc1
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version2
+    }} = dmt_client:commit(Version1, UpdateOperations1, AuthorID, Client),
+
+    % Commit 3: Update the same object again
+    UpdatedName2 = <<SearchTerm/binary, " version 3">>,
+    UpdatedDesc2 = <<"Updated description second time">>,
+
+    UpdateOperations2 = [
+        {update, #domain_conf_v2_UpdateOp{
+            object =
+                {category, #domain_CategoryObject{
+                    ref = CategoryRef,
+                    data = #domain_Category{
+                        name = UpdatedName2,
+                        description = UpdatedDesc2
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version3
+    }} = dmt_client:commit(Version2, UpdateOperations2, AuthorID, Client),
+
+    % Search at the latest version - should find only one instance of the object
+    LatestSearchRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version3,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = LatestResults,
+        total_count = LatestCount,
+        continuation_token = LatestToken
+    }} = dmt_client:search_objects(LatestSearchRequest, Client),
+
+    % Verify only one result is returned (deduplication)
+    ?assertEqual(1, LatestCount, "Should find exactly one object despite multiple updates"),
+    ?assertEqual(1, length(LatestResults), "Should return exactly one result"),
+    ?assertEqual(undefined, LatestToken, "Should not have continuation token"),
+
+    % Verify the result contains the latest version's data
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            ref = {category, ResultRef},
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = ResultVersion
+            },
+            name = ResultName,
+            description = ResultDesc
+        }
+    ] = LatestResults,
+
+    ?assertEqual(CategoryRef, ResultRef, "Should return the correct object reference"),
+    ?assertEqual(Version3, ResultVersion, "Should return the object with the latest version"),
+    ?assertEqual(UpdatedName2, ResultName, "Should return the latest name"),
+    ?assertEqual(UpdatedDesc2, ResultDesc, "Should return the latest description"),
+
+    % Verify searching at earlier versions returns the object as it existed then
+    % Search at Version1
+    V1SearchRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version1,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = V1Results,
+        total_count = V1Count
+    }} = dmt_client:search_objects(V1SearchRequest, Client),
+
+    ?assertEqual(1, V1Count, "Should find one object at version 1"),
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = V1Version
+            },
+            name = V1Name,
+            description = V1Desc
+        }
+    ] = V1Results,
+
+    ?assertEqual(Version1, V1Version, "Should return version 1 info"),
+    ?assertEqual(InitialName, V1Name, "Should return the initial name at version 1"),
+    ?assertEqual(InitialDesc, V1Desc, "Should return the initial description at version 1"),
+
+    % Search at Version2
+    V2SearchRequest = #domain_conf_v2_SearchRequestParams{
+        query = SearchTerm,
+        version = Version2,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = V2Results,
+        total_count = V2Count
+    }} = dmt_client:search_objects(V2SearchRequest, Client),
+
+    ?assertEqual(1, V2Count, "Should find one object at version 2"),
+    [
+        #domain_conf_v2_LimitedVersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = V2Version
+            },
+            name = V2Name,
+            description = V2Desc
+        }
+    ] = V2Results,
+
+    ?assertEqual(Version2, V2Version, "Should return version 2 info"),
+    ?assertEqual(UpdatedName1, V2Name, "Should return the first updated name at version 2"),
+    ?assertEqual(UpdatedDesc1, V2Desc, "Should return the first updated description at version 2"),
+
+    % Test the same behavior with full objects search
+    {ok, #domain_conf_v2_SearchFullResponse{
+        result = FullResults,
+        total_count = FullCount
+    }} = dmt_client:search_full_objects(LatestSearchRequest, Client),
+
+    ?assertEqual(1, FullCount, "Full search should also find exactly one object"),
+    ?assertEqual(1, length(FullResults), "Full search should return exactly one result"),
+
+    % Verify the full object contains the latest data
+    [
+        #domain_conf_v2_VersionedObject{
+            info = #domain_conf_v2_VersionedObjectInfo{
+                version = FullVersion
+            },
+            object =
+                {category, #domain_CategoryObject{
+                    ref = FullRef,
+                    data = #domain_Category{
+                        name = FullName,
+                        description = FullDesc
+                    }
+                }}
+        }
+    ] = FullResults,
+
+    ?assertEqual(Version3, FullVersion, "Full object should have the latest version"),
+    ?assertEqual(CategoryRef, FullRef, "Full object should have the correct reference"),
+    ?assertEqual(UpdatedName2, FullName, "Full object should have the latest name"),
+    ?assertEqual(UpdatedDesc2, FullDesc, "Full object should have the latest description").
 
 %% Helper function
 create_author(Email, Client) ->

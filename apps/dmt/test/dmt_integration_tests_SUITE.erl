@@ -66,7 +66,7 @@ all() ->
 %% Define test groups
 groups() ->
     [
-        {author_tests, [parallel], [
+        {author_tests, [], [
             create_author_test,
             get_author_test,
             delete_author_test,

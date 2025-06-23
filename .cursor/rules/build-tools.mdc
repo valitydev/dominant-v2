@@ -1,0 +1,630 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Build & Development Tools Rules
+
+## Container & Compose Workflow
+
+### Makefile-Based Development
+The project uses a comprehensive Makefile with Docker Compose for containerized development:
+
+```bash
+# Development container management
+make dev-image              # Build development image
+make clean-dev-image         # Remove development image
+make wc-shell               # Interactive shell in dev container
+make wdeps-shell            # Shell with all dependencies (DB, services)
+
+# Container-based commands (wc- prefix for "with container")
+make wc-compile             # Compile inside container
+make wc-test               # Run tests inside container
+make wc-dialyze            # Run dialyzer inside container
+make wc-format             # Format code inside container
+
+# Container-based commands with dependencies (wdeps- prefix)
+make wdeps-test            # Run tests with full environment (DB, Jaeger)
+make wdeps-eunit           # Run unit tests with dependencies
+make wdeps-common-test     # Run integration tests with dependencies
+```
+
+### Docker Compose Services
+The project defines multiple services for development and testing:
+
+```yaml
+# Main services (compose.yaml)
+services:
+  testrunner:          # Main application container
+    image: $DEV_IMAGE_TAG
+    environment:
+      POSTGRES_HOST: dmt_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    depends_on:
+      - dmt_db
+      - holmes
+  
+  dmt_db:              # PostgreSQL database
+    image: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+  
+  holmes:              # Domain configuration service
+    image: ghcr.io/valitydev/holmes:sha-eef05a3
+
+# Tracing services (compose.tracing.yaml)
+  jaeger:              # Distributed tracing
+    image: jaegertracing/all-in-one:1.47
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+```
+
+### Environment Configuration
+```bash
+# Project uses .env file for version pinning
+# Variables from .env are used in both local development and CI
+
+# Makefile reads .env automatically:
+DOTENV := $(shell grep -v '^\#' .env)
+
+# Docker Compose with environment variables:
+DOCKERCOMPOSE_W_ENV = DEV_IMAGE_TAG=$(DEV_IMAGE_TAG) $(DOCKERCOMPOSE) -f compose.yaml -f compose.tracing.yaml
+```
+
+### Container Development Patterns
+```bash
+# Always use containerized commands for consistency
+make wc-compile             # Instead of: rebar3 compile
+make wdeps-test            # Instead of: rebar3 ct eunit
+make wc-dialyze            # Instead of: rebar3 dialyzer
+
+# For interactive debugging with full environment
+make wdeps-shell           # Gives you shell with DB and all services running
+
+# For quick development without external dependencies
+make wc-shell              # Just the development container
+```
+
+### Migration and Database Setup
+```bash
+# Database migration handling
+make make_psql_migration   # Build migration tools
+# Migration tools are placed in ./bin/ directory
+# Migrations are stored in ./migrations/ directory
+```
+
+## Rebar3 Workflow
+
+### Development Commands
+```bash
+# Essential rebar3 commands for development
+
+# Compile the project
+rebar3 compile
+
+# Run interactive shell with project loaded
+rebar3 shell
+
+# Run all tests
+rebar3 ct eunit
+
+# Run specific test suite
+rebar3 ct --suite apps/dmt/test/dmt_repository_SUITE
+
+# Run static analysis
+rebar3 dialyzer
+
+# Check code formatting
+rebar3 erlfmt --check
+
+# Format code
+rebar3 erlfmt --write
+
+# Run linter
+rebar3 elvis rock
+
+# Generate documentation
+rebar3 edoc
+
+# Clean build artifacts
+rebar3 clean
+
+# Create release
+rebar3 as prod release
+```
+
+### Multi-Application Development
+```erlang
+% Working with umbrella project structure
+% Use rebar3 shell for development with all apps loaded
+
+% In shell - useful commands:
+% l(module_name).          % Reload a module
+% c(module_name).          % Compile and load module
+% rr("apps/*/include/*.hrl"). % Load record definitions
+% observer:start().        % Start observer for debugging
+
+% Load application manually in shell
+application:ensure_all_started(dmt).
+
+% Reload specific application during development
+application:stop(dmt_core),
+application:start(dmt_core).
+```
+
+### Configuration Management
+```erlang
+% Development configuration in config/sys.config
+[
+    {dmt, [
+        {database, #{
+            host => "localhost",
+            port => 5432,
+            username => "dmt_user",
+            password => "dmt_password", 
+            database => "dmt_dev"
+        }},
+        {woody_server, #{
+            ip => {127, 0, 0, 1},
+            port => 8080
+        }},
+        {log_level, debug}
+    ]},
+    {kernel, [
+        {logger_level, debug},
+        {logger, [
+            {handler, default, logger_std_h, #{
+                config => #{file => "log/dmt.log"},
+                formatter => {logger_formatter, #{
+                    single_line => false,
+                    template => [time," ",level," ",msg,"\n"]
+                }}
+            }}
+        ]}
+    ]}
+].
+
+% Test configuration
+get_test_config() ->
+    [
+        {dmt, [
+            {database, #{
+                host => "localhost",
+                port => 5432,
+                database => "dmt_test"
+            }}
+        ]}
+    ].
+```
+
+## Dependency Management
+
+### Adding Dependencies
+```erlang
+% In rebar.config - add dependencies properly
+{deps, [
+    % Specific version for production stability
+    {cowboy, "2.9.0"},
+    
+    % Git dependency with specific tag
+    {woody, {git, "https://github.com/valitydev/woody_erlang.git", {tag, "1.10.1"}}},
+    
+    % Git dependency with branch (for development only)
+    {some_lib, {git, "https://github.com/user/some_lib.git", {branch, "develop"}}},
+    
+    % Hex dependency with version constraint
+    {jsx, "~> 3.1.0"}
+]}.
+
+% Profile-specific dependencies
+{profiles, [
+    {test, [
+        {deps, [
+            {meck, "0.9.2"},
+            {proper, "1.4.0"}
+        ]}
+    ]},
+    {prod, [
+        {deps, [
+            {recon, "2.5.2"},
+            {logger_logstash_formatter, {git, "...", {ref, "..."}}}
+        ]}
+    ]}
+]}.
+```
+
+### Lock File Management
+```bash
+# Update dependencies
+rebar3 upgrade
+
+# Update specific dependency
+rebar3 upgrade cowboy
+
+# Verify lock file
+rebar3 deps
+
+# Clean and rebuild dependencies
+rebar3 clean -a
+rebar3 compile
+```
+
+## Code Quality Tools
+
+### Linting with Elvis
+```erlang
+% Elvis configuration best practices in elvis.config
+[
+    {elvis, [
+        {config, [
+            #{
+                dirs => ["apps/**/src", "apps/**/include"],
+                filter => "*.erl",
+                rules => [
+                    % Enable important style rules
+                    {elvis_text_style, line_length, #{limit => 120}},
+                    {elvis_text_style, no_trailing_whitespace, #{}},
+                    {elvis_style, function_naming_convention, #{regex => "^([a-z][a-z0-9]*_?)*$"}},
+                    {elvis_style, no_if_expression, disable},
+                    {elvis_style, used_ignored_variable, disable},
+                    
+                    % Complexity rules
+                    {elvis_style, dont_repeat_yourself, #{min_complexity => 20}},
+                    {elvis_style, cyclomatic_complexity, #{max => 15}},
+                    {elvis_style, function_size, #{max_length => 50}},
+                    
+                    % Project-specific rules
+                    {elvis_style, atom_naming_convention, disable},
+                    {elvis_style, macro_names, disable}
+                ]
+            }
+        ]}
+    ]}
+].
+```
+
+### Code Formatting with erlfmt
+```erlang
+% erlfmt configuration in rebar.config
+{erlfmt, [
+    {print_width, 120},
+    {files, [
+        "apps/*/src/*.{erl,hrl}",
+        "apps/*/include/*.hrl", 
+        "apps/*/test/*.erl",
+        "rebar.config",
+        "config/*.config"
+    ]}
+]}.
+
+% Format specific files
+% rebar3 erlfmt --write apps/dmt/src/dmt_repository.erl
+
+% Check formatting in CI
+% rebar3 erlfmt --check
+```
+
+### Static Analysis with Dialyzer
+```erlang
+% Dialyzer configuration in rebar.config
+{dialyzer, [
+    {warnings, [
+        % Essential warnings
+        unmatched_returns,
+        error_handling,
+        unknown,
+        
+        % Additional useful warnings
+        no_improper_lists,
+        no_fun_app,
+        no_match,
+        no_opaque,
+        no_fail_call,
+        no_contracts,
+        no_behaviours,
+        no_undefined_callbacks
+    ]},
+    {plt_apps, all_deps},
+    {plt_extra_apps, [
+        eunit,
+        common_test,
+        observer,
+        runtime_tools
+    ]},
+    {incremental, true},
+    {plt_location, local},
+    {plt_prefix, "dmt"},
+    {base_plt_location, global}
+]}.
+
+% Build PLT for first time (slow)
+% rebar3 dialyzer --build_plt
+
+% Run dialyzer (fast after PLT is built)
+% rebar3 dialyzer
+```
+
+## Testing Workflow
+
+### Test Organization
+```bash
+# Container-based testing (recommended)
+make wdeps-test            # Run all tests with dependencies
+make wdeps-eunit           # Run unit tests with dependencies
+make wdeps-common-test     # Run integration tests with dependencies
+
+# Traditional rebar3 testing
+rebar3 ct eunit            # Run all tests
+rebar3 eunit               # Run only unit tests
+rebar3 ct                  # Run only integration tests  
+
+# Run specific test suite
+rebar3 ct --suite apps/dmt/test/dmt_repository_SUITE
+
+# Run specific test case
+rebar3 ct --suite apps/dmt/test/dmt_repository_SUITE --case test_create_object
+
+# Run tests with coverage
+rebar3 as test do ct, cover, covertool
+
+# Generate coverage report
+rebar3 cover --verbose
+```
+
+### Test Data Management
+```erlang
+% Test helper for setup/teardown
+-module(dmt_test_helper).
+
+-export([
+    setup_test_db/0,
+    cleanup_test_db/0,
+    create_test_data/0,
+    with_test_transaction/1
+]).
+
+setup_test_db() ->
+    Config = get_test_db_config(),
+    ok = dmt_database:create_schema(Config),
+    ok = dmt_database:run_migrations(Config).
+
+cleanup_test_db() ->
+    Config = get_test_db_config(),
+    ok = dmt_database:drop_schema(Config).
+
+create_test_data() ->
+    TestObjects = [
+        create_test_object(#{id => 1, type => user}),
+        create_test_object(#{id => 2, type => account}),
+        create_test_object(#{id => 3, type => transaction})
+    ],
+    [dmt_repository:create_object(Obj) || Obj <- TestObjects].
+```
+
+## Development Environment
+
+### Containerized Development (Recommended)
+```bash
+# Use containerized development for consistency
+make dev-image             # Build development environment once
+make wdeps-shell           # Start development with full stack
+
+# In the container shell:
+rebar3 compile             # Compile
+rebar3 shell               # Interactive Erlang shell
+observer:start().          # GUI debugging tools
+
+# For testing with tracing
+make wdeps-test            # Tests with Jaeger tracing available
+# View traces at: http://localhost:16686
+```
+
+### Docker Development Setup
+```dockerfile
+# Dockerfile.dev for development
+ARG OTP_VERSION
+FROM docker.io/library/erlang:${OTP_VERSION}
+
+ARG THRIFT_VERSION
+ARG TARGETARCH
+RUN wget -q -O- "https://github.com/valitydev/thrift/releases/download/${THRIFT_VERSION}/thrift-${THRIFT_VERSION}-linux-${TARGETARCH}.tar.gz" \
+    | tar -xvz -C /usr/local/bin/
+
+ENV CHARSET=UTF-8
+ENV LANG=C.UTF-8
+
+CMD ["/bin/bash"]
+```
+
+### VS Code Configuration
+```json
+// .vscode/settings.json
+{
+    "erlang.includePaths": [
+        "apps/*/include",
+        "_build/default/lib/*/include"
+    ],
+    "erlang.linting": true,
+    "erlang.codeLensEnabled": true,
+    "files.associations": {
+        "*.config": "erlang",
+        "*.app.src": "erlang",
+        "rebar.config": "erlang",
+        "elvis.config": "erlang"
+    },
+    "files.exclude": {
+        "_build": true,
+        "*.beam": true,
+        "erl_crash.dump": true
+    }
+}
+
+// .vscode/tasks.json for common tasks
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Container Compile",
+            "type": "shell",
+            "command": "make wc-compile",
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always"
+            }
+        },
+        {
+            "label": "Container Tests",
+            "type": "shell", 
+            "command": "make wdeps-test",
+            "group": "test"
+        },
+        {
+            "label": "Container Shell",
+            "type": "shell",
+            "command": "make wdeps-shell",
+            "group": "build"
+        }
+    ]
+}
+```
+
+## Release Management
+
+### Production Release
+```erlang
+% Release configuration in rebar.config
+{relx, [
+    {release, {dmt, "1.0.0"}, [
+        % Core applications
+        dmt,
+        dmt_core, 
+        dmt_object,
+        
+        % OTP applications
+        sasl,
+        runtime_tools,
+        
+        % Dependencies
+        woody,
+        epgsql,
+        prometheus,
+        opentelemetry
+    ]},
+    
+    {mode, prod},
+    {include_erts, true},
+    {extended_start_script, true},
+    
+    {sys_config, "./config/sys.config"},
+    {vm_args, "./config/vm.args"},
+    
+    {overlay, [
+        {mkdir, "log"},
+        {copy, "scripts/start.sh", "bin/start.sh"}
+    ]}
+]}.
+
+% VM arguments for production
+% config/vm.args
+-name dmt@127.0.0.1
+-setcookie dmt_cookie
+-heart
+-kernel inet_dist_listen_min 9100 inet_dist_listen_max 9155
+-proto_dist inet_tls
++K true
++A 64
++P 2000000
++Q 2000000
+```
+
+### CI/CD Pipeline
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup Erlang/OTP
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: '26'
+        rebar3-version: '3.20'
+        
+    - name: Restore dependencies cache
+      uses: actions/cache@v2
+      with:
+        path: _build
+        key: ${{ runner.os }}-mix-${{ hashFiles('**/rebar.lock') }}
+        
+    - name: Install dependencies
+      run: rebar3 deps
+      
+    - name: Compile
+      run: rebar3 compile
+      
+    - name: Check formatting
+      run: rebar3 erlfmt --check
+      
+    - name: Run linter
+      run: rebar3 elvis rock
+      
+    - name: Run tests
+      run: rebar3 ct eunit
+      
+    - name: Run static analysis
+      run: rebar3 dialyzer
+```
+
+## Performance Optimization
+
+### Build Optimization
+```erlang
+% Optimized compiler options for development vs production
+{erl_opts, [
+    % Development options
+    debug_info,
+    {parse_transform, lager_transform},
+    
+    % Production optimizations (use in prod profile)
+    % no_debug_info,
+    % {inline_size, 64},
+    % inline,
+    % {hipe, [o3]}
+]}.
+
+% Profile-specific optimizations
+{profiles, [
+    {prod, [
+        {erl_opts, [
+            no_debug_info,
+            warnings_as_errors,
+            inline,
+            {inline_size, 64}
+        ]},
+        {relx, [
+            {mode, minimal},
+            {strip_beams, true}
+        ]}
+    ]}
+]}.
+``` 

@@ -1,0 +1,182 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Erlang/OTP General Rules
+
+## Language & Style Guidelines
+
+### Code Formatting
+- Line length limit: 120 characters (follow erlfmt configuration)
+- Use snake_case for function names: `get_domain_object/2`
+- Module names match filename: `dmt_database.erl` → `dmt_database` module
+- 4 spaces indentation, no tabs
+- No trailing whitespace
+- Use `%% Comment` for section headers, `% Comment` for inline
+
+### Naming Conventions
+```erlang
+% Functions: snake_case
+get_user_data/1, process_request/2
+
+% Variables: CamelCase
+UserId, RequestData, DatabaseConnection
+
+% Atoms: lowercase_with_underscores
+ok, error, not_found, invalid_request
+
+% Macros: UPPER_CASE
+?DEFAULT_TIMEOUT, ?MAX_RETRIES
+```
+
+## OTP Patterns
+
+### Process Design
+- Use `gen_server` for stateful processes
+- Use `gen_statem` for complex state machines  
+- Use `gen_event` for event handling
+- Always implement proper supervision trees
+- Prefer "let it crash" philosophy with supervisors
+
+### Standard Module Structure
+```erlang
+-module(module_name).
+-behaviour(gen_server).
+
+%% API
+-export([
+    start_link/0,
+    public_function/1
+]).
+
+%% gen_server callbacks
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
+
+%% Internal exports (for testing)
+-export([internal_function/1]).
+
+%% Includes
+-include("header.hrl").
+
+%% Types
+-type state() :: #{
+    field1 := term(),
+    field2 := integer()
+}.
+
+%% Records
+-record(state, {
+    field1 :: term(),
+    field2 :: integer()
+}).
+
+%% Macros
+-define(DEFAULT_TIMEOUT, 5000).
+```
+
+## Error Handling
+
+### Return Value Patterns
+```erlang
+% Always use tagged tuples for results
+-spec get_user(Id :: integer()) -> {ok, user()} | {error, not_found}.
+
+% For functions that can't fail, return direct values
+-spec format_name(First :: binary(), Last :: binary()) -> binary().
+
+% Use exceptions only for truly exceptional cases
+error(badarg), throw(custom_error), exit(shutdown)
+```
+
+### Pattern Matching Over Conditionals
+```erlang
+% Prefer this:
+process_result({ok, Data}) ->
+    handle_success(Data);
+process_result({error, Reason}) ->
+    handle_error(Reason).
+
+% Over this:
+process_result(Result) ->
+    if 
+        element(1, Result) =:= ok ->
+            handle_success(element(2, Result));
+        element(1, Result) =:= error ->
+            handle_error(element(2, Result))
+    end.
+```
+
+## Type Specifications
+
+### Always Include Specs for Public Functions
+```erlang
+-spec start_link() -> {ok, pid()} | {error, term()}.
+-spec get_data(Id :: integer()) -> {ok, data()} | {error, not_found}.
+-spec process_request(Request :: request(), Options :: [option()]) -> 
+    {ok, response()} | {error, reason()}.
+```
+
+### Define Custom Types
+```erlang
+-type user_id() :: integer().
+-type user() :: #{
+    id := user_id(),
+    name := binary(),
+    email := binary()
+}.
+-type error_reason() :: not_found | invalid_data | timeout.
+```
+
+## Performance & Memory
+
+### List Operations
+- Use list comprehensions for transformations
+- Prefer `lists:foldl/3` over recursive accumulation
+- Use `binary()` for string data, not `string()`
+- Build lists in reverse, then `lists:reverse/1` if order matters
+
+### Binary Handling
+```erlang
+% Efficient binary construction
+build_response(Data) ->
+    iolist_to_binary([
+        <<"HTTP/1.1 200 OK\r\n">>,
+        <<"Content-Type: application/json\r\n">>,
+        <<"\r\n">>,
+        Data
+    ]).
+
+% Pattern matching on binaries
+parse_header(<<"Content-Type: ", Type/binary>>) ->
+    {content_type, Type};
+parse_header(<<"Content-Length: ", Length/binary>>) ->
+    {content_length, binary_to_integer(Length)}.
+```
+
+## Testing Principles
+
+### Function Design for Testability
+- Keep functions pure when possible
+- Separate I/O operations from business logic
+- Use dependency injection for external resources
+- Export internal functions for unit testing
+
+### Documentation
+```erlang
+%% @doc Retrieves user data by ID.
+%% 
+%% This function fetches user information from the database.
+%% Returns `{error, not_found}` if user doesn't exist.
+%%
+%% @param Id The unique identifier for the user
+%% @returns User data or error tuple
+-spec get_user(Id :: integer()) -> {ok, user()} | {error, not_found}.
+``` 
