@@ -551,7 +551,7 @@ check_versions_sql(Worker, ChangedObjectIds, Version) ->
             ChangedObjectId0 = dmt_mapper:to_string(ChangedObjectId),
             case dmt_database:get_object_latest_version(Worker, ChangedObjectId0) of
                 {ok, MostRecentVersion} when MostRecentVersion > Version ->
-                    throw({object_update_too_old, {ChangedObjectId, MostRecentVersion}});
+                    throw({error, {object_update_too_old, {ChangedObjectId, MostRecentVersion}}});
                 {ok, _MostRecentVersion} ->
                     ok;
                 {error, not_found} ->
