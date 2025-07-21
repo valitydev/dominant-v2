@@ -43,8 +43,8 @@ start_client() ->
             logger:info("Kafka publishing disabled, skipping client startup"),
             ok;
         true ->
-            % Try to start client directly, let brod handle if it's already started
-            start_client_manually()
+            % Use the brod-configured client directly
+            start_client_from_brod_config()
     end.
 
 %% @doc Stop the Kafka client
@@ -60,11 +60,12 @@ stop_client() ->
             ok
     end.
 
-%% @doc Publish a commit event to Kafka using the default topic
+%% @doc Publish a commit event to Kafka using the configured topic
 -spec publish_commit_event(HistoricalCommit :: historical_commit()) ->
     ok | {error, term()}.
 publish_commit_event(HistoricalCommit) ->
-    publish_commit_event(?DEFAULT_TOPIC, HistoricalCommit).
+    Topic = get_kafka_topic(),
+    publish_commit_event(Topic, HistoricalCommit).
 
 %% @doc Publish a commit event to Kafka with a specific topic
 -spec publish_commit_event(
@@ -94,71 +95,74 @@ publish_commit_event(Topic, HistoricalCommit) ->
 %%====================================================================
 
 %% @doc Check if Kafka publishing is enabled
-%% Can be controlled by DMT_KAFKA_ENABLED environment variable
+%% Reads from DMT application configuration
 -spec is_kafka_enabled() -> boolean().
 is_kafka_enabled() ->
-    case os:getenv("DMT_KAFKA_ENABLED") of
-        % Default to enabled if not set
-        false -> true;
-        "false" -> false;
-        "0" -> false;
-        _ -> true
+    case application:get_env(dmt, kafka) of
+        {ok, KafkaConfig} when is_map(KafkaConfig) ->
+            maps:get(enabled, KafkaConfig, false);
+        {ok, KafkaConfig} when is_list(KafkaConfig) ->
+            % Backwards compatibility with proplist
+            proplists:get_value(enabled, KafkaConfig, false);
+        undefined ->
+            false
     end.
 
-%% @doc Start Kafka client manually with default configuration
--spec start_client_manually() -> ok | {error, term()}.
-start_client_manually() ->
-    Brokers = get_kafka_brokers(),
-    ClientConfig = get_default_client_config(),
-    case brod:start_client(Brokers, ?CLIENT_ID, ClientConfig) of
-        ok ->
-            ok = start_producers(),
-            logger:info("DMT Kafka client started successfully"),
-            ok;
-        {error, {already_started, _}} ->
-            logger:info("DMT Kafka client already started"),
-            ok;
+%% @doc Start Kafka client using brod application configuration
+-spec start_client_from_brod_config() -> ok | {error, term()}.
+start_client_from_brod_config() ->
+    % Try to start the client using brod configuration
+    case get_brod_client_config() of
+        {ok, {Endpoints, ClientConfig}} ->
+            case brod:start_client(Endpoints, ?CLIENT_ID, ClientConfig) of
+                ok ->
+                    logger:info("DMT Kafka client started from brod config"),
+                    ok = start_producers(),
+                    ok;
+                {error, {already_started, _}} ->
+                    logger:info("DMT Kafka client already started"),
+                    ok = start_producers(),
+                    ok;
+                {error, Reason} ->
+                    logger:error("Failed to start DMT Kafka client: ~p", [Reason]),
+                    {error, Reason}
+            end;
         {error, Reason} ->
-            logger:error("Failed to start DMT Kafka client: ~p", [Reason]),
+            logger:error("Failed to get brod client configuration: ~p", [Reason]),
             {error, Reason}
     end.
 
-%% @doc Get Kafka broker endpoints from environment or use defaults
--spec get_kafka_brokers() -> [brod:endpoint()].
-get_kafka_brokers() ->
-    case os:getenv("DMT_KAFKA_BROKERS") of
-        false ->
-            [{"localhost", 9092}];
-        BrokersStr ->
-            parse_brokers(BrokersStr)
+%% @doc Get brod client configuration from application environment
+-spec get_brod_client_config() -> {ok, {[brod:endpoint()], [tuple()]}} | {error, term()}.
+get_brod_client_config() ->
+    case application:get_env(brod, clients) of
+        {ok, Clients} ->
+            case proplists:get_value(?CLIENT_ID, Clients) of
+                undefined ->
+                    {error, {client_not_configured, ?CLIENT_ID}};
+                ClientConfig ->
+                    case proplists:get_value(endpoints, ClientConfig) of
+                        undefined ->
+                            {error, {endpoints_not_configured, ?CLIENT_ID}};
+                        Endpoints ->
+                            {ok, {Endpoints, ClientConfig}}
+                    end
+            end;
+        undefined ->
+            {error, brod_clients_not_configured}
     end.
 
-%% @doc Parse broker string like "host1:port1,host2:port2"
--spec parse_brokers(string()) -> [brod:endpoint()].
-parse_brokers(BrokersStr) ->
-    BrokerPairs = string:split(BrokersStr, ",", all),
-    lists:map(fun parse_broker/1, BrokerPairs).
-
-%% @doc Parse single broker string like "host:port"
--spec parse_broker(string()) -> brod:endpoint().
-parse_broker(BrokerStr) ->
-    case string:split(BrokerStr, ":") of
-        [Host, PortStr] ->
-            Port = list_to_integer(PortStr),
-            {Host, Port};
-        [Host] ->
-            % Default port
-            {Host, 9092}
+%% @doc Get producer configuration from brod client config or defaults
+-spec get_producer_config() -> [tuple()].
+get_producer_config() ->
+    case get_brod_client_config() of
+        {ok, {_, ClientConfig}} ->
+            proplists:get_value(
+                default_producer_config, ClientConfig, get_default_producer_config()
+            );
+        {error, _} ->
+            get_default_producer_config()
     end.
-
-%% @doc Get default client configuration
--spec get_default_client_config() -> [tuple()].
-get_default_client_config() ->
-    [
-        {reconnect_cool_down_seconds, 10},
-        {auto_start_producers, true},
-        {default_producer_config, get_default_producer_config()}
-    ].
 
 %% @doc Get default producer configuration
 -spec get_default_producer_config() -> [tuple()].
@@ -180,21 +184,28 @@ start_producers() ->
     lists:foreach(fun start_producer_for_topic/1, Topics),
     ok.
 
-%% @doc Get list of topics to create producers for
+%% @doc Get the configured Kafka topic
+-spec get_kafka_topic() -> binary().
+get_kafka_topic() ->
+    case application:get_env(dmt, kafka) of
+        {ok, KafkaConfig} when is_map(KafkaConfig) ->
+            maps:get(topic, KafkaConfig, ?DEFAULT_TOPIC);
+        {ok, KafkaConfig} when is_list(KafkaConfig) ->
+            % Backwards compatibility with proplist
+            proplists:get_value(topic, KafkaConfig, ?DEFAULT_TOPIC);
+        undefined ->
+            ?DEFAULT_TOPIC
+    end.
+
+%% @doc Get list of topics to create producers for (just the main topic now)
 -spec get_kafka_topics() -> [binary()].
 get_kafka_topics() ->
-    case os:getenv("DMT_KAFKA_TOPICS") of
-        false ->
-            [?DEFAULT_TOPIC];
-        TopicsStr ->
-            TopicList = string:split(TopicsStr, ",", all),
-            [list_to_binary(string:trim(Topic)) || Topic <- TopicList]
-    end.
+    [get_kafka_topic()].
 
 %% @doc Start producer for a specific topic
 -spec start_producer_for_topic(binary()) -> ok.
 start_producer_for_topic(Topic) ->
-    ProducerConfig = get_default_producer_config(),
+    ProducerConfig = get_producer_config(),
     case brod:start_producer(?CLIENT_ID, Topic, ProducerConfig) of
         ok ->
             ok;
@@ -213,7 +224,7 @@ start_producer_for_topic(Topic) ->
 %% @doc Ensure producer is started for the given topic
 -spec ensure_producer_started(binary()) -> ok | {error, term()}.
 ensure_producer_started(Topic) ->
-    ProducerConfig = get_default_producer_config(),
+    ProducerConfig = get_producer_config(),
     case brod:start_producer(?CLIENT_ID, Topic, ProducerConfig) of
         ok ->
             ok;
@@ -298,30 +309,26 @@ produce_batch(Client, Topic, PartitionKey, Batch) ->
 partition(PartitionsCount, Key) ->
     erlang:phash2(Key) rem PartitionsCount.
 
-%% @doc Serialize HistoricalCommit using binary Thrift protocol
+%% @doc Serialize HistoricalCommit using proper Thrift binary protocol
 -spec serialize_commit_thrift(historical_commit()) -> binary().
 serialize_commit_thrift(HistoricalCommit) ->
     try
-        % Use a simpler approach - serialize to binary using term_to_binary
-        % with a Thrift-like header for compatibility
-        Data = term_to_binary(HistoricalCommit, [compressed]),
-
-        % Add Thrift binary protocol version header
-
-        % Thrift binary protocol version 1
-        VersionHeader = 16#80010000,
-        % Call message type
-        MessageType = 1,
-
-        % Create a simple binary format with header
-        <<VersionHeader:32/big-signed, MessageType:32/big-signed, Data/binary>>
+        Codec = thrift_strict_binary_codec:new(),
+        Type = {struct, struct, {dmsl_domain_conf_v2_thrift, 'HistoricalCommit'}},
+        case thrift_strict_binary_codec:write(Codec, Type, HistoricalCommit) of
+            {ok, NewCodec} ->
+                thrift_strict_binary_codec:close(NewCodec);
+            {error, Reason} ->
+                logger:error("Failed to serialize HistoricalCommit with Thrift: ~p", [Reason]),
+                error({thrift_serialization_failed, Reason})
+        end
     catch
         Class:Error:Stacktrace ->
             logger:error(
-                "Failed to serialize HistoricalCommit with Thrift: ~p:~p~n~p",
+                "Exception during HistoricalCommit serialization: ~p:~p~n~p",
                 [Class, Error, Stacktrace]
             ),
-            error({serialization_failed, Class, Error})
+            error({serialization_exception, Class, Error})
     end.
 
 %% @doc Create message headers with binary serialization metadata

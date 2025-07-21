@@ -10,6 +10,7 @@
 -export([create_client/1]).
 
 -export([cleanup_db/0]).
+-export([setup_kafka_topic/1]).
 
 -export_type([config/0]).
 -export_type([test_case_name/0]).
@@ -58,6 +59,10 @@ start_app(dmt = AppName) ->
                 author => #{
                     url => <<"http://dmt.default:8022/v1/domain/author">>
                 }
+            }},
+            {kafka, #{
+                enabled => true,
+                topic => <<"domain_changes">>
             }}
         ]),
         #{}
@@ -97,7 +102,7 @@ start_app(brod = AppName) ->
                     {auto_start_producers, true},
                     {default_producer_config, [
                         {required_acks, -1},
-                        {ack_timeout, 5000},
+                        {ack_timeout, 10000},
                         {partition_buffer_limit, 256},
                         {partition_onwire_limit, 1},
                         {max_batch_size, 16384},
@@ -184,4 +189,24 @@ cleanup_db() ->
     END $$;
     """,
     {ok, _, _} = epg_pool:query(default_pool, Query),
+    ok.
+
+%% @doc Override the Kafka topic for specific tests
+-spec setup_kafka_topic(binary()) -> ok.
+setup_kafka_topic(Topic) ->
+    case application:get_env(dmt, kafka) of
+        {ok, KafkaConfig} when is_map(KafkaConfig) ->
+            NewConfig = KafkaConfig#{topic => Topic},
+            application:set_env(dmt, kafka, NewConfig);
+        {ok, KafkaConfig} when is_list(KafkaConfig) ->
+            % Convert proplist to map and update topic
+            MapConfig = maps:from_list(KafkaConfig),
+            NewConfig = MapConfig#{topic => Topic},
+            application:set_env(dmt, kafka, NewConfig);
+        undefined ->
+            application:set_env(dmt, kafka, #{
+                enabled => true,
+                topic => Topic
+            })
+    end,
     ok.

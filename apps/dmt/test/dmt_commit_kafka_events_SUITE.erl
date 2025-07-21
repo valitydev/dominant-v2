@@ -42,11 +42,6 @@ all() ->
 init_per_suite(Config) ->
     ct:pal("Starting Commit Kafka Events test suite"),
 
-    % Enable Kafka publishing for tests via environment variables
-    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
-    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
-    true = os:putenv("DMT_KAFKA_TOPICS", binary_to_list(?TEST_TOPIC)),
-
     % Start dependent applications with brod configured via ct_helper
     {Apps, _} = dmt_ct_helper:start_apps([
         damsel, jsx, brod, woody, scoper, epg_connector, dmt
@@ -71,21 +66,12 @@ end_per_suite(_Config) ->
     % Stop the main publisher's client
     dmt_kafka_publisher:stop_client(),
 
-    % Clean up environment variables
-    os:unsetenv("DMT_KAFKA_ENABLED"),
-    os:unsetenv("DMT_KAFKA_BROKERS"),
-    os:unsetenv("DMT_KAFKA_TOPICS"),
-
     dmt_ct_helper:cleanup_db(),
     % Consider stopping apps if dmt_ct_helper provided a way
     ok.
 
 init_per_testcase(TestCase, Config) ->
     ct:pal("Starting test case: ~p", [TestCase]),
-    % Ensure environment variables are set for this test
-    true = os:putenv("DMT_KAFKA_ENABLED", "true"),
-    true = os:putenv("DMT_KAFKA_BROKERS", "kafka:29092"),
-    true = os:putenv("DMT_KAFKA_TOPICS", binary_to_list(?TEST_TOPIC)),
 
     % Ensure dmt_kafka_publisher starts with our test config
     case dmt_kafka_publisher:start_client() of
@@ -223,7 +209,8 @@ test_update_operation_publishes_kafka_event(Config) ->
     % Now update the created object
     UpdatedCategory = #domain_Category{
         name = <<"UpdateTestCategory">>,
-        description = <<"Updated description for Kafka event testing">>
+        description = <<"Updated description for Kafka event testing">>,
+        type = undefined
     },
     UpdateOp = #domain_conf_v2_UpdateOp{
         object =
@@ -327,7 +314,8 @@ create_sample_commit_operations() ->
 create_sample_commit_operations(CategoryName) ->
     Category = #domain_Category{
         name = CategoryName,
-        description = <<"Category for Kafka event testing">>
+        description = <<"Category for Kafka event testing">>,
+        type = test
     },
     InsertOp = #domain_conf_v2_InsertOp{
         object = {category, Category}
