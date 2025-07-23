@@ -10,7 +10,8 @@
 -export([create_client/1]).
 
 -export([cleanup_db/0]).
--export([setup_kafka_topic/1]).
+-export([create_kafka_topics/0]).
+-export([delete_kafka_topics/0]).
 
 -export_type([config/0]).
 -export_type([test_case_name/0]).
@@ -20,6 +21,9 @@
 
 -type app_name() :: atom().
 -export_type([app_name/0]).
+
+-define(BROKERS, [{"kafka", 29092}]).
+-define(TEST_TOPIC, <<"domain_changes">>).
 
 -spec start_app(app_name()) -> {[app_name()], map()}.
 start_app(scoper = AppName) ->
@@ -62,7 +66,7 @@ start_app(dmt = AppName) ->
             }},
             {kafka, #{
                 enabled => true,
-                topic => <<"domain_changes">>
+                topic => ?TEST_TOPIC
             }}
         ]),
         #{}
@@ -97,18 +101,10 @@ start_app(brod = AppName) ->
         start_app(AppName, [
             {clients, [
                 {dmt_kafka_client, [
-                    {endpoints, [{"kafka", 29092}]},
+                    {endpoints, ?BROKERS},
                     {reconnect_cool_down_seconds, 10},
                     {auto_start_producers, true},
-                    {default_producer_config, [
-                        {required_acks, -1},
-                        {ack_timeout, 10000},
-                        {partition_buffer_limit, 256},
-                        {partition_onwire_limit, 1},
-                        {max_batch_size, 16384},
-                        {max_retries, 3},
-                        {retry_backoff_ms, 500}
-                    ]}
+                    {default_producer_config, []}
                 ]}
             ]}
         ]),
@@ -191,22 +187,17 @@ cleanup_db() ->
     {ok, _, _} = epg_pool:query(default_pool, Query),
     ok.
 
-%% @doc Override the Kafka topic for specific tests
--spec setup_kafka_topic(binary()) -> ok.
-setup_kafka_topic(Topic) ->
-    case application:get_env(dmt, kafka) of
-        {ok, KafkaConfig} when is_map(KafkaConfig) ->
-            NewConfig = KafkaConfig#{topic => Topic},
-            application:set_env(dmt, kafka, NewConfig);
-        {ok, KafkaConfig} when is_list(KafkaConfig) ->
-            % Convert proplist to map and update topic
-            MapConfig = maps:from_list(KafkaConfig),
-            NewConfig = MapConfig#{topic => Topic},
-            application:set_env(dmt, kafka, NewConfig);
-        undefined ->
-            application:set_env(dmt, kafka, #{
-                enabled => true,
-                topic => Topic
-            })
-    end,
-    ok.
+create_kafka_topics() ->
+    TopicConfig = [
+        #{
+            configs => [],
+            num_partitions => 1,
+            assignments => [],
+            replication_factor => 1,
+            name => ?TEST_TOPIC
+        }
+    ],
+    _ = brod:create_topics(?BROKERS, TopicConfig, #{timeout => 5000}).
+
+delete_kafka_topics() ->
+    _ = brod:delete_topics(?BROKERS, [?TEST_TOPIC], #{}).
