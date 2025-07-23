@@ -47,7 +47,7 @@
 
 %% Initialize per suite
 init_per_suite(Config) ->
-    {Apps, _Ret} = dmt_ct_helper:start_apps([woody, scoper, epg_connector, dmt]),
+    {Apps, _Ret} = dmt_ct_helper:start_apps([woody, scoper, epg_connector, brod, dmt]),
     ApiClient = dmt_ct_helper:create_client(),
     [{client, ApiClient}, {apps, Apps} | Config].
 

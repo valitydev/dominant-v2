@@ -795,18 +795,21 @@ publish_commit_event(Version, Operations, PermanentIDsMaps, AuthorID) ->
                 %% Publish to Kafka
                 case dmt_kafka_publisher:publish_commit_event(HistoricalCommit) of
                     ok ->
-                        logger:debug("Successfully published commit event for version ~p", [Version]);
+                        ok;
                     {error, Reason} ->
-                        logger:warning("Failed to publish commit event for version ~p: ~p", [
+                        logger:error("Failed to publish commit event for version ~p: ~p", [
                             Version, Reason
-                        ])
+                        ]),
+                        {error, Reason}
                 end;
             {error, Reason} ->
-                logger:warning("Failed to get author ~p for Kafka event: ~p", [AuthorID, Reason])
+                logger:error("Failed to get author ~p for Kafka event: ~p", [AuthorID, Reason]),
+                {error, Reason}
         end
     catch
         Class:Error:Stacktrace ->
-            logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace])
+            logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace]),
+            {error, {exception, {Class, Error, Stacktrace}}}
     end.
 
 %% @doc Convert operations to final operations for HistoricalCommit

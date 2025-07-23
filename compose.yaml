@@ -23,7 +23,7 @@ services:
       # holmes:
       #   condition: service_started
       kafka:
-        condition: service_started
+        condition: service_healthy
       # shumway:
       #   condition: service_started
     working_dir: $PWD

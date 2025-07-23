@@ -83,6 +83,7 @@ publish_event_internal(Topic, HistoricalCommit) ->
                 ok;
             {error, Reason} ->
                 logger:error("Failed to publish commit event to Kafka: ~p", [Reason]),
+
                 {error, {kafka_publish_failed, Reason}}
         end
     catch

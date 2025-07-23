@@ -1,6 +1,7 @@
 -module(dmt_kafka_integration_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("brod/include/brod.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
@@ -17,7 +18,7 @@
 %% Test cases
 -export([test_end_to_end_workflow/1]).
 
--define(CLIENT_ID, dmt_kafka_test_client).
+-define(CLIENT_ID, dmt_kafka_client).
 
 %%====================================================================
 %% CT Callbacks
@@ -40,16 +41,9 @@ end_per_suite(_Config) ->
 
     ok.
 
-init_per_testcase(test_end_to_end_workflow, Config) ->
-    %% Start the test consumer to collect events
-    {ok, ConsumerPid} = dmt_test_consumer:start_link(),
-    [{consumer_pid, ConsumerPid} | Config];
 init_per_testcase(_TestCase, Config) ->
     Config.
 
-end_per_testcase(test_end_to_end_workflow, Config) ->
-    ok = dmt_test_consumer:stop(dmt_ct_helper:cfg(consumer_pid, Config)),
-    ok;
 end_per_testcase(_TestCase, _Config) ->
     ok.
 
@@ -59,12 +53,10 @@ end_per_testcase(_TestCase, _Config) ->
 
 test_end_to_end_workflow(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-    ConsumerPid = dmt_ct_helper:cfg(consumer_pid, Config),
 
-    %% Clear any existing events
-    ok = dmt_test_consumer:clear_events(ConsumerPid),
+    {ok, {CurrentOffset, _}} = brod:fetch(?CLIENT_ID, <<"domain_changes">>, 0, 0),
 
-    Email = <<"insert_object_forced_id_success_test">>,
+    Email = <<"test_end_to_end_workflow">>,
     AuthorID = create_author(Email, Client),
 
     %% Insert a test object
@@ -85,13 +77,13 @@ test_end_to_end_workflow(Config) ->
 
     {ok, CommitResponse} = dmt_client:commit(Revision, Operations, AuthorID, Client),
 
-    %% Wait for the Kafka event to be published and consumed
-    Events = dmt_test_consumer:wait_for_events(ConsumerPid, 1, 10000),
+    %% Fetch the event from Kafka
+    {ok, {_NewOffset, Events}} = brod:fetch(?CLIENT_ID, <<"domain_changes">>, 0, CurrentOffset),
 
     %% Validate that we received exactly one event
     ?assertEqual(1, length(Events)),
 
-    [HistoricalCommit] = Events,
+    [HistoricalCommit] = [unmarshal_kafka_event_value(Event) || Event <- Events],
 
     %% Validate the event content
     #domain_conf_v2_HistoricalCommit{
@@ -135,3 +127,31 @@ create_author(Email, Client) ->
         id = AuthorID
     }} = dmt_client:create_author(AuthorParams, Client),
     AuthorID.
+
+unmarshal_kafka_event_value(Event) ->
+    #kafka_message{
+        offset = _Offset,
+        key = _Key,
+        value = Value
+    } = Event,
+    {ok, HistoricalCommit} = deserialize_historical_commit(Value),
+    HistoricalCommit.
+
+deserialize_historical_commit(BinaryData) ->
+    try
+        Codec = thrift_strict_binary_codec:new(BinaryData),
+        Type = {struct, struct, {dmsl_domain_conf_v2_thrift, 'HistoricalCommit'}},
+        case thrift_strict_binary_codec:read(Codec, Type) of
+            {ok, HistoricalCommit, _NewCodec} ->
+                {ok, HistoricalCommit};
+            {error, Reason} ->
+                {error, {thrift_deserialization_failed, Reason}}
+        end
+    catch
+        Class:Error:Stacktrace ->
+            logger:error(
+                "Exception during deserialization: ~p:~p~n~p",
+                [Class, Error, Stacktrace]
+            ),
+            {error, {deserialization_exception, Class, Error}}
+    end.
