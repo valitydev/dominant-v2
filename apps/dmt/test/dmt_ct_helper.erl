@@ -22,7 +22,7 @@
 -type app_name() :: atom().
 -export_type([app_name/0]).
 
--define(BROKERS, [{"kafka", 29092}]).
+-define(BROKERS, [{"kafka", 9092}]).
 -define(TEST_TOPIC, <<"domain_changes">>).
 
 -spec start_app(app_name()) -> {[app_name()], map()}.

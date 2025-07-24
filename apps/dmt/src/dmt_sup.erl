@@ -31,6 +31,7 @@ start_link() ->
 %%                  modules => modules()}   % optional
 init(_) ->
     ok = dbinit(),
+    ok = setup_kafka(),
     ok = setup_damsel_version(),
     {ok, IP} = inet:parse_address(application_get_env(?APP, ip, "::")),
     HealthCheck = enable_health_logging(application_get_env(?APP, health_check, #{})),
@@ -223,4 +224,25 @@ application_get_env(App, Key, Default) ->
     case application:get_env(App, Key) of
         {ok, Value} -> Value;
         undefined -> Default
+    end.
+
+setup_kafka() ->
+    ClientName = dmt_kafka_client,
+    Clients = application_get_env(brod, clients, []),
+    Client = proplists:get_value(ClientName, Clients),
+    Endpoints = proplists:get_value(endpoints, Client),
+    ClientConfig = proplists:delete(endpoints, Client),
+
+    _ = logger:info("Starting Kafka client ~p with endpoints ~p and config ~p", [
+        ClientName, Endpoints, ClientConfig
+    ]),
+    case brod:start_client(Endpoints, ClientName, ClientConfig) of
+        ok ->
+            ok;
+        {error, already_present} ->
+            _ = logger:info("Kafka client ~p already present", [ClientName]),
+            ok;
+        {error, Reason} ->
+            logger:error("Failed to start Kafka client ~p: ~p", [ClientName, Reason]),
+            throw({kafka_client_start_error, Reason})
     end.
