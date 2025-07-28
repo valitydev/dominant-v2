@@ -159,6 +159,9 @@ maybe_get_field_by_index(Field, ObjectStructName, Data) ->
             undefined
     end.
 
+% limit_config is an exception, it's not in domain.thrift
+get_domain_object_schema(limit_config) ->
+    dmsl_limiter_config_thrift:struct_info('LimitConfig');
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),
     case get_field_info(Tag, SchemaInfo) of

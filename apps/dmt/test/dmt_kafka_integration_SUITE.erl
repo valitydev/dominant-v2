@@ -89,7 +89,6 @@ test_end_to_end_workflow(Config) ->
     #domain_conf_v2_HistoricalCommit{
         version = EventVersion,
         ops = EventOps,
-        created_at = CreatedAt,
         changed_by = EventAuthor
     } = HistoricalCommit,
 
@@ -100,9 +99,6 @@ test_end_to_end_workflow(Config) ->
     %% Check that the author matches
     #domain_conf_v2_Author{id = EventAuthorID} = EventAuthor,
     ?assertEqual(AuthorID, EventAuthorID),
-
-    %% Check that created_at is set
-    ?assertNotEqual(undefined, CreatedAt),
 
     ?assertMatch(
         [

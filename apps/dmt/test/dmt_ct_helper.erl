@@ -200,4 +200,4 @@ create_kafka_topics() ->
     _ = brod:create_topics(?BROKERS, TopicConfig, #{timeout => 5000}).
 
 delete_kafka_topics() ->
-    _ = brod:delete_topics(?BROKERS, [?TEST_TOPIC], #{}).
+    _ = brod:delete_topics(?BROKERS, [?TEST_TOPIC], 5000).
