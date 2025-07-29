@@ -2,6 +2,7 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
+-include_lib("damsel/include/dmsl_limiter_config_thrift.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
 %% API
@@ -17,6 +18,7 @@
 
 -export([
     search_basic_test/1,
+    search_limit_config_test/1,
     search_with_type_filter_test/1,
     search_pagination_test/1,
     search_with_version_filter_test/1,
@@ -54,6 +56,7 @@ groups() ->
     [
         {search_tests, [], [
             search_basic_test,
+            search_limit_config_test,
             search_with_type_filter_test,
             search_pagination_test,
             search_with_version_filter_test,
@@ -168,6 +171,41 @@ search_basic_test(Config) ->
     ?assertEqual(
         NameResults, DescResults, "Same object should be found by both name and description"
     ).
+
+search_limit_config_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    AuthorID = create_author(<<"search_limit_config_test@test">>, Client),
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            force_ref = {limit_config, #domain_LimitConfigRef{id = <<"search_limit_config_test">>}},
+            object =
+                {limit_config, #limiter_config_LimitConfig{
+                    processor_type = <<"test">>,
+                    created_at = <<"2021-01-01T00:00:00Z">>,
+                    started_at = <<"2021-01-01T00:00:00Z">>,
+                    shard_size = 100,
+                    time_range_type = {calendar, {day, #limiter_config_TimeRangeTypeCalendarDay{}}},
+                    context_type =
+                        {payment_processing, #limiter_config_LimitContextTypePaymentProcessing{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Version
+    }} = dmt_client:commit(0, Operations, AuthorID, Client),
+
+    SearchRequest = #domain_conf_v2_SearchRequestParams{
+        query = <<"*">>,
+        version = Version,
+        type = limit_config,
+        limit = 10
+    },
+
+    {ok, #domain_conf_v2_SearchResponse{
+        result = Results
+    }} = dmt_client:search_objects(SearchRequest, Client),
+    ?assertEqual(1, length(Results), "Should find exactly one matching object").
 
 % Search with type filter
 search_with_type_filter_test(Config) ->

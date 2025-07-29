@@ -314,9 +314,9 @@ maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
 assemble_operations(Worker, Operations) ->
-    {_, Inserts, Updates1, UpdatedObjects} = lists:foldl(
+    {_, Inserts, Updates1, UpdatedObjects, TmpIDOperations} = lists:foldl(
         fun assemble_operations_parse/2,
-        {Worker, [], #{}, []},
+        {Worker, [], #{}, [], []},
         Operations
     ),
     {_, Updates2} = lists:foldl(
@@ -329,27 +329,38 @@ assemble_operations(Worker, Operations) ->
         {Worker, Updates2},
         maps:values(Updates2)
     ),
-    {Worker, Inserts, Updates3, UpdatedObjects}.
+    {Worker, Inserts, Updates3, UpdatedObjects, TmpIDOperations}.
 
 assemble_operations_parse(
     Operation,
-    {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc}
+    {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc, OperationsAcc}
 ) ->
     case Operation of
         {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
             {ok, NewObject} = dmt_object:new_object(InsertOp),
+            FinalOperation = {Operation, {tmp_id, maps:get(tmp_id, NewObject)}},
 
-            {Worker, [NewObject | InsertsAcc], UpdatesAcc, UpdatedObjectsAcc};
+            {
+                Worker,
+                [NewObject | InsertsAcc],
+                UpdatesAcc,
+                UpdatedObjectsAcc,
+                [FinalOperation | OperationsAcc]
+            };
         {update, #domain_conf_v2_UpdateOp{object = Object}} ->
             {ok, Ref} = get_object_ref(Object),
             {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
             {ok, ObjectUpdate} = dmt_object:update_object(Object, Changes),
-            {Worker, InsertsAcc, UpdatesAcc#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc]};
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc], [
+                Operation | OperationsAcc
+            ]};
         {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
             {ok, OG} = get_original_object_changes(Worker, UpdatesAcc, Ref),
 
             NewObjectState = dmt_object:remove_object(OG),
-            {Worker, InsertsAcc, UpdatesAcc#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc]}
+            {Worker, InsertsAcc, UpdatesAcc#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc], [
+                Operation | OperationsAcc
+            ]}
     end.
 
 assemble_operations_refs_insert(
@@ -467,7 +478,7 @@ commit(Version, Operations, AuthorID) ->
         default_pool,
         fun(Worker) ->
             try
-                {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds} =
+                {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds, TmpIDOperations} =
                     assemble_operations(Worker, Operations),
                 ok = check_versions_sql(Worker, ChangedObjectIds, Version),
                 NewVersion = get_new_version(Worker, AuthorID),
@@ -480,6 +491,9 @@ commit(Version, Operations, AuthorID) ->
                     end,
                     get_target_objects(Worker, maps:values(PermanentIDsMaps), NewVersion)
                 ),
+
+                %% Publish Kafka event after successful transaction
+                ok = publish_commit_event(NewVersion, TmpIDOperations, PermanentIDsMaps, AuthorID),
                 {ok, NewVersion, NewObjects, AuthorID}
             catch
                 Class:ExceptionPattern:Stacktrace ->
@@ -493,8 +507,6 @@ commit(Version, Operations, AuthorID) ->
     ),
     case Result of
         {ok, ResVersion, NewObjects, AuthorID} ->
-            %% Publish Kafka event after successful transaction
-            spawn(fun() -> publish_commit_event(ResVersion, Operations, AuthorID) end),
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
@@ -539,7 +551,7 @@ check_versions_sql(Worker, ChangedObjectIds, Version) ->
             ChangedObjectId0 = dmt_mapper:to_string(ChangedObjectId),
             case dmt_database:get_object_latest_version(Worker, ChangedObjectId0) of
                 {ok, MostRecentVersion} when MostRecentVersion > Version ->
-                    throw({object_update_too_old, {ChangedObjectId, MostRecentVersion}});
+                    throw({error, {object_update_too_old, {ChangedObjectId, MostRecentVersion}}});
                 {ok, _MostRecentVersion} ->
                     ok;
                 {error, not_found} ->
@@ -757,14 +769,16 @@ get_object_ref({Type, {_Object, ID, _Data}}) ->
     {ok, {Type, ID}}.
 
 %% @doc Publish commit event to Kafka after successful transaction
--spec publish_commit_event(Version :: integer(), Operations :: list(), AuthorID :: binary()) -> ok.
-publish_commit_event(Version, Operations, AuthorID) ->
+-spec publish_commit_event(
+    Version :: integer(), Operations :: list(), PermanentIDsMaps :: map(), AuthorID :: binary()
+) -> ok.
+publish_commit_event(Version, Operations, PermanentIDsMaps, AuthorID) ->
     try
         %% Get author information
         case dmt_author:get(AuthorID) of
             {ok, Author} ->
                 %% Convert operations to final operations for HistoricalCommit
-                FinalOps = convert_to_final_operations(Operations),
+                FinalOps = convert_to_final_operations(Operations, PermanentIDsMaps),
 
                 %% Create HistoricalCommit record
                 HistoricalCommit = #domain_conf_v2_HistoricalCommit{
@@ -781,66 +795,40 @@ publish_commit_event(Version, Operations, AuthorID) ->
                 %% Publish to Kafka
                 case dmt_kafka_publisher:publish_commit_event(HistoricalCommit) of
                     ok ->
-                        logger:debug("Successfully published commit event for version ~p", [Version]);
+                        ok;
                     {error, Reason} ->
-                        logger:warning("Failed to publish commit event for version ~p: ~p", [
+                        logger:error("Failed to publish commit event for version ~p: ~p", [
                             Version, Reason
-                        ])
+                        ]),
+                        {error, Reason}
                 end;
             {error, Reason} ->
-                logger:warning("Failed to get author ~p for Kafka event: ~p", [AuthorID, Reason])
+                logger:error("Failed to get author ~p for Kafka event: ~p", [AuthorID, Reason]),
+                {error, Reason}
         end
     catch
         Class:Error:Stacktrace ->
-            logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace])
+            logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace]),
+            {error, {exception, {Class, Error, Stacktrace}}}
     end.
 
 %% @doc Convert operations to final operations for HistoricalCommit
--spec convert_to_final_operations(list()) -> list().
-convert_to_final_operations(Operations) ->
-    lists:map(fun convert_operation_to_final/1, Operations).
+-spec convert_to_final_operations(list(), map()) -> list().
+convert_to_final_operations(Operations, PermanentIDsMaps) ->
+    lists:map(
+        fun(Operation) ->
+            case Operation of
+                {{insert, InsertOp}, {tmp_id, TmpID}} ->
+                    ReflessObject = InsertOp#domain_conf_v2_InsertOp.object,
 
-%% @doc Convert a single operation to final operation
--spec convert_operation_to_final(tuple()) -> tuple().
-convert_operation_to_final({insert, InsertOp}) ->
-    %% For inserts, we create a FinalInsertOp with a placeholder domain object
-    %% In a real implementation, this would need to be the actual object with ID
-    %% after the transaction completes, but for event publishing we use a simplified version
-    ReflessObject = InsertOp#domain_conf_v2_InsertOp.object,
-    ForcedRef = InsertOp#domain_conf_v2_InsertOp.force_ref,
+                    FinalRef = maps:get(TmpID, PermanentIDsMaps),
 
-    %% Create a simplified domain object for the event
-    %% This is a minimal representation - you may want to enhance this
-    DomainObject =
-        case ForcedRef of
-            undefined ->
-                %% If no forced ref, create a placeholder object
-                create_placeholder_domain_object(ReflessObject);
-            Ref ->
-                %% Use the forced reference
-                create_domain_object_with_ref(ReflessObject, Ref)
+                    {insert, #domain_conf_v2_FinalInsertOp{
+                        object = give_data_id(ReflessObject, FinalRef)
+                    }};
+                _ ->
+                    Operation
+            end
         end,
-
-    FinalInsertOp = #domain_conf_v2_FinalInsertOp{object = DomainObject},
-    {insert, FinalInsertOp};
-convert_operation_to_final({update, UpdateOp}) ->
-    %% Update operations remain the same
-    {update, UpdateOp};
-convert_operation_to_final({remove, RemoveOp}) ->
-    %% Remove operations remain the same
-    {remove, RemoveOp}.
-
-%% @doc Create a placeholder domain object for Kafka event
--spec create_placeholder_domain_object(tuple()) -> tuple().
-create_placeholder_domain_object(ReflessObject) ->
-    %% This is a simplified implementation
-    %% In practice, you'd want to properly construct the domain object
-    %% with the actual ID after insert
-    ReflessObject.
-
-%% @doc Create a domain object with the given reference
--spec create_domain_object_with_ref(tuple(), tuple()) -> tuple().
-create_domain_object_with_ref(ReflessObject, _Ref) ->
-    %% This is a simplified implementation
-    %% You would properly construct the domain object with the reference
-    ReflessObject.
+        Operations
+    ).

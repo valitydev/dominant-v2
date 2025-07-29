@@ -128,11 +128,17 @@ get_domain_object_field(Field, {Tag, Struct}) ->
     end.
 
 maybe_get_domain_object_data_field(Field, {Tag, Struct}) ->
-    case get_data({Tag, Struct}) of
+    try get_data({Tag, Struct}) of
         {error, _} ->
             undefined;
         {_, Data} ->
             maybe_extract_field_from_data(Field, Tag, Data)
+    catch
+        Error:Reason:Stacktrace ->
+            logger:warning("Error getting data field ~p for ~p: ~p", [
+                Field, {Tag, Struct}, {Error, Reason, Stacktrace}
+            ]),
+            undefined
     end.
 
 maybe_extract_field_from_data(Field, Tag, Data) ->
@@ -153,6 +159,9 @@ maybe_get_field_by_index(Field, ObjectStructName, Data) ->
             undefined
     end.
 
+% limit_config is an exception, it's not in domain.thrift
+get_domain_object_schema(limit_config) ->
+    dmsl_limiter_config_thrift:struct_info('LimitConfig');
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),
     case get_field_info(Tag, SchemaInfo) of

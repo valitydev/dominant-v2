@@ -47,8 +47,9 @@
 
 %% Initialize per suite
 init_per_suite(Config) ->
-    {Apps, _Ret} = dmt_ct_helper:start_apps([woody, scoper, epg_connector, dmt]),
+    {Apps, _Ret} = dmt_ct_helper:start_apps([woody, scoper, epg_connector, brod, dmt]),
     ApiClient = dmt_ct_helper:create_client(),
+    _ = dmt_ct_helper:create_kafka_topics(),
     [{client, ApiClient}, {apps, Apps} | Config].
 
 %% Cleanup after suite
