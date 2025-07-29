@@ -13,8 +13,6 @@ get_numerical_object_id(calendar, ID) ->
     #domain_CalendarRef{id = ID};
 get_numerical_object_id(bank, ID) ->
     #domain_BankRef{id = ID};
-get_numerical_object_id(contract_template, ID) ->
-    #domain_ContractTemplateRef{id = ID};
 get_numerical_object_id(term_set_hierarchy, ID) ->
     #domain_TermSetHierarchyRef{id = ID};
 get_numerical_object_id(payment_institution, ID) ->
