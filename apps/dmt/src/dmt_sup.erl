@@ -31,7 +31,7 @@ start_link() ->
 %%                  modules => modules()}   % optional
 init(_) ->
     ok = dbinit(),
-    ok = setup_kafka(),
+    ok = setup_kafka(dmt_kafka_publisher:is_kafka_enabled()),
     ok = setup_damsel_version(),
     {ok, IP} = inet:parse_address(application_get_env(?APP, ip, "::")),
     HealthCheck = enable_health_logging(application_get_env(?APP, health_check, #{})),
@@ -226,7 +226,9 @@ application_get_env(App, Key, Default) ->
         undefined -> Default
     end.
 
-setup_kafka() ->
+setup_kafka(false) ->
+    ok;
+setup_kafka(_) ->
     ClientName = dmt_kafka_client,
     Clients = application_get_env(brod, clients, []),
     Client = proplists:get_value(ClientName, Clients),
