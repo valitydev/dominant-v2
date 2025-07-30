@@ -7,6 +7,7 @@
 
 %% API
 -export([
+    is_kafka_enabled/0,
     publish_commit_event/1,
     publish_commit_event/2
 ]).
@@ -20,6 +21,17 @@
 %%====================================================================
 %% API functions
 %%====================================================================
+
+%% @doc Check if Kafka publishing is enabled
+%% Reads from DMT application configuration
+-spec is_kafka_enabled() -> boolean().
+is_kafka_enabled() ->
+    case application:get_env(dmt, kafka) of
+        {ok, #{enabled := Enabled}} when is_boolean(Enabled) ->
+            Enabled;
+        _ ->
+            false
+    end.
 
 %% @doc Publish a commit event to Kafka using the configured topic
 -spec publish_commit_event(HistoricalCommit :: historical_commit()) ->
@@ -45,17 +57,6 @@ publish_commit_event(Topic, HistoricalCommit) ->
 %%====================================================================
 %% Internal functions
 %%====================================================================
-
-%% @doc Check if Kafka publishing is enabled
-%% Reads from DMT application configuration
--spec is_kafka_enabled() -> boolean().
-is_kafka_enabled() ->
-    case application:get_env(dmt, kafka) of
-        {ok, #{enabled := Enabled}} when is_boolean(Enabled) ->
-            Enabled;
-        _ ->
-            false
-    end.
 
 %% @doc Get the configured Kafka topic
 -spec get_kafka_topic() -> binary().
