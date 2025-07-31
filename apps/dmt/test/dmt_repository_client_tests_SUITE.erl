@@ -266,7 +266,7 @@ checkout_snapshot_test(Config) ->
     TermSetHierarchyData = #domain_TermSetHierarchy{
         name = <<"Snapshot Test TermSet">>,
         description = <<"Snapshot Test TermSet Description">>,
-        term_sets = []
+        term_set = #domain_TermSet{}
     },
     InsertOp2 = #domain_conf_v2_InsertOp{object = {term_set_hierarchy, TermSetHierarchyData}},
 
@@ -329,7 +329,7 @@ checkout_snapshot_head_test(Config) ->
     TermSet1Data = #domain_TermSetHierarchy{
         name = <<"Head Test TermSet 1">>,
         description = <<"Initial version">>,
-        term_sets = []
+        term_set = #domain_TermSet{}
     },
     InsertOpCategory1 = {insert, #domain_conf_v2_InsertOp{object = {category, Category1Data}}},
     InsertOpTermSet1 =
