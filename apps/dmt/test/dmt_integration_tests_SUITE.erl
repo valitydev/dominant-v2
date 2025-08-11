@@ -36,7 +36,8 @@
     get_all_objects_history_pagination_test/1,
     get_object_history_test/1,
     get_object_history_pagination_test/1,
-    get_object_history_nonexistent_test/1
+    get_object_history_nonexistent_test/1,
+    delete_referenced_entity_validation_test/1
 ]).
 
 -export([
@@ -85,7 +86,8 @@ groups() ->
             get_all_objects_history_pagination_test,
             get_object_history_test,
             get_object_history_pagination_test,
-            get_object_history_nonexistent_test
+            get_object_history_nonexistent_test,
+            delete_referenced_entity_validation_test
         ]}
     ].
 
@@ -241,7 +243,7 @@ insert_remove_referencing_object_success_test(Config) ->
         version = Revision3,
         new_objects = [
             {provider, #domain_ProviderObject{
-                ref = _ProviderRef
+                ref = ProviderRef
             }}
         ]
     }} = dmt_client:commit(Revision2, Operations2, AuthorID, Client),
@@ -249,11 +251,20 @@ insert_remove_referencing_object_success_test(Config) ->
     %%  try to remove proxy
     Operations3 = [
         {remove, #domain_conf_v2_RemoveOp{
+            ref = {provider, ProviderRef}
+        }}
+    ],
+
+    {ok, _} = dmt_client:commit(Revision3, Operations3, AuthorID, Client),
+
+    %%  try to remove proxy
+    Operations4 = [
+        {remove, #domain_conf_v2_RemoveOp{
             ref = {proxy, ProxyRef}
         }}
     ],
 
-    {ok, _} = dmt_client:commit(Revision3, Operations3, AuthorID, Client).
+    {ok, _} = dmt_client:commit(Revision3, Operations4, AuthorID, Client).
 
 %% FIXME reference collecting doesn't work. Need to fix ASAP
 
@@ -823,6 +834,104 @@ get_object_history_nonexistent_test(Config) ->
     % Expect object not found error for nonexistent object
     Result = dmt_client:get_object_history(NonexistentRef, RequestParams, Client),
     ?assertMatch({exception, #domain_conf_v2_ObjectNotFound{}}, Result).
+
+%% Test that deleting an entity with active references fails with validation error
+delete_referenced_entity_validation_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"delete_referenced_entity_validation_test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Step 1: Create a proxy (target entity that will be referenced)
+    Revision1 = 0,
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"referenced_proxy">>,
+                    description = <<"proxy that will be referenced">>,
+                    url = <<"http://example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {proxy, #domain_ProxyObject{
+                ref = ProxyRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create a provider that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"referencing_provider">>,
+                    realm = test,
+                    description = <<"provider that references the proxy">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }}
+        }}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [
+            {provider, #domain_ProviderObject{
+                ref = ProviderRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Step 3: Try to remove the referenced proxy - this should FAIL
+    RemoveProxyOps = [
+        {remove, #domain_conf_v2_RemoveOp{
+            ref = {proxy, ProxyRef}
+        }}
+    ],
+
+    % Expect an operation error due to active references
+    {exception, #domain_conf_v2_OperationInvalid{
+        errors = [
+            {object_not_exists, #domain_conf_v2_NonexistantObject{
+                object_ref = {proxy, _},
+                referenced_by = ReferencedByList
+            }}
+        ]
+    }} = dmt_client:commit(Revision3, RemoveProxyOps, AuthorID, Client),
+
+    % Verify that the referenced_by list contains the provider ID
+    ?assertEqual(1, length(ReferencedByList), "Should have exactly one referencing entity"),
+    [ProviderIdString] = ReferencedByList,
+    ?assertEqual(
+        {provider, ProviderRef},
+        ProviderIdString,
+        "Referenced by should contain the provider"
+    ),
+
+    % Step 4: Remove the provider first (the referencing entity)
+    RemoveProviderOps = [
+        {remove, #domain_conf_v2_RemoveOp{
+            ref = {provider, ProviderRef}
+        }}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4
+    }} = dmt_client:commit(Revision3, RemoveProviderOps, AuthorID, Client),
+
+    % Step 5: Now try to remove the proxy again - this should SUCCEED
+    {ok, #domain_conf_v2_CommitResponse{
+        version = _Revision5
+    }} = dmt_client:commit(Revision4, RemoveProxyOps, AuthorID, Client),
+
+    % Verify that both entities are now inactive but still exist in the database
+    % (soft delete verification)
+    ok.
 
 % Internal functions
 

@@ -48,8 +48,6 @@ marshall_object(#{
     <<"id">> := ID,
     <<"entity_type">> := Type,
     <<"version">> := Version,
-    <<"references_to">> := ReferencesTo,
-    <<"referenced_by">> := ReferencedBy,
     <<"data">> := Data,
     <<"created_at">> := CreatedAt,
     <<"is_active">> := IsActive
@@ -58,8 +56,6 @@ marshall_object(#{
         from_string(ID),
         Type,
         Version,
-        lists:map(fun from_string/1, ReferencesTo),
-        lists:map(fun from_string/1, ReferencedBy),
         from_string(Data),
         CreatedAt,
         IsActive

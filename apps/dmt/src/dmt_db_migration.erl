@@ -35,12 +35,15 @@ handle_command({ok, {Args, ["new", Name]}}) ->
     ],
     Result =
         case file:write_file(Filename, list_to_binary(C), [exclusive]) of
-            ok -> {ok, "Created migration: ~s~n", [Filename]};
-            {error, Reason} -> {error, "Migration can not be written to file ~s: ~s~n", [Filename, Reason]}
+            ok ->
+                {ok, "Created migration: ~s~n", [Filename]};
+            {error, Reason} ->
+                {error, "Migration can not be written to file ~s: ~s~n", [Filename, Reason]}
         end,
     handle_command_result(Result);
 handle_command({ok, {Args, ["run"]}}) ->
     Available = available_migrations(Args),
+    _ = logger:warning("Available migrations: ~p", [Available]),
     Result = with_connection(
         Args,
         fun(Conn) ->
@@ -237,7 +240,7 @@ dot_env(Args) ->
 report_migrations(_, L) when length(L) == 0 ->
     logger:warning("No migrations were run");
 report_migrations(up, Results) ->
-    [logger:info("Applied ~s: ~p", [V, R]) || {V, R} <- Results],
+    [logger:warning("Applied ~s: ~p", [V, R]) || {V, R} <- Results],
     ok;
 report_migrations(down, Results) ->
     [logger:info("Reverted ~s: ~p", [V, R]) || {V, R} <- Results],

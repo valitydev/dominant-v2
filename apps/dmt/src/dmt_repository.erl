@@ -313,187 +313,119 @@ filter_search_results(Objects) ->
 maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
-assemble_operations(Worker, Operations) ->
-    {_, Inserts, Updates1, UpdatedObjects, TmpIDOperations} = lists:foldl(
-        fun assemble_operations_parse/2,
-        {Worker, [], #{}, [], []},
+commit_operations(Worker, Operations, TargetVersion, NewVersion) ->
+    {_, _, _, RelationsChanges, FinalOperations, NewObjects} = lists:foldl(
+        fun commit_operation/2,
+        {Worker, TargetVersion, NewVersion, #{}, [], []},
         Operations
     ),
-    {_, Updates2} = lists:foldl(
-        fun assemble_operations_refs_insert/2,
-        {Worker, Updates1},
-        Inserts
-    ),
-    {_, Updates3} = lists:foldl(
-        fun assemble_operations_refs_update/2,
-        {Worker, Updates2},
-        maps:values(Updates2)
-    ),
-    {Worker, Inserts, Updates3, UpdatedObjects, TmpIDOperations}.
+    {RelationsChanges, FinalOperations, NewObjects}.
 
-assemble_operations_parse(
-    Operation,
-    {Worker, InsertsAcc, UpdatesAcc, UpdatedObjectsAcc, OperationsAcc}
+commit_operation(
+    {insert, #domain_conf_v2_InsertOp{object = Object, force_ref = ForceRef}},
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
 ) ->
-    case Operation of
-        {insert, #domain_conf_v2_InsertOp{} = InsertOp} ->
-            {ok, NewObject} = dmt_object:new_object(InsertOp),
-            FinalOperation = {Operation, {tmp_id, maps:get(tmp_id, NewObject)}},
+    {Type, _} = Object,
+    References = dmt_object_reference:refless_object_references(Object),
+    Ref = get_insert_object_id(Worker, ForceRef, Type),
+    Data1 = give_data_id(Object, Ref),
+    Ref = insert_object(Worker, Type, Ref, NewVersion, Data1),
+    FinalOperation = {insert, #domain_conf_v2_FinalInsertOp{object = Data1}},
 
-            {
-                Worker,
-                [NewObject | InsertsAcc],
-                UpdatesAcc,
-                UpdatedObjectsAcc,
-                [FinalOperation | OperationsAcc]
-            };
-        {update, #domain_conf_v2_UpdateOp{object = Object}} ->
-            {ok, Ref} = get_object_ref(Object),
-            {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
-            {ok, ObjectUpdate} = dmt_object:update_object(Object, Changes),
-            {Worker, InsertsAcc, UpdatesAcc#{Ref => ObjectUpdate}, [Ref | UpdatedObjectsAcc], [
-                Operation | OperationsAcc
-            ]};
-        {remove, #domain_conf_v2_RemoveOp{ref = Ref}} ->
-            {ok, OG} = get_original_object_changes(Worker, UpdatesAcc, Ref),
-
-            NewObjectState = dmt_object:remove_object(OG),
-            {Worker, InsertsAcc, UpdatesAcc#{Ref => NewObjectState}, [Ref | UpdatedObjectsAcc], [
-                Operation | OperationsAcc
-            ]}
-    end.
-
-assemble_operations_refs_insert(
-    Insert,
-    {Worker, UpdatesAcc}
+    {
+        Worker,
+        TargetVersion,
+        NewVersion,
+        RelationsChanges#{Ref => References},
+        [FinalOperation | FinalOperations],
+        [Data1 | NewObjects]
+    };
+commit_operation(
+    {update, #domain_conf_v2_UpdateOp{object = Object}} = Operation,
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
 ) ->
-    #{
-        tmp_id := TmpID,
-        references := Refers
-    } = Insert,
-    Updates1 = update_objects_added_refs(Worker, {temporary, TmpID}, Refers, UpdatesAcc),
-    {Worker, Updates1}.
+    {ok, {Type, _ID} = Ref} = get_object_ref(Object),
 
-assemble_operations_refs_update(
-    Update,
-    {Worker, UpdatesAcc}
+    ok = validate_latest_version(Worker, TargetVersion, Ref),
+
+    References = dmt_object_reference:domain_object_references(Object),
+    ok = update_object(Worker, Type, Ref, true, Object, NewVersion),
+    {
+        Worker,
+        TargetVersion,
+        NewVersion,
+        RelationsChanges#{Ref => References},
+        [Operation | FinalOperations],
+        NewObjects
+    };
+commit_operation(
+    {remove, #domain_conf_v2_RemoveOp{ref = Ref}} = Operation,
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
 ) ->
-    #{
-        id := Ref,
-        is_active := IsActive
-    } = Update,
-    {ok, Changes} = get_original_object_changes(Worker, UpdatesAcc, Ref),
-    case IsActive of
-        true ->
-            UpdatesAcc1 = update_referenced_objects(Worker, Changes, Update, UpdatesAcc),
-            {Worker, UpdatesAcc1};
-        false ->
-            #{references := OriginalReferences} = Changes,
-            UpdatesAcc1 = update_objects_removed_refs(Worker, Ref, OriginalReferences, UpdatesAcc),
-            {Worker, UpdatesAcc1}
-    end.
+    ok = validate_latest_version(Worker, TargetVersion, Ref),
+    ok = validate_no_references_to_entity(Worker, Ref, NewVersion),
 
-update_referenced_objects(Worker, OriginalObjectChanges, ObjectChanges, Updates) ->
-    #{
-        id := ObjectID,
-        type := ObjectType,
-        references := OriginalReferences
-    } = OriginalObjectChanges,
-    ObjectRef = {ObjectType, ObjectID},
-    #{references := NewVersionReferences} = ObjectChanges,
-    ORS = ordsets:from_list(OriginalReferences),
-    NVRS = ordsets:from_list(NewVersionReferences),
-    AddedRefs = ordsets:subtract(NVRS, ORS),
-    RemovedRefs = ordsets:subtract(ORS, NVRS),
+    {Type, _} = Ref,
+    {ok, #{data := Object}} = get_latest_target_object(Worker, Ref),
+    ok = update_object(Worker, Type, Ref, false, Object, NewVersion),
+    {
+        Worker,
+        TargetVersion,
+        NewVersion,
+        RelationsChanges#{Ref => []},
+        [Operation | FinalOperations],
+        NewObjects
+    }.
 
-    Updates1 = update_objects_added_refs(Worker, ObjectRef, AddedRefs, Updates),
-    update_objects_removed_refs(Worker, ObjectRef, RemovedRefs, Updates1).
+commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
+    maps:foreach(
+        fun(OriginRef, References) ->
+            OriginRef1 = dmt_mapper:to_string(OriginRef),
+            ExistingReferences = dmt_database:get_references(Worker, OriginRef1, NewVersion),
 
-update_objects_added_refs(Worker, ObjectID, AddedRefs, Updates) ->
-    lists:foldl(
-        fun(Ref, Acc) ->
-            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
-            #{
-                referenced_by := RefdBy0
-            } = OG,
-            Acc#{
-                Ref =>
-                    OG#{
-                        referenced_by => [ObjectID | RefdBy0]
-                    }
-            }
-        end,
-        Updates,
-        AddedRefs
-    ).
+            ReferencesSet = ordsets:from_list(References),
+            ExistingReferencesSet = ordsets:from_list(ExistingReferences),
 
-update_objects_removed_refs(Worker, ObjectID, RemovedRefs, Updates) ->
-    lists:foldl(
-        fun(Ref, Acc) ->
-            {ok, OG} = get_referenced_object_changes(Worker, Acc, Ref, ObjectID),
-            #{
-                referenced_by := RefdBy0
-            } = OG,
-            RefdBy1 = ordsets:from_list(RefdBy0),
-            RefdBy2 = ordsets:del_element(ObjectID, RefdBy1),
-            Acc#{
-                Ref =>
-                    OG#{
-                        referenced_by => ordsets:to_list(RefdBy2)
-                    }
-            }
-        end,
-        Updates,
-        RemovedRefs
-    ).
+            NewReferencesSet = ordsets:subtract(ReferencesSet, ExistingReferencesSet),
+            RemovedReferencesSet = ordsets:subtract(ExistingReferencesSet, ReferencesSet),
 
-get_referenced_object_changes(Worker, Updates, ReferencedRef, OriginalRef) ->
-    try get_original_object_changes(Worker, Updates, ReferencedRef) of
-        {ok, Object} ->
-            {ok, Object}
-    catch
-        throw:{error, {operation_error, {conflict, {object_not_found, Ref}}}} = Error ->
-            logger:error(
-                "get_referenced_object_changes ReferencedRef ~p OriginalRef ~p",
-                [Ref, OriginalRef]
+            ok = lists:foreach(
+                fun(NewReference) ->
+                    NewReference1 = dmt_mapper:to_string(NewReference),
+                    _ = logger:warning("Inserting relation ~p -> ~p", [OriginRef1, NewReference1]),
+                    dmt_database:insert_relations(
+                        Worker, OriginRef1, NewReference1, NewVersion, true
+                    )
+                end,
+                ordsets:to_list(NewReferencesSet)
             ),
-            throw(Error)
-    end.
 
-get_original_object_changes(Worker, Updates, Ref) ->
-    case Updates of
-        #{Ref := Object} ->
-            {ok, Object};
-        _ ->
-            case get_latest_target_object(Worker, Ref) of
-                {ok, Res} ->
-                    {ok, Res};
-                {error, {object_not_found, Ref}} ->
-                    throw({error, {operation_error, {conflict, {object_not_found, Ref}}}})
-            end
-    end.
+            ok = lists:foreach(
+                fun(RemovedReference) ->
+                    RemovedReference1 = dmt_mapper:to_string(RemovedReference),
+                    _ = logger:warning("Removing relation ~p -> ~p", [OriginRef1, RemovedReference1]),
+                    dmt_database:insert_relations(
+                        Worker, OriginRef1, RemovedReference1, NewVersion, false
+                    )
+                end,
+                ordsets:to_list(RemovedReferencesSet)
+            )
+        end,
+        RelationsChanges
+    ).
 
 commit(Version, Operations, AuthorID) ->
     Result = epg_pool:transaction(
         default_pool,
         fun(Worker) ->
             try
-                {_Worker, InsertObjects, UpdateObjects0, ChangedObjectIds, TmpIDOperations} =
-                    assemble_operations(Worker, Operations),
-                ok = check_versions_sql(Worker, ChangedObjectIds, Version),
                 NewVersion = get_new_version(Worker, AuthorID),
-                PermanentIDsMaps = insert_objects(Worker, InsertObjects, NewVersion),
-                UpdateObjects1 = replace_tmp_ids_in_updates(UpdateObjects0, PermanentIDsMaps),
-                ok = update_objects(Worker, UpdateObjects1, NewVersion),
-                NewObjects = lists:map(
-                    fun(#{data := Data}) ->
-                        Data
-                    end,
-                    get_target_objects(Worker, maps:values(PermanentIDsMaps), NewVersion)
-                ),
+                {RelationsChanges, FinalOperations, NewObjects} =
+                    commit_operations(Worker, Operations, Version, NewVersion),
+                ok = commit_relations_changes(Worker, NewVersion, RelationsChanges),
 
                 %% Publish Kafka event after successful transaction
-                ok = publish_commit_event(NewVersion, TmpIDOperations, PermanentIDsMaps, AuthorID),
+                ok = publish_commit_event(NewVersion, FinalOperations, AuthorID),
                 {ok, NewVersion, NewObjects, AuthorID}
             catch
                 Class:ExceptionPattern:Stacktrace ->
@@ -518,51 +450,29 @@ commit(Version, Operations, AuthorID) ->
             {error, Error}
     end.
 
-replace_tmp_ids_in_updates(UpdateObjects, PermanentIDsMaps) ->
-    maps:map(
-        fun(_ID, UpdateObject) ->
-            #{
-                referenced_by := ReferencedBy
-            } = UpdateObject,
-            NewReferencedBy = replace_referenced_by_ids(ReferencedBy, PermanentIDsMaps),
-            UpdateObject#{
-                referenced_by => NewReferencedBy
-            }
-        end,
-        UpdateObjects
-    ).
+validate_no_references_to_entity(Worker, Ref, Version) ->
+    Ref1 = dmt_mapper:to_string(Ref),
+    _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref1, Version]),
+    case dmt_database:get_references_to(Worker, Ref1, Version) of
+        [] ->
+            ok;
+        ReferencedBy when length(ReferencedBy) > 0 ->
+            % TODO REPLACE WITH ERROR THAT INDICATES REMOVAL ATTEMPT
+            throw({error, {operation_error, {invalid, {objects_not_exist, [{Ref, ReferencedBy}]}}}})
+    end.
 
-replace_referenced_by_ids(ReferencedBy, PermanentIDsMaps) ->
-    lists:map(
-        fun(Ref) ->
-            case Ref of
-                {temporary, TmpID} ->
-                    maps:get(TmpID, PermanentIDsMaps);
-                _ ->
-                    Ref
-            end
-        end,
-        ReferencedBy
-    ).
-
-check_versions_sql(Worker, ChangedObjectIds, Version) ->
-    lists:foreach(
-        fun(ChangedObjectId) ->
-            ChangedObjectId0 = dmt_mapper:to_string(ChangedObjectId),
-            case dmt_database:get_object_latest_version(Worker, ChangedObjectId0) of
-                {ok, MostRecentVersion} when MostRecentVersion > Version ->
-                    throw({error, {object_update_too_old, {ChangedObjectId, MostRecentVersion}}});
-                {ok, _MostRecentVersion} ->
-                    ok;
-                {error, not_found} ->
-                    {error, {unknown_object_update, ChangedObjectId}};
-                {error, Error} ->
-                    throw(Error)
-            end
-        end,
-        ChangedObjectIds
-    ),
-    ok.
+validate_latest_version(Worker, TargetVersion, Ref) ->
+    Ref0 = dmt_mapper:to_string(Ref),
+    case dmt_database:get_object_latest_version(Worker, Ref0) of
+        {ok, MostRecentVersion} when MostRecentVersion > TargetVersion ->
+            throw({error, {object_update_too_old, {Ref, MostRecentVersion}}});
+        {ok, _MostRecentVersion} ->
+            ok;
+        {error, not_found} ->
+            {error, {unknown_object_update, Ref}};
+        {error, Error} ->
+            throw(Error)
+    end.
 
 get_new_version(Worker, AuthorID) ->
     case dmt_database:get_new_version(Worker, AuthorID) of
@@ -572,38 +482,18 @@ get_new_version(Worker, AuthorID) ->
             throw({error, Reason})
     end.
 
-insert_objects(Worker, InsertObjects, Version) ->
-    lists:foldl(
-        fun(InsertObject, Acc) ->
-            #{
-                tmp_id := TmpID,
-                type := Type,
-                forced_id := ForcedID,
-                references := References,
-                data := Data0
-            } = InsertObject,
-            Ref = get_insert_object_id(Worker, ForcedID, Type),
-            Data1 = give_data_id(Data0, Ref),
-            Ref = insert_object(Worker, Type, Ref, Version, References, Data1),
-            Acc#{TmpID => Ref}
-        end,
-        #{},
-        InsertObjects
-    ).
-
-insert_object(Worker, Type, ID0, Version, References0, Data0) ->
+insert_object(Worker, Type, ID0, Version, Data0) ->
     ID1 = dmt_mapper:to_string(ID0),
     Data1 = dmt_mapper:to_string(Data0),
-    References1 = lists:map(fun dmt_mapper:to_string/1, References0),
     SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
-    case dmt_database:insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) of
+    case dmt_database:insert_object(Worker, ID1, Type, Version, Data1, SearchVector) of
         ok ->
             ID0;
         {error, Reason} ->
             logger:error(
-                "insert_object Type: ~p, ID: ~p, Version: ~p, References: ~p, Data: ~p, SearchVector: ~p",
-                [Type, ID0, Version, References1, Data1, SearchVector]
+                "insert_object Type: ~p, ID: ~p, Version: ~p, Data: ~p, SearchVector: ~p",
+                [Type, ID0, Version, Data1, SearchVector]
             ),
             throw({error, Reason})
     end.
@@ -635,27 +525,9 @@ get_object_field({_, _, _, ref, _}, _Data, {_Type, Ref}) ->
 get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
-update_objects(Worker, UpdateObjects, Version) ->
-    maps:foreach(
-        fun(Ref, UpdateObject) ->
-            #{
-                id := Ref,
-                type := Type,
-                references := References,
-                referenced_by := ReferencedBy,
-                data := Data,
-                is_active := IsActive
-            } = UpdateObject,
-            ok = update_object(Worker, Type, Ref, References, ReferencedBy, IsActive, Data, Version)
-        end,
-        UpdateObjects
-    ).
-
-update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Version) ->
+update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
     Data1 = dmt_mapper:to_string(Data0),
     ID1 = dmt_mapper:to_string(ID0),
-    References1 = lists:map(fun dmt_mapper:to_string/1, References0),
-    ReferencedBy1 = lists:map(fun dmt_mapper:to_string/1, ReferencedBy0),
     SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
     case
@@ -664,8 +536,6 @@ update_object(Worker, Type, ID0, References0, ReferencedBy0, IsActive, Data0, Ve
             ID1,
             Type,
             Version,
-            References1,
-            ReferencedBy1,
             Data1,
             SearchVector,
             IsActive
@@ -699,18 +569,6 @@ get_insert_object_id(Worker, Ref, _Type) ->
         {error, Reason} ->
             throw({error, Reason})
     end.
-
-% get_target_objects(Refs, Version) ->
-%     get_target_objects(default_pool, Refs, Version).
-
-get_target_objects(Worker, Refs, Version) ->
-    lists:map(
-        fun(Ref) ->
-            {ok, Obj} = get_target_object(Worker, Ref, Version),
-            Obj
-        end,
-        Refs
-    ).
 
 get_target_object(Worker, Ref, Version) ->
     Ref0 = dmt_mapper:to_string(Ref),
@@ -768,22 +626,15 @@ get_version(_Worker, Version) ->
 get_object_ref({Type, {_Object, ID, _Data}}) ->
     {ok, {Type, ID}}.
 
-%% @doc Publish commit event to Kafka after successful transaction
--spec publish_commit_event(
-    Version :: integer(), Operations :: list(), PermanentIDsMaps :: map(), AuthorID :: binary()
-) -> ok.
-publish_commit_event(Version, Operations, PermanentIDsMaps, AuthorID) ->
+publish_commit_event(Version, FinalOperations, AuthorID) ->
     try
         %% Get author information
         case dmt_author:get(AuthorID) of
             {ok, Author} ->
-                %% Convert operations to final operations for HistoricalCommit
-                FinalOps = convert_to_final_operations(Operations, PermanentIDsMaps),
-
                 %% Create HistoricalCommit record
                 HistoricalCommit = #domain_conf_v2_HistoricalCommit{
                     version = Version,
-                    ops = FinalOps,
+                    ops = FinalOperations,
                     created_at = dmt_mapper:datetime_to_binary(
                         calendar:system_time_to_universal_time(
                             erlang:system_time(millisecond), millisecond
@@ -811,24 +662,3 @@ publish_commit_event(Version, Operations, PermanentIDsMaps, AuthorID) ->
             logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace]),
             {error, {exception, {Class, Error, Stacktrace}}}
     end.
-
-%% @doc Convert operations to final operations for HistoricalCommit
--spec convert_to_final_operations(list(), map()) -> list().
-convert_to_final_operations(Operations, PermanentIDsMaps) ->
-    lists:map(
-        fun(Operation) ->
-            case Operation of
-                {{insert, InsertOp}, {tmp_id, TmpID}} ->
-                    ReflessObject = InsertOp#domain_conf_v2_InsertOp.object,
-
-                    FinalRef = maps:get(TmpID, PermanentIDsMaps),
-
-                    {insert, #domain_conf_v2_FinalInsertOp{
-                        object = give_data_id(ReflessObject, FinalRef)
-                    }};
-                _ ->
-                    Operation
-            end
-        end,
-        Operations
-    ).

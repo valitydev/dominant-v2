@@ -20,13 +20,10 @@ refless_object_references(DomainObject) ->
     references(Data, DataType).
 
 get_refless_data({Tag, Struct}) ->
-    {Struct, get_refless_object_schema(Tag)}.
-
-get_refless_object_schema(Tag) ->
     SchemaInfo = get_struct_info('ReflessDomainObject'),
     case get_field_info(Tag, SchemaInfo) of
-        {_, _, {struct, _, {_, ObjectStructName}}, _, _} ->
-            {ObjectStructName, get_struct_info(ObjectStructName)};
+        {_, _, DataType, _, _} ->
+            {Struct, DataType};
         false ->
             erlang:error({field_info_not_found, Tag, SchemaInfo})
     end.
@@ -74,7 +71,9 @@ references(Object, DataType) ->
 
 references(undefined, _StructInfo, Refs) ->
     Refs;
-references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when is_list(FieldsInfo) ->
+references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when
+    is_list(FieldsInfo)
+->
     case get_field_info(Tag, StructInfo) of
         false ->
             erlang:error({<<"field info not found">>, Tag, StructInfo});
@@ -160,3 +159,52 @@ get_struct_info(StructName) ->
 
 get_field_info(Field, {struct, _StructType, FieldsInfo}) ->
     lists:keyfind(Field, 4, FieldsInfo).
+
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("damsel/include/dmsl_domain_thrift.hrl").
+
+-spec test() -> _.
+
+-spec reference_extraction_test() -> _.
+reference_extraction_test() ->
+    ProxyRef = #domain_ProxyRef{
+        id = 1
+    },
+    ProviderObject =
+        {provider, #domain_Provider{
+            name = <<"referencing_provider">>,
+            realm = test,
+            description = <<"provider that references the proxy">>,
+            proxy = #domain_Proxy{
+                ref = ProxyRef,
+                additional = #{}
+            }
+        }},
+
+    _ = ?assertEqual([{proxy, ProxyRef}], refless_object_references(ProviderObject)).
+
+-spec domain_object_reference_extraction_test() -> _.
+domain_object_reference_extraction_test() ->
+    ProxyRef = #domain_ProxyRef{
+        id = 1
+    },
+    ProviderObject =
+        {provider, #domain_ProviderObject{
+            ref = #domain_ProviderRef{id = 1},
+            data =
+                #domain_Provider{
+                    name = <<"referencing_provider">>,
+                    realm = test,
+                    description = <<"provider that references the proxy">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }
+        }},
+
+    _ = ?assertEqual([{proxy, ProxyRef}], domain_object_references(ProviderObject)).
+
+-endif.

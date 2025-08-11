@@ -3,8 +3,11 @@
 -export([get_latest_version/1]).
 -export([get_object_latest_version/2]).
 -export([get_new_version/2]).
--export([insert_object/7]).
--export([update_object/9]).
+-export([insert_object/6]).
+-export([update_object/7]).
+-export([insert_relations/5]).
+-export([get_references/3]).
+-export([get_references_to/3]).
 -export([get_next_sequence/2]).
 -export([check_if_object_id_active/2]).
 -export([check_version_exists/2]).
@@ -86,15 +89,15 @@ clean_utf8_string(String) ->
             CleanBinary
     end.
 
-insert_object(Worker, ID1, Type, Version, References1, Data1, SearchVector) ->
+insert_object(Worker, ID1, Type, Version, Data1, SearchVector) ->
     Query = """
     INSERT INTO entity
-    (id, entity_type, version, references_to, referenced_by, data, search_vector, is_active)
-    VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), TRUE);
+    (id, entity_type, version, data, search_vector, is_active)
+    VALUES ($1, $2, $3, $4, to_tsvector('multilingual', $5), TRUE);
     """,
 
     CleanSearchVector = clean_utf8_string(SearchVector),
-    Params = [ID1, Type, Version, References1, [], Data1, CleanSearchVector],
+    Params = [ID1, Type, Version, Data1, CleanSearchVector],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
@@ -109,24 +112,102 @@ update_object(
     ID1,
     Type,
     Version,
-    References1,
-    ReferencedBy1,
     Data1,
     SearchVector,
     IsActive
 ) ->
     Query = """
     INSERT INTO entity
-    (id, entity_type, version, references_to, referenced_by, data, search_vector, is_active)
-    VALUES ($1, $2, $3, $4, $5, $6, to_tsvector('multilingual', $7), $8);
+    (id, entity_type, version, data, search_vector, is_active)
+    VALUES ($1, $2, $3, $4, to_tsvector('multilingual', $5), $6);
     """,
 
     CleanSearchVector = clean_utf8_string(SearchVector),
-    Params = [ID1, Type, Version, References1, ReferencedBy1, Data1, CleanSearchVector, IsActive],
+    Params = [ID1, Type, Version, Data1, CleanSearchVector, IsActive],
 
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
             ok;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
+    Query = """
+    INSERT INTO entity_relation
+    (source_entity_id, target_entity_id, version, is_active)
+    VALUES ($1, $2, $3, $4)
+    """,
+    Params = [SourceID, TargetID, Version, IsActive],
+
+    case epg_pool:query(Worker, Query, Params) of
+        {ok, 1} ->
+            ok;
+        {error, Reason} ->
+            logger:error("Error inserting entity relations: ~p~nParams: ~p", [Reason, Params]),
+            {error, Reason}
+    end.
+
+get_references(Worker, ID, Version) ->
+    Query = """
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity relation at or before the requested version
+        SELECT source_entity_id, MAX(version) AS max_version_at_time
+        FROM entity_relation
+        WHERE version <= $1
+        GROUP BY source_entity_id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.source_entity_id, e.is_active
+        FROM entity_relation e
+        INNER JOIN LatestVersionAtRequestedTime lv
+        ON e.source_entity_id = lv.source_entity_id AND e.version = lv.max_version_at_time
+    )
+    SELECT DISTINCT target_entity_id
+    FROM entity_relation e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.source_entity_id = las.source_entity_id
+    WHERE e.source_entity_id = $2
+    AND e.version <= $1
+    AND las.is_active = TRUE
+    """,
+
+    Params = [Version, ID],
+    case epg_pool:query(Worker, Query, Params) of
+        {ok, _Columns, Refs} ->
+            lists:map(fun({Res}) -> dmt_mapper:from_string(Res) end, Refs);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+get_references_to(Worker, ID, Version) ->
+    Query = """
+    WITH LatestVersionAtRequestedTime AS (
+        -- Find the latest version for each entity relation at or before the requested version
+        SELECT target_entity_id, MAX(version) AS max_version_at_time
+        FROM entity_relation
+        WHERE version <= $1
+        GROUP BY target_entity_id
+    ),
+    ActiveStatusAtRequestedTime AS (
+        -- Get the is_active status at the requested time
+        SELECT e.target_entity_id, e.is_active
+        FROM entity_relation e
+        INNER JOIN LatestVersionAtRequestedTime lv
+        ON e.target_entity_id = lv.target_entity_id AND e.version = lv.max_version_at_time
+    )
+    SELECT DISTINCT source_entity_id
+    FROM entity_relation e
+    INNER JOIN ActiveStatusAtRequestedTime las ON e.target_entity_id = las.target_entity_id
+    WHERE e.target_entity_id = $2
+    AND e.version <= $1
+    AND las.is_active = TRUE
+    """,
+
+    Params = [Version, ID],
+    case epg_pool:query(Worker, Query, Params) of
+        {ok, _Columns, Refs} ->
+            lists:map(fun({Res}) -> dmt_mapper:from_string(Res) end, Refs);
         {error, Reason} ->
             {error, Reason}
     end.
@@ -200,8 +281,6 @@ get_object(Worker, ID0, Version) ->
     SELECT e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
@@ -243,8 +322,6 @@ get_objects(Worker, IDs, Version) ->
     SELECT DISTINCT ON (e.id) e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
@@ -275,8 +352,6 @@ get_latest_object(Worker, ID0) ->
     SELECT e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
@@ -339,8 +414,6 @@ get_object_history(Worker, Ref, Limit, Offset) ->
     SELECT e.id,
                e.entity_type,
                e.version,
-               e.references_to,
-               e.referenced_by,
                e.data,
                e.is_active,
                e.created_at
@@ -393,8 +466,6 @@ get_all_objects_history(Worker, Limit, Offset) ->
     SELECT e.id,
                e.entity_type,
                e.version,
-               e.references_to,
-               e.referenced_by,
                e.data,
                e.is_active,
                e.created_at
@@ -465,8 +536,6 @@ search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
     SELECT DISTINCT ON (e.id) e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
@@ -526,8 +595,6 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     SELECT DISTINCT ON (e.id) e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
@@ -669,8 +736,6 @@ get_all_objects(Worker, Version) ->
     SELECT e.id,
            e.entity_type,
            e.version,
-           e.references_to,
-           e.referenced_by,
            e.data,
            e.is_active,
            e.created_at
