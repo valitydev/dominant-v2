@@ -6,7 +6,7 @@
 -export([insert_object/6]).
 -export([update_object/7]).
 -export([insert_relations/5]).
--export([get_references/3]).
+-export([get_referenced_by/3]).
 -export([get_references_to/3]).
 -export([get_next_sequence/2]).
 -export([check_if_object_id_active/2]).
@@ -148,7 +148,7 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
             {error, Reason}
     end.
 
-get_references(Worker, ID, Version) ->
+get_references_to(Worker, ID, Version) ->
     Query = """
     WITH LatestVersionAtRequestedTime AS (
         -- Find the latest version for each entity relation at or before the requested version
@@ -180,7 +180,7 @@ get_references(Worker, ID, Version) ->
             {error, Reason}
     end.
 
-get_references_to(Worker, ID, Version) ->
+get_referenced_by(Worker, ID, Version) ->
     Query = """
     WITH LatestVersionAtRequestedTime AS (
         -- Find the latest version for each entity relation at or before the requested version

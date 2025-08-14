@@ -6,6 +6,7 @@
 %% API
 -export([
     checkout_object/3,
+    checkout_object_with_references/3,
     checkout_objects/3,
     checkout_snapshot/2,
     get_object_history/3,
@@ -26,6 +27,10 @@
 checkout_object(VersionRef, ObjectRef, Client) ->
     Args = [VersionRef, ObjectRef],
     dmt_client_api:call(repository_client, 'CheckoutObject', Args, Client).
+
+checkout_object_with_references(VersionRef, ObjectRef, Client) ->
+    Args = [VersionRef, ObjectRef],
+    dmt_client_api:call(repository_client, 'CheckoutObjectWithReferences', Args, Client).
 
 checkout_objects(VersionRef, ObjectRefs, Client) ->
     Args = [VersionRef, ObjectRefs],

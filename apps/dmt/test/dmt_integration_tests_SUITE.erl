@@ -37,7 +37,8 @@
     get_object_history_test/1,
     get_object_history_pagination_test/1,
     get_object_history_nonexistent_test/1,
-    delete_referenced_entity_validation_test/1
+    delete_referenced_entity_validation_test/1,
+    checkout_object_with_references_test/1
 ]).
 
 -export([
@@ -87,7 +88,8 @@ groups() ->
             get_object_history_test,
             get_object_history_pagination_test,
             get_object_history_nonexistent_test,
-            delete_referenced_entity_validation_test
+            delete_referenced_entity_validation_test,
+            checkout_object_with_references_test
         ]}
     ].
 
@@ -932,6 +934,184 @@ delete_referenced_entity_validation_test(Config) ->
     % Verify that both entities are now inactive but still exist in the database
     % (soft delete verification)
     ok.
+
+%% Test CheckoutObjectWithReferences functionality
+checkout_object_with_references_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"checkout_object_with_references_test">>,
+    AuthorID = create_author(Email, Client),
+
+    Revision1 = 0,
+
+    % Step 1: Create a proxy object (the referenced object)
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"test_proxy">>,
+                    description = <<"proxy for checkout with references test">>,
+                    url = <<"http://test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {proxy, #domain_ProxyObject{
+                ref = ProxyRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create a provider object that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"test_provider">>,
+                    realm = test,
+                    description = <<"provider for checkout with references test">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [
+            {provider, #domain_ProviderObject{
+                ref = ProviderRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Step 3: Create a category object that doesn't reference anything (for comparison)
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"test_category">>,
+                    description = <<"category for checkout with references test">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4,
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = CategoryRef
+            }}
+        ]
+    }} = dmt_client:commit(Revision3, CategoryOps, AuthorID, Client),
+
+    % Step 4: Test checkout_object_with_references for the provider (should have references_to)
+    {ok, #domain_conf_v2_VersionedObjectWithReferences{
+        object = ProviderVersionedObject,
+        referenced_by = ProviderReferencedBy,
+        references_to = ProviderReferencesTo
+    }} = dmt_client:checkout_object_with_references(
+        {version, Revision4}, {provider, ProviderRef}, Client
+    ),
+
+    % Verify the main object is correct
+    #domain_conf_v2_VersionedObject{
+        object = {provider, ProviderData}
+    } = ProviderVersionedObject,
+    ?assertEqual(ProviderRef, ProviderData#domain_ProviderObject.ref),
+
+    % Verify the provider references the proxy (references_to should contain proxy)
+    ?assertEqual(
+        1, length(ProviderReferencesTo), "Provider should reference one object (the proxy)"
+    ),
+    [ReferencedProxyObject] = ProviderReferencesTo,
+    #domain_conf_v2_VersionedObject{
+        object = {proxy, ReferencedProxyData}
+    } = ReferencedProxyObject,
+    ?assertEqual(ProxyRef, ReferencedProxyData#domain_ProxyObject.ref),
+
+    % Verify no objects reference the provider yet (referenced_by should be empty)
+    ?assertEqual([], ProviderReferencedBy, "Provider should not be referenced by any objects yet"),
+
+    % Step 5: Test checkout_object_with_references for the proxy (should have referenced_by)
+    {ok, #domain_conf_v2_VersionedObjectWithReferences{
+        object = ProxyVersionedObject,
+        referenced_by = ProxyReferencedBy,
+        references_to = ProxyReferencesTo
+    }} = dmt_client:checkout_object_with_references(
+        {version, Revision4}, {proxy, ProxyRef}, Client
+    ),
+
+    % Verify the main object is correct
+    #domain_conf_v2_VersionedObject{
+        object = {proxy, ProxyData}
+    } = ProxyVersionedObject,
+    ?assertEqual(ProxyRef, ProxyData#domain_ProxyObject.ref),
+
+    % Verify the proxy is referenced by the provider (referenced_by should contain provider)
+    ?assertEqual(
+        1, length(ProxyReferencedBy), "Proxy should be referenced by one object (the provider)"
+    ),
+    [ReferencingProviderObject] = ProxyReferencedBy,
+    #domain_conf_v2_VersionedObject{
+        object = {provider, ReferencingProviderData}
+    } = ReferencingProviderObject,
+    ?assertEqual(ProviderRef, ReferencingProviderData#domain_ProviderObject.ref),
+
+    % Verify the proxy doesn't reference any other objects (references_to should be empty)
+    ?assertEqual([], ProxyReferencesTo, "Proxy should not reference any other objects"),
+
+    % Step 6: Test checkout_object_with_references for the category (should have empty references)
+    {ok, #domain_conf_v2_VersionedObjectWithReferences{
+        object = CategoryVersionedObject,
+        referenced_by = CategoryReferencedBy,
+        references_to = CategoryReferencesTo
+    }} = dmt_client:checkout_object_with_references(
+        {version, Revision4}, {category, CategoryRef}, Client
+    ),
+
+    % Verify the main object is correct
+    #domain_conf_v2_VersionedObject{
+        object = {category, CategoryData}
+    } = CategoryVersionedObject,
+    ?assertEqual(CategoryRef, CategoryData#domain_CategoryObject.ref),
+
+    % Verify the category has no references (both lists should be empty)
+    ?assertEqual([], CategoryReferencedBy, "Category should not be referenced by any objects"),
+    ?assertEqual([], CategoryReferencesTo, "Category should not reference any other objects"),
+
+    % Step 7: Test with head version reference
+    {ok, #domain_conf_v2_VersionedObjectWithReferences{
+        object = HeadProviderVersionedObject,
+        referenced_by = HeadProviderReferencedBy,
+        references_to = HeadProviderReferencesTo
+    }} = dmt_client:checkout_object_with_references(
+        {head, #domain_conf_v2_Head{}}, {provider, ProviderRef}, Client
+    ),
+
+    % Verify head version returns the same data as specific version
+    ?assertEqual(ProviderVersionedObject, HeadProviderVersionedObject),
+    ?assertEqual(ProviderReferencedBy, HeadProviderReferencedBy),
+    ?assertEqual(ProviderReferencesTo, HeadProviderReferencesTo),
+
+    % Step 8: Test error handling - nonexistent object
+    NonexistentRef = {category, #domain_CategoryRef{id = 999999}},
+    {exception, #domain_conf_v2_ObjectNotFound{}} =
+        dmt_client:checkout_object_with_references(
+            {version, Revision4}, NonexistentRef, Client
+        ),
+
+    % Step 9: Test error handling - nonexistent version
+    {exception, #domain_conf_v2_VersionNotFound{}} =
+        dmt_client:checkout_object_with_references(
+            {version, 999999}, {provider, ProviderRef}, Client
+        ).
 
 % Internal functions
 

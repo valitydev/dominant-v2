@@ -6,6 +6,7 @@
 
 -export([commit/3]).
 -export([get_object/3]).
+-export([get_object_with_references/3]).
 -export([get_objects/3]).
 -export([get_snapshot/2]).
 -export([get_latest_version/0]).
@@ -20,7 +21,6 @@
 get_object(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
-            % io:format("get_object Data ~p~n", [Data]),
             {ok, #domain_conf_v2_VersionedObject{
                 info = marshall_to_object_info(Object),
                 object = Data
@@ -47,6 +47,36 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+get_object_with_references(Worker, {version, V}, ObjectRef) ->
+    case get_target_object(Worker, ObjectRef, V) of
+        {ok, #{data := Data} = Object} ->
+            ObjectRefString = dmt_mapper:to_string(ObjectRef),
+            ReferencedByRefs = dmt_database:get_referenced_by(Worker, ObjectRefString, V),
+            ReferencesToRefs = dmt_database:get_references_to(Worker, ObjectRefString, V),
+
+            {ok, ReferencedBy} = get_objects(
+                Worker, {version, V}, ordsets:from_list(ReferencedByRefs)
+            ),
+            {ok, ReferencesTo} = get_objects(
+                Worker, {version, V}, ordsets:from_list(ReferencesToRefs)
+            ),
+
+            {ok, #domain_conf_v2_VersionedObjectWithReferences{
+                object =
+                    #domain_conf_v2_VersionedObject{
+                        info = marshall_to_object_info(Object),
+                        object = Data
+                    },
+                referenced_by = ReferencedBy,
+                references_to = ReferencesTo
+            }};
+        {error, Reason} ->
+            {error, Reason}
+    end;
+get_object_with_references(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
+    {ok, Version} = dmt_database:get_latest_version(Worker),
+    get_object_with_references(Worker, {version, Version}, ObjectRef).
 
 get_objects(Worker, {version, V}, ObjectRefs) ->
     case dmt_database:check_version_exists(Worker, V) of
@@ -113,6 +143,16 @@ get_snapshot(Worker, {version, Version}) ->
         false ->
             {error, version_not_found}
     end.
+
+get_related_graph(Request) ->
+    #domain_conf_v2_RelatedGraphRequest{
+        ref = ObjectRef,
+        version = Version,
+        type = Type,
+        include_inbound = IncludeInbound,
+        include_outbound = IncludeOutbound,
+        depth = Depth
+    } = Request.
 
 sort_objects_by_ids(Objects, IDs) ->
     % Create a map of ID -> Object for easier lookup
@@ -381,7 +421,7 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
     maps:foreach(
         fun(OriginRef, References) ->
             OriginRef1 = dmt_mapper:to_string(OriginRef),
-            ExistingReferences = dmt_database:get_references(Worker, OriginRef1, NewVersion),
+            ExistingReferences = dmt_database:get_references_to(Worker, OriginRef1, NewVersion),
 
             ReferencesSet = ordsets:from_list(References),
             ExistingReferencesSet = ordsets:from_list(ExistingReferences),
@@ -392,7 +432,6 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
             ok = lists:foreach(
                 fun(NewReference) ->
                     NewReference1 = dmt_mapper:to_string(NewReference),
-                    _ = logger:warning("Inserting relation ~p -> ~p", [OriginRef1, NewReference1]),
                     dmt_database:insert_relations(
                         Worker, OriginRef1, NewReference1, NewVersion, true
                     )
@@ -403,7 +442,6 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
             ok = lists:foreach(
                 fun(RemovedReference) ->
                     RemovedReference1 = dmt_mapper:to_string(RemovedReference),
-                    _ = logger:warning("Removing relation ~p -> ~p", [OriginRef1, RemovedReference1]),
                     dmt_database:insert_relations(
                         Worker, OriginRef1, RemovedReference1, NewVersion, false
                     )
@@ -453,7 +491,7 @@ commit(Version, Operations, AuthorID) ->
 validate_no_references_to_entity(Worker, Ref, Version) ->
     Ref1 = dmt_mapper:to_string(Ref),
     _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref1, Version]),
-    case dmt_database:get_references_to(Worker, Ref1, Version) of
+    case dmt_database:get_referenced_by(Worker, Ref1, Version) of
         [] ->
             ok;
         ReferencedBy when length(ReferencedBy) > 0 ->
