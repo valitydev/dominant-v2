@@ -38,7 +38,13 @@
     get_object_history_pagination_test/1,
     get_object_history_nonexistent_test/1,
     delete_referenced_entity_validation_test/1,
-    checkout_object_with_references_test/1
+    checkout_object_with_references_test/1,
+    get_related_graph_basic_test/1,
+    get_related_graph_depth_test/1,
+    get_related_graph_inbound_outbound_test/1,
+    get_related_graph_type_filter_test/1,
+    get_related_graph_complex_chain_test/1,
+    get_related_graph_error_handling_test/1
 ]).
 
 -export([
@@ -89,7 +95,13 @@ groups() ->
             get_object_history_pagination_test,
             get_object_history_nonexistent_test,
             delete_referenced_entity_validation_test,
-            checkout_object_with_references_test
+            checkout_object_with_references_test,
+            get_related_graph_basic_test,
+            get_related_graph_depth_test,
+            get_related_graph_inbound_outbound_test,
+            get_related_graph_type_filter_test,
+            get_related_graph_complex_chain_test,
+            get_related_graph_error_handling_test
         ]}
     ].
 
@@ -1112,6 +1124,515 @@ checkout_object_with_references_test(Config) ->
         dmt_client:checkout_object_with_references(
             {version, 999999}, {provider, ProviderRef}, Client
         ).
+
+%% Test GetRelatedGraph functionality - Basic test
+get_related_graph_basic_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_related_graph_basic_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a simple relationship chain: Category -> Provider -> Proxy
+    % Step 1: Create a proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"basic_test_proxy">>,
+                    description = <<"proxy for basic graph test">>,
+                    url = <<"http://basic-test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create a provider that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"basic_test_provider">>,
+                    realm = test,
+                    description = <<"provider for basic graph test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Step 3: Test GetRelatedGraph from provider perspective
+    Request = #domain_conf_v2_RelatedGraphRequest{
+        ref = {provider, ProviderRef},
+        version = Revision3,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = Nodes,
+        edges = Edges
+    }} = dmt_client:get_related_graph(Request, Client),
+
+    % Verify nodes
+    ?assert(length(Nodes) >= 2, "Should have at least 2 nodes (provider and proxy)"),
+    NodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- Nodes],
+    ?assert(lists:member({provider, ProviderRef}, NodeRefs), "Should contain provider node"),
+    ?assert(lists:member({proxy, ProxyRef}, NodeRefs), "Should contain proxy node"),
+
+    % Verify edges
+    _ = io:format("Edges: ~p~n", [Edges]),
+    ?assert(length(Edges) >= 1, "Should have at least 1 edge"),
+    EdgeSourceTargets = [
+        {Source, Target}
+     || #domain_conf_v2_ReferenceEdge{source = Source, target = Target} <- Edges
+    ],
+    ?assert(
+        lists:member({{provider, ProviderRef}, {proxy, ProxyRef}}, EdgeSourceTargets),
+        "Should have edge from provider to proxy"
+    ).
+
+%% Test GetRelatedGraph depth traversal
+get_related_graph_depth_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_related_graph_depth_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a chain: Provider -> Proxy -> Category
+    % Step 1: Create category
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"depth_test_category">>,
+                    description = <<"category for depth test">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{category, #domain_CategoryObject{ref = _CategoryRef}}]
+    }} = dmt_client:commit(Revision1, CategoryOps, AuthorID, Client),
+
+    % Step 2: Create proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"depth_test_proxy">>,
+                    description = <<"proxy for depth test">>,
+                    url = <<"http://depth-test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision2, ProxyOps, AuthorID, Client),
+
+    % Step 3: Create provider that references proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"depth_test_provider">>,
+                    realm = test,
+                    description = <<"provider for depth test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision3, ProviderOps, AuthorID, Client),
+
+    % Test with depth 1 - should only get direct neighbors
+    RequestDepth1 = #domain_conf_v2_RelatedGraphRequest{
+        ref = {provider, ProviderRef},
+        version = Revision4,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{nodes = NodesDepth1}} = dmt_client:get_related_graph(
+        RequestDepth1, Client
+    ),
+
+    NodeRefsDepth1 = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- NodesDepth1],
+    ?assert(
+        lists:member({provider, ProviderRef}, NodeRefsDepth1),
+        "Depth 1: Should contain provider node"
+    ),
+    ?assert(lists:member({proxy, ProxyRef}, NodeRefsDepth1), "Depth 1: Should contain proxy node"),
+
+    % Test with depth 2 - should get deeper connections
+    RequestDepth2 = #domain_conf_v2_RelatedGraphRequest{
+        ref = {provider, ProviderRef},
+        version = Revision4,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 2
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{nodes = NodesDepth2}} = dmt_client:get_related_graph(
+        RequestDepth2, Client
+    ),
+
+    ?assert(
+        length(NodesDepth2) >= length(NodesDepth1), "Depth 2 should have >= nodes than depth 1"
+    ).
+
+%% Test GetRelatedGraph inbound/outbound filtering
+get_related_graph_inbound_outbound_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_related_graph_inbound_outbound_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a bidirectional scenario: Category -> Provider -> Proxy
+    % Step 1: Create proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"inbound_outbound_test_proxy">>,
+                    description = <<"proxy for inbound/outbound test">>,
+                    url = <<"http://inbound-outbound-test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create provider that references proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"inbound_outbound_test_provider">>,
+                    realm = test,
+                    description = <<"provider for inbound/outbound test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = FinalRevision,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Test outbound only (from provider perspective)
+    OutboundRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {provider, ProviderRef},
+        version = FinalRevision,
+        type = undefined,
+        include_inbound = false,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{nodes = OutboundNodes}} = dmt_client:get_related_graph(
+        OutboundRequest, Client
+    ),
+
+    OutboundNodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- OutboundNodes],
+    ?assert(
+        lists:member({proxy, ProxyRef}, OutboundNodeRefs),
+        "Outbound: Should contain proxy (referenced by provider)"
+    ),
+
+    % Test inbound only (from proxy perspective)
+    InboundRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {proxy, ProxyRef},
+        version = FinalRevision,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = false,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{nodes = InboundNodes}} = dmt_client:get_related_graph(
+        InboundRequest, Client
+    ),
+
+    InboundNodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- InboundNodes],
+    ?assert(
+        lists:member({provider, ProviderRef}, InboundNodeRefs),
+        "Inbound: Should contain provider (references proxy)"
+    ).
+
+%% Test GetRelatedGraph type filtering
+get_related_graph_type_filter_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_related_graph_type_filter_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a mixed environment with different types: Category, Provider, Proxy
+    % Step 1: Create proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"type_filter_test_proxy">>,
+                    description = <<"proxy for type filter test">>,
+                    url = <<"http://type-filter-test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create provider that references proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"type_filter_test_provider">>,
+                    realm = test,
+                    description = <<"provider for type filter test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Step 3: Create category (unrelated to test filtering)
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"type_filter_test_category">>,
+                    description = <<"category for type filter test">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = FinalRevision,
+        new_objects = [{category, #domain_CategoryObject{ref = CategoryRef}}]
+    }} = dmt_client:commit(Revision3, CategoryOps, AuthorID, Client),
+
+    % Test filtering by provider type only
+    ProviderFilterRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {provider, ProviderRef},
+        version = FinalRevision,
+        type = provider,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 2
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{nodes = ProviderFilterNodes}} = dmt_client:get_related_graph(
+        ProviderFilterRequest, Client
+    ),
+
+    ProviderFilterNodeRefs = [
+        Ref
+     || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- ProviderFilterNodes
+    ],
+    ?assert(
+        lists:member({provider, ProviderRef}, ProviderFilterNodeRefs),
+        "Provider filter: Should contain provider"
+    ),
+    % Should not contain proxy or category since we filtered by provider type
+    ?assertNot(
+        lists:member({proxy, ProxyRef}, ProviderFilterNodeRefs),
+        "Provider filter: Should not contain proxy"
+    ),
+    ?assertNot(
+        lists:member({category, CategoryRef}, ProviderFilterNodeRefs),
+        "Provider filter: Should not contain category"
+    ).
+
+%% Test GetRelatedGraph with complex relationship chains
+get_related_graph_complex_chain_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_related_graph_complex_chain_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a more complex graph: A -> B -> C and A -> D -> C (diamond pattern)
+    % Create business schedules (A, D), categories (B), and proxy (C)
+
+    % Step 1: Create proxy (C)
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"complex_test_proxy_c">>,
+                    description = <<"proxy C for complex test">>,
+                    url = <<"http://complex-test-proxy-c.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRefC}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Step 2: Create a provider (B) that references proxy (C)
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"complex_test_provider_b">>,
+                    realm = test,
+                    description = <<"provider B for complex test">>,
+                    proxy = #domain_Proxy{ref = ProxyRefC, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRefB}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Step 3: Create another provider (D) that also references proxy (C)
+    ProviderOps2 = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"complex_test_provider_d">>,
+                    realm = test,
+                    description = <<"provider D for complex test">>,
+                    proxy = #domain_Proxy{ref = ProxyRefC, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = FinalRevision,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRefD}}]
+    }} = dmt_client:commit(Revision3, ProviderOps2, AuthorID, Client),
+
+    % Test from proxy perspective - should see both providers
+    ComplexRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {proxy, ProxyRefC},
+        version = FinalRevision,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = ComplexNodes,
+        edges = ComplexEdges
+    }} = dmt_client:get_related_graph(ComplexRequest, Client),
+
+    ComplexNodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- ComplexNodes],
+    ?assert(
+        lists:member({proxy, ProxyRefC}, ComplexNodeRefs), "Complex: Should contain proxy C"
+    ),
+    ?assert(
+        lists:member({provider, ProviderRefB}, ComplexNodeRefs),
+        "Complex: Should contain provider B"
+    ),
+    ?assert(
+        lists:member({provider, ProviderRefD}, ComplexNodeRefs),
+        "Complex: Should contain provider D"
+    ),
+
+    % Verify edges
+    EdgeSourceTargets = [
+        {Source, Target}
+     || #domain_conf_v2_ReferenceEdge{source = Source, target = Target} <- ComplexEdges
+    ],
+    ?assert(
+        lists:member({{provider, ProviderRefB}, {proxy, ProxyRefC}}, EdgeSourceTargets),
+        "Complex: Should have edge from provider B to proxy C"
+    ),
+    ?assert(
+        lists:member({{provider, ProviderRefD}, {proxy, ProxyRefC}}, EdgeSourceTargets),
+        "Complex: Should have edge from provider D to proxy C"
+    ).
+
+%% Test GetRelatedGraph error handling
+get_related_graph_error_handling_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"get_related_graph_error_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+
+    % Create a valid object first
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"error_test_category">>,
+                    description = <<"category for error test">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = ValidVersion,
+        new_objects = [{category, #domain_CategoryObject{ref = CategoryRef}}]
+    }} = dmt_client:commit(0, CategoryOps, AuthorID, Client),
+
+    % Test non-existent object
+    NonExistentRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {category, #domain_CategoryRef{id = 1337}},
+        version = ValidVersion,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {exception, #domain_conf_v2_ObjectNotFound{}} = dmt_client:get_related_graph(
+        NonExistentRequest, Client
+    ),
+
+    % Test with non-existent version
+    InvalidVersionRequest = #domain_conf_v2_RelatedGraphRequest{
+        ref = {category, CategoryRef},
+        version = ValidVersion + 999999,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {exception, #domain_conf_v2_VersionNotFound{}} = dmt_client:get_related_graph(
+        InvalidVersionRequest, Client
+    ).
 
 % Internal functions
 

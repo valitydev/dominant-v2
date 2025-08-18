@@ -15,6 +15,7 @@
 -export([search_objects/1]).
 -export([search_full_objects/1]).
 -export([filter_search_results/1]).
+-export([get_related_graph/1]).
 
 %%
 
@@ -152,7 +153,57 @@ get_related_graph(Request) ->
         include_inbound = IncludeInbound,
         include_outbound = IncludeOutbound,
         depth = Depth
-    } = Request.
+    } = Request,
+
+    maybe
+        Worker = default_pool,
+        {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
+        ok ?= validate_object_exists(Worker, ObjectRef, ResolvedVersion),
+        % Use SQL-based graph traversal for better performance
+        ObjectRefString = dmt_mapper:to_string(ObjectRef),
+        {ok, {NodeMaps, EdgeMaps}} ?=
+            dmt_database:get_related_graph(
+                Worker,
+                ObjectRefString,
+                ResolvedVersion,
+                Depth,
+                IncludeInbound,
+                IncludeOutbound,
+                Type
+            ),
+        % Convert to Thrift structures
+        {ok, NodesWithAuthors} = add_created_by_to_objects(Worker, NodeMaps),
+        NodesResult = [
+            #domain_conf_v2_LimitedVersionedObject{
+                info = marshall_to_object_info(Node),
+                ref = maps:get(id, Node),
+                name = dmt_domain:maybe_get_domain_object_data_field(name, maps:get(data, Node)),
+                description = dmt_domain:maybe_get_domain_object_data_field(
+                    description, maps:get(data, Node)
+                )
+            }
+         || Node <- NodesWithAuthors
+        ],
+        EdgesResult = [
+            #domain_conf_v2_ReferenceEdge{
+                source = maps:get(source_ref, Edge),
+                target = maps:get(target_ref, Edge)
+            }
+         || Edge <- EdgeMaps
+        ],
+        Result = #domain_conf_v2_RelatedGraph{
+            nodes = ordsets:from_list(NodesResult),
+            edges = ordsets:from_list(EdgesResult)
+        },
+        {ok, Result}
+    else
+        {error, object_not_found} ->
+            {error, object_not_found};
+        {error, version_not_found} ->
+            {error, version_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 sort_objects_by_ids(Objects, IDs) ->
     % Create a map of ID -> Object for easier lookup
@@ -699,4 +750,24 @@ publish_commit_event(Version, FinalOperations, AuthorID) ->
         Class:Error:Stacktrace ->
             logger:error("Exception in publish_commit_event: ~p:~p~n~p", [Class, Error, Stacktrace]),
             {error, {exception, {Class, Error, Stacktrace}}}
+    end.
+
+%% Helper functions for get_related_graph
+
+resolve_version_reference(Worker, undefined) ->
+    case dmt_database:get_latest_version(Worker) of
+        {ok, LatestVersion} -> {ok, LatestVersion};
+        {error, Reason} -> {error, Reason}
+    end;
+resolve_version_reference(Worker, Version) ->
+    case dmt_database:check_version_exists(Worker, Version) of
+        true -> {ok, Version};
+        false -> {error, version_not_found}
+    end.
+
+validate_object_exists(Worker, ObjectRef, Version) ->
+    ObjectRefString = dmt_mapper:to_string(ObjectRef),
+    case dmt_database:get_object(Worker, ObjectRefString, Version) of
+        {ok, _Object} -> ok;
+        {error, not_found} -> {error, object_not_found}
     end.

@@ -21,6 +21,7 @@
 -export([search_objects/6]).
 -export([check_entity_type_exists/2]).
 -export([get_all_objects/2]).
+-export([get_related_graph/7]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -752,3 +753,167 @@ get_all_objects(Worker, Version) ->
             logger:error("Error fetching all objects for version ~p: ~p", [Version, Reason]),
             {error, Reason}
     end.
+
+get_related_graph(
+    Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
+) ->
+    case get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound) of
+        {ok, {EntityIds, Edges}} ->
+            logger:error("EntityIds: ~p, Edges: ~p", [EntityIds, Edges]),
+            get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef);
+        {error, Reason} ->
+            logger:error("Error in graph edge traversal for ~p: ~p", [ObjectRef, Reason]),
+            {error, Reason}
+    end.
+
+%% Helper function to get objects and apply type filter
+get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef) ->
+    case get_objects(Worker, EntityIds, Version) of
+        {ok, AllNodes} ->
+            FilteredNodes = filter_nodes_by_type(AllNodes, TypeFilter),
+            FilteredEdges = filter_edges_by_nodes(Edges, FilteredNodes),
+            logger:error("FilteredNodes: ~p, FilteredEdges: ~p", [FilteredNodes, FilteredEdges]),
+            {ok, {FilteredNodes, FilteredEdges}};
+        {error, Reason} ->
+            logger:error("Error fetching objects for graph ~p: ~p", [ObjectRef, Reason]),
+            {error, Reason}
+    end.
+
+%% Filter nodes by type if type filter is specified
+filter_nodes_by_type(Nodes, undefined) ->
+    Nodes;
+filter_nodes_by_type(Nodes, FilterType) ->
+    FilterTypeBinary = atom_to_binary(FilterType, utf8),
+    [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
+
+filter_edges_by_nodes(Edges, Nodes) ->
+    logger:error("filter_edges_by_nodes Edges: ~p, Nodes: ~p", [Edges, Nodes]),
+    lists:filter(
+        fun(#{source_ref := SourceRef, target_ref := TargetRef}) ->
+            logger:error("Filter SourceRef: ~p, TargetRef: ~p", [SourceRef, TargetRef]),
+            lists:any(
+                fun(#{id := NodeId}) ->
+                    NodeId =:= SourceRef
+                end,
+                Nodes
+            ) andalso
+                lists:any(
+                    fun(#{id := NodeId}) ->
+                        NodeId =:= TargetRef
+                    end,
+                    Nodes
+                )
+        end,
+        Edges
+    ).
+
+get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound) ->
+    Query = """
+    WITH RECURSIVE
+    -- Find active relationships at the requested version
+    ActiveRelations AS (
+        SELECT DISTINCT
+            r1.source_entity_id,
+            r1.target_entity_id
+        FROM entity_relation r1
+        WHERE r1.is_active = TRUE
+        AND r1.version = (
+            SELECT MAX(r2.version)
+            FROM entity_relation r2
+            WHERE r2.source_entity_id = r1.source_entity_id
+            AND r2.target_entity_id = r1.target_entity_id
+            AND r2.version <= $2
+        )
+    ),
+    -- Recursive graph traversal - collect entity IDs only
+    GraphTraversal AS (
+        -- Base case: start with the root object
+        SELECT
+            $1::TEXT as entity_id,
+            0 as depth,
+            ARRAY[$1::TEXT] as path
+
+        UNION ALL
+
+        -- Recursive case: find connected entities
+        SELECT DISTINCT
+            CASE
+                WHEN $4 = TRUE AND $5 = TRUE THEN
+                    -- Include both inbound and outbound
+                    CASE
+                        WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                        WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                        ELSE NULL
+                    END
+                WHEN $4 = TRUE AND $5 = FALSE THEN
+                    -- Include only inbound (entities that reference current entity)
+                    CASE WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id ELSE NULL END
+                WHEN $4 = FALSE AND $5 = TRUE THEN
+                    -- Include only outbound (entities that current entity references)
+                    CASE WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id ELSE NULL END
+                ELSE NULL
+            END as entity_id,
+            gt.depth + 1 as depth,
+            gt.path || CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END as path
+        FROM GraphTraversal gt
+        JOIN ActiveRelations ar ON (
+            (ar.source_entity_id = gt.entity_id AND $5 = TRUE) OR
+            (ar.target_entity_id = gt.entity_id AND $4 = TRUE)
+        )
+        WHERE gt.depth < $3
+        AND (
+            CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END
+        ) != ALL(gt.path) -- Prevent cycles
+        AND (
+            CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END
+        ) IS NOT NULL
+    ),
+    -- Get edges between traversed entities
+    EdgeDetails AS (
+        SELECT DISTINCT
+            ar.source_entity_id as source_ref,
+            ar.target_entity_id as target_ref
+        FROM ActiveRelations ar
+        JOIN GraphTraversal gt1 ON gt1.entity_id = ar.source_entity_id
+        JOIN GraphTraversal gt2 ON gt2.entity_id = ar.target_entity_id
+    )
+    SELECT source_ref, target_ref
+    FROM EdgeDetails
+    """,
+
+    case epg_pool:query(Worker, Query, [ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound]) of
+        {ok, _Columns, Rows} ->
+            {EntityIds, Edges} = parse_graph_edges_result(Rows),
+            {ok, {EntityIds, Edges}};
+        {error, Reason} ->
+            logger:error("Error in graph edge traversal for ~p: ~p", [ObjectRef, Reason]),
+            {error, Reason}
+    end.
+
+parse_graph_edges_result(Rows) ->
+    Edges = [
+        #{
+            source_ref => dmt_mapper:from_string(SourceRef),
+            target_ref => dmt_mapper:from_string(TargetRef)
+        }
+     || {SourceRef, TargetRef} <- Rows
+    ],
+
+    EntityIds0 =
+        [SourceRef || {SourceRef, _TargetRef} <- Rows] ++
+            [TargetRef || {_SourceRef, TargetRef} <- Rows],
+    EntityIds1 = ordsets:from_list(EntityIds0),
+
+    {EntityIds1, Edges}.

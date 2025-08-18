@@ -4,6 +4,7 @@
 
 -export([to_marshalled_maps/2]).
 -export([to_marshalled_maps/3]).
+-export([marshall_object/1]).
 -export([datetime_to_binary/1]).
 -export([to_string/1]).
 -export([from_string/1]).
