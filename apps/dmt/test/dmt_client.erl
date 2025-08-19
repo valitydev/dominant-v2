@@ -1,11 +1,9 @@
 -module(dmt_client).
 
--include_lib("opentelemetry_api/include/otel_tracer.hrl").
--include_lib("opentelemetry_api/include/opentelemetry.hrl").
-
 %% API
 -export([
     checkout_object/3,
+    checkout_object_with_references/3,
     checkout_objects/3,
     checkout_snapshot/2,
     get_object_history/3,
@@ -13,7 +11,8 @@
     get_latest_version/1,
     commit/4,
     search_objects/2,
-    search_full_objects/2
+    search_full_objects/2,
+    get_related_graph/2
 ]).
 
 -export([
@@ -26,6 +25,10 @@
 checkout_object(VersionRef, ObjectRef, Client) ->
     Args = [VersionRef, ObjectRef],
     dmt_client_api:call(repository_client, 'CheckoutObject', Args, Client).
+
+checkout_object_with_references(VersionRef, ObjectRef, Client) ->
+    Args = [VersionRef, ObjectRef],
+    dmt_client_api:call(repository_client, 'CheckoutObjectWithReferences', Args, Client).
 
 checkout_objects(VersionRef, ObjectRefs, Client) ->
     Args = [VersionRef, ObjectRefs],
@@ -73,3 +76,7 @@ get_author_by_email(Email, Client) ->
 delete_author(ID, Client) ->
     Args = [ID],
     dmt_client_api:call(author, 'Delete', Args, Client).
+
+get_related_graph(Request, Client) ->
+    Args = [Request],
+    dmt_client_api:call(repository, 'GetRelatedGraph', Args, Client).

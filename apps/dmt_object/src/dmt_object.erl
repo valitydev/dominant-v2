@@ -7,7 +7,7 @@
 -export([new_object/1]).
 -export([update_object/2]).
 -export([remove_object/1]).
--export([just_object/8]).
+-export([just_object/6]).
 -export([filter_out_inactive_objects/1]).
 
 -export_type([insertable_object/0]).
@@ -56,8 +56,6 @@ new_object(#domain_conf_v2_InsertOp{
                 tmp_id => uuid:get_v4_urandom(),
                 type => Type,
                 forced_id => ForcedRef,
-                references =>
-                    dmt_object_reference:refless_object_references(NewObject),
                 data => NewObject
             }};
         {error, Error} ->
@@ -74,10 +72,6 @@ update_object(
         {ok, ExistingUpdate#{
             id => ID,
             type => Type,
-            %%          NOTE this will just provide all the refs that already exist,
-            %%          it doesn't give us diff, but maybe it's not needed
-            references =>
-                dmt_object_reference:domain_object_references(Object),
             data => Object
         }}
     end.
@@ -92,8 +86,6 @@ just_object(
     ID,
     Type,
     Version,
-    ReferencesTo,
-    ReferencedBy,
     Data,
     CreatedAt,
     IsActive
@@ -102,8 +94,6 @@ just_object(
         id => ID,
         type => Type,
         version => Version,
-        references => ReferencesTo,
-        referenced_by => ReferencedBy,
         data => Data,
         created_at => CreatedAt,
         is_active => IsActive
