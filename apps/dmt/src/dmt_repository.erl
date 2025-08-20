@@ -468,6 +468,23 @@ commit_operation(
         NewObjects
     }.
 
+insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
+    OriginRef1 = dmt_mapper:to_string(OriginRef),
+    Reference1 = dmt_mapper:to_string(Reference),
+    case dmt_database:insert_relations(Worker, OriginRef1, Reference1, NewVersion, IsActive) of
+        ok ->
+            ok;
+        {error, {source_entity_not_found, EntityId}} ->
+            throw({error, {invalid, {objects_not_exist, [{OriginRef, [EntityId]}]}}});
+        {error, {target_entity_not_found, EntityId}} ->
+            throw({error, {invalid, {objects_not_exist, [{EntityId, [OriginRef]}]}}});
+        {error, {duplicate_relation, _}} ->
+            % Duplicate relations are acceptable, continue
+            ok;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
 commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
     maps:foreach(
         fun(OriginRef, References) ->
@@ -480,22 +497,18 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
             NewReferencesSet = ordsets:subtract(ReferencesSet, ExistingReferencesSet),
             RemovedReferencesSet = ordsets:subtract(ExistingReferencesSet, ReferencesSet),
 
+            % Insert new relations
             ok = lists:foreach(
                 fun(NewReference) ->
-                    NewReference1 = dmt_mapper:to_string(NewReference),
-                    dmt_database:insert_relations(
-                        Worker, OriginRef1, NewReference1, NewVersion, true
-                    )
+                    insert_relation(Worker, OriginRef, NewReference, NewVersion, true)
                 end,
                 ordsets:to_list(NewReferencesSet)
             ),
 
+            % Insert removed relations
             ok = lists:foreach(
                 fun(RemovedReference) ->
-                    RemovedReference1 = dmt_mapper:to_string(RemovedReference),
-                    dmt_database:insert_relations(
-                        Worker, OriginRef1, RemovedReference1, NewVersion, false
-                    )
+                    insert_relation(Worker, OriginRef, RemovedReference, NewVersion, false)
                 end,
                 ordsets:to_list(RemovedReferencesSet)
             )
@@ -534,6 +547,8 @@ commit(Version, Operations, AuthorID) ->
         {rollback, {error, {conflict, _} = Error}} ->
             {error, {operation_error, Error}};
         {rollback, {error, {invalid, _} = Error}} ->
+            {error, {operation_error, Error}};
+        {error, {invalid, _} = Error} ->
             {error, {operation_error, Error}};
         {error, Error} ->
             {error, Error}

@@ -28,11 +28,11 @@ CREATE OR REPLACE FUNCTION validate_entity_relation()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NOT validate_entity_exists(NEW.source_entity_id) THEN
-        RAISE EXCEPTION 'Source entity with id % does not exist', NEW.source_entity_id;
+        RAISE EXCEPTION 'ENTITY_NOT_EXISTS|SOURCE|%', NEW.source_entity_id;
     END IF;
     
     IF NOT validate_entity_exists(NEW.target_entity_id) THEN
-        RAISE EXCEPTION 'Target entity with id % does not exist', NEW.target_entity_id;
+        RAISE EXCEPTION 'ENTITY_NOT_EXISTS|TARGET|%', NEW.target_entity_id;
     END IF;
     
     RETURN NEW;
