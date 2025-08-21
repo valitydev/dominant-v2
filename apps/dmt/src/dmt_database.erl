@@ -157,7 +157,7 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
                 {target_entity_not_found, EntityId} ->
                     logger:error("Target entity ~p does not exist when inserting relation: ~p", [EntityId, Params]),
                     {error, {target_entity_not_found, EntityId}};
-                undefined ->
+                unknown ->
                     logger:error("Error inserting entity relations: ~p~nParams: ~p", [Message, Params]),
                     {error, Message}
             end;
@@ -179,7 +179,7 @@ parse_entity_validation_error(Message) ->
         [<<"ENTITY_NOT_EXISTS">>, <<"TARGET">>, EntityId] ->
             {target_entity_not_found, dmt_mapper:from_string(EntityId)};
         _ ->
-            undefined
+            unknown
     end.
 
 get_references_to(Worker, ID, Version) ->
