@@ -22,6 +22,7 @@
 -export([check_entity_type_exists/2]).
 -export([get_all_objects/2]).
 -export([get_related_graph/7]).
+-export([parse_entity_validation_error/1]).
 
 get_latest_version(Worker) ->
     Query1 =
@@ -144,9 +145,41 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
     case epg_pool:query(Worker, Query, Params) of
         {ok, 1} ->
             ok;
+        {error, {error, error, <<"23505">>, _, Message, _}} ->
+            % Handle unique constraint violations
+            logger:error("Unique constraint violation inserting entity relations: ~p~nParams: ~p", [Message, Params]),
+            {error, {duplicate_relation, Message}};
+        {error, {error, error, _, _, Message, _}} when is_binary(Message) ->
+            case parse_entity_validation_error(Message) of
+                {source_entity_not_found, EntityId} ->
+                    logger:error("Source entity ~p does not exist when inserting relation: ~p", [EntityId, Params]),
+                    {error, {source_entity_not_found, EntityId}};
+                {target_entity_not_found, EntityId} ->
+                    logger:error("Target entity ~p does not exist when inserting relation: ~p", [EntityId, Params]),
+                    {error, {target_entity_not_found, EntityId}};
+                unknown ->
+                    logger:error("Error inserting entity relations: ~p~nParams: ~p", [Message, Params]),
+                    {error, Message}
+            end;
         {error, Reason} ->
             logger:error("Error inserting entity relations: ~p~nParams: ~p", [Reason, Params]),
             {error, Reason}
+    end.
+
+%% @doc Parse validation error messages from the validate_entity_exists trigger
+%% Expected format: "ENTITY_NOT_EXISTS|SOURCE|entity_id" or "ENTITY_NOT_EXISTS|TARGET|entity_id"
+-spec parse_entity_validation_error(binary()) ->
+    {source_entity_not_found, binary()}
+    | {target_entity_not_found, binary()}
+    | unknown.
+parse_entity_validation_error(Message) ->
+    case binary:split(Message, <<"|">>, [global]) of
+        [<<"ENTITY_NOT_EXISTS">>, <<"SOURCE">>, EntityId] ->
+            {source_entity_not_found, dmt_mapper:from_string(EntityId)};
+        [<<"ENTITY_NOT_EXISTS">>, <<"TARGET">>, EntityId] ->
+            {target_entity_not_found, dmt_mapper:from_string(EntityId)};
+        _ ->
+            unknown
     end.
 
 get_references_to(Worker, ID, Version) ->

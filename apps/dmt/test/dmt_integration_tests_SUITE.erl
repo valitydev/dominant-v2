@@ -30,6 +30,7 @@
     insert_object_forced_id_success_test/1,
     insert_object_sequence_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
+    insert_related_objects_success_test/1,
     update_object_success_test/1,
     get_latest_version_test/1,
     get_all_objects_history_test/1,
@@ -38,6 +39,7 @@
     get_object_history_pagination_test/1,
     get_object_history_nonexistent_test/1,
     delete_referenced_entity_validation_test/1,
+    commit_object_with_nonexistent_reference_test/1,
     checkout_object_with_references_test/1,
     get_related_graph_basic_test/1,
     get_related_graph_depth_test/1,
@@ -87,6 +89,7 @@ groups() ->
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
             insert_remove_referencing_object_success_test,
+            insert_related_objects_success_test,
             update_object_success_test,
             get_latest_version_test,
             get_all_objects_history_test,
@@ -95,6 +98,7 @@ groups() ->
             get_object_history_pagination_test,
             get_object_history_nonexistent_test,
             delete_referenced_entity_validation_test,
+            commit_object_with_nonexistent_reference_test,
             checkout_object_with_references_test,
             get_related_graph_basic_test,
             get_related_graph_depth_test,
@@ -374,6 +378,43 @@ insert_object_forced_id_success_test(Config) ->
         }}
     ] = ordsets:to_list(NewObjectsSet),
     ?assertMatch(CategoryRef, Ref).
+
+insert_related_objects_success_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_object_forced_id_success_test">>,
+    AuthorID = create_author(Email, Client),
+
+    %% Insert a test object
+    Revision = 0,
+    ProxyRef = #domain_ProxyRef{id = 123},
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"basic_test_proxy">>,
+                    description = <<"proxy for basic graph test">>,
+                    url = <<"http://basic-test-proxy.example.com">>,
+                    options = #{}
+                }},
+            force_ref = {proxy, ProxyRef}
+        }},
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"name">>,
+                    realm = test,
+                    description = <<"description">>,
+                    proxy = #domain_Proxy{
+                        ref = ProxyRef,
+                        additional = #{}
+                    }
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{}} =
+        dmt_client:commit(Revision, Operations, AuthorID, Client).
 
 update_object_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
@@ -946,6 +987,42 @@ delete_referenced_entity_validation_test(Config) ->
     % Verify that both entities are now inactive but still exist in the database
     % (soft delete verification)
     ok.
+
+%% Test committing an object that references a non-existent entity
+commit_object_with_nonexistent_reference_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"commit_object_with_nonexistent_reference_test">>,
+    AuthorID = create_author(Email, Client),
+
+    % Try to create a provider that references a non-existent proxy
+    Revision1 = 0,
+    % This proxy doesn't exist
+    NonExistentProxyRef = #domain_ProxyRef{id = 999999},
+
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"provider_with_invalid_reference">>,
+                    realm = test,
+                    description = <<"provider that references non-existent proxy">>,
+                    proxy = #domain_Proxy{
+                        ref = NonExistentProxyRef,
+                        additional = #{}
+                    }
+                }}
+        }}
+    ],
+
+    {exception, #domain_conf_v2_OperationInvalid{
+        errors = [
+            {object_not_exists, #domain_conf_v2_NonexistantObject{
+                object_ref = {proxy, _},
+                referenced_by = [{provider, _}]
+            }}
+        ]
+    }} = dmt_client:commit(Revision1, ProviderOps, AuthorID, Client).
 
 %% Test CheckoutObjectWithReferences functionality
 checkout_object_with_references_test(Config) ->
