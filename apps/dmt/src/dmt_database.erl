@@ -41,7 +41,7 @@ get_latest_version(Worker) ->
 get_object_latest_version(Worker, ChangedObjectId) ->
     Query0 =
         """
-        SELECT version
+        SELECT version, is_active
         FROM entity
         WHERE id = $1
         ORDER BY version DESC
@@ -50,7 +50,9 @@ get_object_latest_version(Worker, ChangedObjectId) ->
     case epg_pool:query(Worker, Query0, [ChangedObjectId]) of
         {ok, _Columns, []} ->
             {error, not_found};
-        {ok, _Columns, [{MostRecentVersion}]} ->
+        {ok, _Columns, [{_MostRecentVersion, false}]} ->
+            {error, not_found};
+        {ok, _Columns, [{MostRecentVersion, true}]} ->
             {ok, MostRecentVersion};
         {error, Reason} ->
             {error, Reason}
