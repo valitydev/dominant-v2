@@ -405,16 +405,16 @@ maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
 commit_operations(Worker, Operations, TargetVersion, NewVersion) ->
-    {_, _, _, RelationsChanges, FinalOperations, NewObjects} = lists:foldl(
+    {_, _, _, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences} = lists:foldl(
         fun commit_operation/2,
-        {Worker, TargetVersion, NewVersion, #{}, [], []},
+        {Worker, TargetVersion, NewVersion, #{}, [], [], []},
         Operations
     ),
-    {RelationsChanges, FinalOperations, NewObjects}.
+    {RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}.
 
 commit_operation(
     {insert, #domain_conf_v2_InsertOp{object = Object, force_ref = ForceRef}},
-    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}
 ) ->
     {Type, _} = Object,
     References = dmt_object_reference:refless_object_references(Object),
@@ -429,11 +429,12 @@ commit_operation(
         NewVersion,
         RelationsChanges#{Ref => References},
         [FinalOperation | FinalOperations],
-        [Data1 | NewObjects]
+        [Data1 | NewObjects],
+        RemovedObjectsReferences
     };
 commit_operation(
     {update, #domain_conf_v2_UpdateOp{object = Object}} = Operation,
-    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}
 ) ->
     {ok, {Type, _ID} = Ref} = get_object_ref(Object),
 
@@ -447,17 +448,19 @@ commit_operation(
         NewVersion,
         RelationsChanges#{Ref => References},
         [Operation | FinalOperations],
-        NewObjects
+        NewObjects,
+        RemovedObjectsReferences
     };
 commit_operation(
     {remove, #domain_conf_v2_RemoveOp{ref = Ref}} = Operation,
-    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects}
+    {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}
 ) ->
     ok = validate_latest_version(Worker, TargetVersion, Ref),
-    ok = validate_no_references_to_entity(Worker, Ref, NewVersion),
+    %% Validation of inbound references is deferred to post-relations stage
+    %% to allow removing referencing and referenced entities in the same commit
 
     {Type, _} = Ref,
-    {ok, #{data := Object}} = get_latest_target_object(Worker, Ref),
+    {ok, #{data := Object}} = get_target_object(Worker, Ref, TargetVersion),
     ok = update_object(Worker, Type, Ref, false, Object, NewVersion),
     {
         Worker,
@@ -465,7 +468,8 @@ commit_operation(
         NewVersion,
         RelationsChanges#{Ref => []},
         [Operation | FinalOperations],
-        NewObjects
+        NewObjects,
+        [Ref | RemovedObjectsReferences]
     }.
 
 insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
@@ -522,9 +526,12 @@ commit(Version, Operations, AuthorID) ->
         fun(Worker) ->
             try
                 NewVersion = get_new_version(Worker, AuthorID),
-                {RelationsChanges, FinalOperations, NewObjects} =
+                {RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences} =
                     commit_operations(Worker, Operations, Version, NewVersion),
                 ok = commit_relations_changes(Worker, NewVersion, RelationsChanges),
+                ok = validate_no_references_to_entities(
+                    Worker, RemovedObjectsReferences, NewVersion
+                ),
 
                 %% Publish Kafka event after successful transaction
                 ok = publish_commit_event(NewVersion, FinalOperations, AuthorID),
@@ -554,15 +561,26 @@ commit(Version, Operations, AuthorID) ->
             {error, Error}
     end.
 
+validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
+    %% Ensure there are no inbound references to any removed objects at Version
+    %% If any exist, validate_no_references_to_entity/3 will throw
+    true = lists:all(
+        fun(Ref) ->
+            ok =:= validate_no_references_to_entity(Worker, Ref, Version)
+        end,
+        RemovedObjectsReferences
+    ),
+    ok.
+
 validate_no_references_to_entity(Worker, Ref, Version) ->
     Ref1 = dmt_mapper:to_string(Ref),
-    _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref1, Version]),
+    _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref, Version]),
     case dmt_database:get_referenced_by(Worker, Ref1, Version) of
         [] ->
             ok;
         ReferencedBy when length(ReferencedBy) > 0 ->
             % TODO REPLACE WITH ERROR THAT INDICATES REMOVAL ATTEMPT
-            throw({error, {operation_error, {invalid, {objects_not_exist, [{Ref, ReferencedBy}]}}}})
+            throw({error, {invalid, {objects_not_exist, [{Ref, ReferencedBy}]}}})
     end.
 
 validate_latest_version(Worker, TargetVersion, Ref) ->
@@ -573,7 +591,7 @@ validate_latest_version(Worker, TargetVersion, Ref) ->
         {ok, _MostRecentVersion} ->
             ok;
         {error, not_found} ->
-            {error, {unknown_object_update, Ref}};
+            throw({error, {operation_error, {conflict, {object_not_found, Ref}}}});
         {error, Error} ->
             throw(Error)
     end.

@@ -46,7 +46,8 @@
     get_related_graph_inbound_outbound_test/1,
     get_related_graph_type_filter_test/1,
     get_related_graph_complex_chain_test/1,
-    get_related_graph_error_handling_test/1
+    get_related_graph_error_handling_test/1,
+    remove_referencing_and_referenced_same_commit_success_test/1
 ]).
 
 -export([
@@ -105,7 +106,8 @@ groups() ->
             get_related_graph_inbound_outbound_test,
             get_related_graph_type_filter_test,
             get_related_graph_complex_chain_test,
-            get_related_graph_error_handling_test
+            get_related_graph_error_handling_test,
+            remove_referencing_and_referenced_same_commit_success_test
         ]}
     ].
 
@@ -979,14 +981,13 @@ delete_referenced_entity_validation_test(Config) ->
         version = Revision4
     }} = dmt_client:commit(Revision3, RemoveProviderOps, AuthorID, Client),
 
-    % Step 5: Now try to remove the proxy again - this should SUCCEED
-    {ok, #domain_conf_v2_CommitResponse{
-        version = _Revision5
-    }} = dmt_client:commit(Revision4, RemoveProxyOps, AuthorID, Client),
-
-    % Verify that both entities are now inactive but still exist in the database
-    % (soft delete verification)
-    ok.
+    % Step 5: Now try to remove the proxy again - this should FAIL
+    {exception, #domain_conf_v2_OperationConflict{
+        conflict =
+            {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{
+                object_ref = {proxy, ProxyRef}
+            }}
+    }} = dmt_client:commit(Revision4, RemoveProxyOps, AuthorID, Client).
 
 %% Test committing an object that references a non-existent entity
 commit_object_with_nonexistent_reference_test(Config) ->
@@ -1710,6 +1711,60 @@ get_related_graph_error_handling_test(Config) ->
     {exception, #domain_conf_v2_VersionNotFound{}} = dmt_client:get_related_graph(
         InvalidVersionRequest, Client
     ).
+
+%% Test removing referencing and referenced entities in the same commit succeeds
+remove_referencing_and_referenced_same_commit_success_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"remove_referencing_and_referenced_same_commit_success_test">>,
+    AuthorID = create_author(Email, Client),
+
+    %% Step 1: Insert referenced entity (proxy)
+    Revision0 = 0,
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"proxy_for_same_commit_delete">>,
+                    description = <<"proxy to be deleted in same commit">>,
+                    url = <<"http://same-commit-delete.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision1,
+        new_objects = [
+            {proxy, #domain_ProxyObject{ref = ProxyRef}}
+        ]
+    }} = dmt_client:commit(Revision0, ProxyOps, AuthorID, Client),
+
+    %% Step 2: Insert referencing entity (provider -> proxy)
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"provider_for_same_commit_delete">>,
+                    realm = test,
+                    description = <<"provider to be deleted in same commit">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [
+            {provider, #domain_ProviderObject{ref = ProviderRef}}
+        ]
+    }} = dmt_client:commit(Revision1, ProviderOps, AuthorID, Client),
+
+    %% Step 3: Remove both in the same commit (provider first, then proxy)
+    RemoveOps = [
+        {remove, #domain_conf_v2_RemoveOp{ref = {provider, ProviderRef}}},
+        {remove, #domain_conf_v2_RemoveOp{ref = {proxy, ProxyRef}}}
+    ],
+    {ok, #domain_conf_v2_CommitResponse{version = _Revision3}} =
+        dmt_client:commit(Revision2, RemoveOps, AuthorID, Client).
 
 % Internal functions
 
