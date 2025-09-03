@@ -25,6 +25,8 @@ do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options
             woody_error:raise(business, #domain_conf_v2_ObsoleteCommitVersion{
                 latest_version = LatestVersion
             });
+        {error, author_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_AuthorNotFound{});
         {error, migration_in_progress} ->
             woody_error:raise(
                 system,

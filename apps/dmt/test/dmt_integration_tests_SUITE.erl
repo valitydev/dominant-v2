@@ -29,9 +29,11 @@
     %% Repository Tests
     insert_object_forced_id_success_test/1,
     insert_object_sequence_id_success_test/1,
+    insert_object_uuid_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
     insert_related_objects_success_test/1,
     update_object_success_test/1,
+    commit_author_not_found_test/1,
     get_latest_version_test/1,
     get_all_objects_history_test/1,
     get_all_objects_history_pagination_test/1,
@@ -89,9 +91,11 @@ groups() ->
         {repository_tests, [], [
             insert_object_forced_id_success_test,
             insert_object_sequence_id_success_test,
+            insert_object_uuid_id_success_test,
             insert_remove_referencing_object_success_test,
             insert_related_objects_success_test,
             update_object_success_test,
+            commit_author_not_found_test,
             get_latest_version_test,
             get_all_objects_history_test,
             get_all_objects_history_pagination_test,
@@ -346,6 +350,45 @@ is_in_sequence(N1, N2) when N1 =:= N2 + 1 ->
 is_in_sequence(N1, N2) ->
     {false, N1, N2}.
 
+insert_object_uuid_id_success_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_object_uuid_id_success_test">>,
+    AuthorID = create_author(Email, Client),
+
+    %% Insert a test object
+    Revision = 0,
+    PartyConfig = #domain_PartyConfig{
+        name = <<"name1">>,
+        block = {unblocked, #domain_Unblocked{reason = <<"reason1">>, since = <<"2025-01-01T00:00:00Z">>}},
+        suspension = {active, #domain_Active{since = <<"2025-01-01T00:00:00Z">>}},
+        contact_info = #domain_PartyContactInfo{registration_email = <<"test@test.com">>}
+    },
+
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object = {party_config, PartyConfig}
+        }},
+        {insert, #domain_conf_v2_InsertOp{
+            object = {party_config, PartyConfig}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        new_objects = [
+            {party_config, #domain_PartyConfigObject{
+                ref = #domain_PartyConfigRef{id = ID1}
+            }},
+            {party_config, #domain_PartyConfigObject{
+                ref = #domain_PartyConfigRef{id = ID2}
+            }}
+        ]
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    ?assertEqual(true, uuid:is_uuid(ID1)),
+    ?assertEqual(true, uuid:is_uuid(ID2)),
+    ?assertNotEqual(ID1, ID2).
+
 %% Test successful insert with forced id
 insert_object_forced_id_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
@@ -469,6 +512,22 @@ update_object_success_test(Config) ->
     {ok, #domain_conf_v2_VersionedObject{
         object = NewObject
     }} = dmt_client:checkout_object({version, Revision3}, {proxy, ProxyRef}, Client).
+
+commit_author_not_found_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    RandomUUID = uuid:get_v4_urandom(),
+
+    Revision = 0,
+    Category = #domain_Category{
+        name = <<"name1">>,
+        description = <<"description1">>
+    },
+
+    Operations = [{insert, #domain_conf_v2_InsertOp{object = {category, Category}}}],
+
+    {exception, #domain_conf_v2_AuthorNotFound{}} = dmt_client:commit(Revision, Operations, <<"">>, Client),
+    {exception, #domain_conf_v2_AuthorNotFound{}} = dmt_client:commit(Revision, Operations, RandomUUID, Client).
 
 get_all_objects_history_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
