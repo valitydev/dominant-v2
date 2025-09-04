@@ -709,7 +709,7 @@ get_insert_object_id(Worker, Ref, _Type) ->
     end.
 
 get_unique_uuid(Worker, Type) ->
-    NewUUID = uuid:get_v4_urandom(),
+    NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
     NewRefString = dmt_mapper:to_string({Type, NewID}),
     case dmt_database:check_if_object_id_active(Worker, NewRefString) of

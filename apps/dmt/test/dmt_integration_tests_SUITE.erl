@@ -385,8 +385,8 @@ insert_object_uuid_id_success_test(Config) ->
         ]
     }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
 
-    ?assertEqual(true, uuid:is_uuid(ID1)),
-    ?assertEqual(true, uuid:is_uuid(ID2)),
+    ?assertEqual(true, uuid:is_uuid(uuid:string_to_uuid(binary_to_list(ID1)))),
+    ?assertEqual(true, uuid:is_uuid(uuid:string_to_uuid(binary_to_list(ID2)))),
     ?assertNotEqual(ID1, ID2).
 
 %% Test successful insert with forced id
