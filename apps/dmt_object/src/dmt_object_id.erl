@@ -4,6 +4,7 @@
 
 %% API
 -export([get_numerical_object_id/2]).
+-export([get_uuid_object_id/2]).
 
 get_numerical_object_id(category, ID) ->
     #domain_CategoryRef{id = ID};
@@ -40,4 +41,13 @@ get_numerical_object_id(criterion, ID) ->
 get_numerical_object_id(document_type, ID) ->
     #domain_DocumentTypeRef{id = ID};
 get_numerical_object_id(Type, _ID) ->
+    throw({not_supported, Type}).
+
+get_uuid_object_id(party_config, ID) ->
+    #domain_PartyConfigRef{id = ID};
+get_uuid_object_id(shop_config, ID) ->
+    #domain_ShopConfigRef{id = ID};
+get_uuid_object_id(wallet_config, ID) ->
+    #domain_WalletConfigRef{id = ID};
+get_uuid_object_id(Type, _ID) ->
     throw({not_supported, Type}).

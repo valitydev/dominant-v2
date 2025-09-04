@@ -525,6 +525,7 @@ commit(Version, Operations, AuthorID) ->
         default_pool,
         fun(Worker) ->
             try
+                ok = validate_author_exists(Worker, AuthorID),
                 NewVersion = get_new_version(Worker, AuthorID),
                 {RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences} =
                     commit_operations(Worker, Operations, Version, NewVersion),
@@ -594,6 +595,14 @@ validate_latest_version(Worker, TargetVersion, Ref) ->
             throw({error, {operation_error, {conflict, {object_not_found, Ref}}}});
         {error, Error} ->
             throw(Error)
+    end.
+
+validate_author_exists(Worker, AuthorID) ->
+    case dmt_author_database:get(Worker, AuthorID) of
+        {ok, _} ->
+            ok;
+        {error, author_not_found} ->
+            throw({error, author_not_found})
     end.
 
 get_new_version(Worker, AuthorID) ->
@@ -677,7 +686,14 @@ get_insert_object_id(Worker, undefined, Type) ->
             % TODO need to do it without hardcode
             {Type, dmt_object_id:get_numerical_object_id(Type, NewID)};
         {error, sequence_not_enabled} ->
-            throw({error, {object_type_requires_forced_id, Type}});
+            % Check if type is uuid
+            try get_unique_uuid(Worker, Type) of
+                NewID ->
+                    {Type, NewID}
+            catch
+                throw:{not_supported, Type} ->
+                    throw({error, {object_type_requires_forced_id, Type}})
+            end;
         {error, Reason} ->
             throw({error, Reason})
     end;
@@ -688,6 +704,19 @@ get_insert_object_id(Worker, Ref, _Type) ->
             throw({error, {operation_error, {conflict, {forced_id_exists, Ref}}}});
         false ->
             Ref;
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
+get_unique_uuid(Worker, Type) ->
+    NewUUID = uuid:get_v4_urandom(),
+    NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
+    NewRefString = dmt_mapper:to_string({Type, NewID}),
+    case dmt_database:check_if_object_id_active(Worker, NewRefString) of
+        true ->
+            get_unique_uuid(Worker, Type);
+        false ->
+            NewID;
         {error, Reason} ->
             throw({error, Reason})
     end.
