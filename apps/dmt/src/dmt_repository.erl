@@ -69,8 +69,8 @@ get_object_with_references(Worker, {version, V}, ObjectRef) ->
                         info = marshall_to_object_info(Object),
                         object = Data
                     },
-                referenced_by = ReferencedBy,
-                references_to = ReferencesTo
+                referenced_by = ordsets:from_list(ReferencedBy),
+                references_to = ordsets:from_list(ReferencesTo)
             }};
         {error, Reason} ->
             {error, Reason}
@@ -681,21 +681,19 @@ update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
 get_insert_object_id(Worker, undefined, Type) ->
     %%  Check if sequence column exists in table
     %%  -- if it doesn't, then raise exception
-    case dmt_database:get_next_sequence(Worker, Type) of
-        {ok, NewID} ->
+    case get_unique_numerical_id(Worker, Type) of
+        {ok, NewNumRef} ->
             % TODO need to do it without hardcode
-            {Type, dmt_object_id:get_numerical_object_id(Type, NewID)};
+            {Type, NewNumRef};
         {error, sequence_not_enabled} ->
             % Check if type is uuid
             try get_unique_uuid(Worker, Type) of
-                NewID ->
-                    {Type, NewID}
+                {ok, NewUUIDRef} ->
+                    {Type, NewUUIDRef}
             catch
                 throw:{not_supported, Type} ->
                     throw({error, {object_type_requires_forced_id, Type}})
-            end;
-        {error, Reason} ->
-            throw({error, Reason})
+            end
     end;
 get_insert_object_id(Worker, Ref, _Type) ->
     Ref0 = dmt_mapper:to_string(Ref),
@@ -708,6 +706,25 @@ get_insert_object_id(Worker, Ref, _Type) ->
             throw({error, Reason})
     end.
 
+get_unique_numerical_id(Worker, Type) ->
+    case dmt_database:get_next_sequence(Worker, Type) of
+        {ok, NewID} ->
+            NewRef = dmt_object_id:get_numerical_object_id(Type, NewID),
+            NewRefString = dmt_mapper:to_string({Type, NewRef}),
+            case dmt_database:check_if_object_id_active(Worker, NewRefString) of
+                true ->
+                    get_unique_numerical_id(Worker, Type);
+                false ->
+                    {ok, NewRef};
+                {error, Reason} ->
+                    throw({error, Reason})
+            end;
+        {error, sequence_not_enabled} ->
+            {error, sequence_not_enabled};
+        {error, Reason} ->
+            throw({error, Reason})
+    end.
+
 get_unique_uuid(Worker, Type) ->
     NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
@@ -716,7 +733,7 @@ get_unique_uuid(Worker, Type) ->
         true ->
             get_unique_uuid(Worker, Type);
         false ->
-            NewID;
+            {ok, NewID};
         {error, Reason} ->
             throw({error, Reason})
     end.
