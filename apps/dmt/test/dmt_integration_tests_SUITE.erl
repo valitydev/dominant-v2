@@ -324,9 +324,6 @@ insert_object_sequence_id_success_test(Config) ->
     Operations = [
         {insert, #domain_conf_v2_InsertOp{
             object = {category, Category}
-        }},
-        {insert, #domain_conf_v2_InsertOp{
-            object = {category, Category}
         }}
     ],
 
@@ -334,14 +331,38 @@ insert_object_sequence_id_success_test(Config) ->
         new_objects = [
             {category, #domain_CategoryObject{
                 ref = #domain_CategoryRef{id = ID1}
-            }},
-            {category, #domain_CategoryObject{
-                ref = #domain_CategoryRef{id = ID2}
             }}
         ]
     }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
 
-    ?assertMatch(true, is_in_sequence(ID1, ID2)).
+    {ok, #domain_conf_v2_CommitResponse{
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = #domain_CategoryRef{id = ID2}
+            }}
+        ]
+    }} = dmt_client:commit(
+        Revision,
+        [
+            {insert, #domain_conf_v2_InsertOp{
+                force_ref = {category, #domain_CategoryRef{id = ID1 + 1}},
+                object = {category, Category}
+            }}
+        ],
+        AuthorID,
+        Client
+    ),
+
+    {ok, #domain_conf_v2_CommitResponse{
+        new_objects = [
+            {category, #domain_CategoryObject{
+                ref = #domain_CategoryRef{id = ID3}
+            }}
+        ]
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
+
+    ?assertMatch(true, is_in_sequence(ID1, ID2)),
+    ?assertMatch(true, is_in_sequence(ID2, ID3)).
 
 is_in_sequence(N1, N2) when N1 + 1 =:= N2 ->
     true;
