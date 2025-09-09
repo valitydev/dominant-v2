@@ -106,7 +106,9 @@ handle_operation_conflict({forced_id_exists, Ref}) ->
 handle_operation_conflict({object_not_found, Ref}) ->
     {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{object_ref = Ref}};
 handle_operation_conflict({object_reference_mismatch, Ref}) ->
-    {object_reference_mismatch, #domain_conf_v2_ObjectReferenceMismatchConflict{object_ref = Ref}}.
+    {object_reference_mismatch, #domain_conf_v2_ObjectReferenceMismatchConflict{object_ref = Ref}};
+handle_operation_conflict({object_needs_reference, Object}) ->
+    {object_needs_reference, #domain_conf_v2_ObjectNeedsReference{object = Object}}.
 
 handle_operation_invalid({objects_not_exist, Refs}) ->
     [

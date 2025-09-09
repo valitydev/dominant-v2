@@ -28,6 +28,7 @@
 -export([
     %% Repository Tests
     insert_object_forced_id_success_test/1,
+    insert_object_sequence_id_fail_test/1,
     insert_object_sequence_id_success_test/1,
     insert_object_uuid_id_success_test/1,
     insert_remove_referencing_object_success_test/1,
@@ -90,6 +91,7 @@ groups() ->
         ]},
         {repository_tests, [], [
             insert_object_forced_id_success_test,
+            insert_object_sequence_id_fail_test,
             insert_object_sequence_id_success_test,
             insert_object_uuid_id_success_test,
             insert_remove_referencing_object_success_test,
@@ -290,25 +292,6 @@ insert_remove_referencing_object_success_test(Config) ->
 
     {ok, _} = dmt_client:commit(Revision3, Operations4, AuthorID, Client).
 
-%% FIXME reference collecting doesn't work. Need to fix ASAP
-
-%%
-%%%%  try to remove provider
-%%    Commit4 = #domain_conf_v2_Commit{
-%%        ops = [
-%%            {remove, #domain_conf_v2_RemoveOp{
-%%                ref = {provider, ProviderRef}
-%%            }}
-%%        ]
-%%    },
-%%    {ok, #domain_conf_v2_CommitResponse{
-%%        version = Revision4
-%%    }} = dmt_client:commit(Revision3, Commit4, AuthorID, Client),
-%%
-%%%%  try to remove proxy again
-%%    {ok, #domain_conf_v2_CommitResponse{}} =
-%%        dmt_client:commit(Revision4, Commit3, AuthorID, Client).
-
 insert_object_sequence_id_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
 
@@ -427,8 +410,7 @@ insert_object_forced_id_success_test(Config) ->
     },
     Operations = [
         {insert, #domain_conf_v2_InsertOp{
-            object =
-                {category, Category},
+            object = {category, Category},
             force_ref = ForcedRef
         }}
     ],
@@ -444,6 +426,30 @@ insert_object_forced_id_success_test(Config) ->
         }}
     ] = ordsets:to_list(NewObjectsSet),
     ?assertMatch(CategoryRef, Ref).
+
+insert_object_sequence_id_fail_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+
+    Email = <<"insert_object_sequence_id_fail_test">>,
+    AuthorID = create_author(Email, Client),
+
+    %% Insert a test object
+    Revision = 0,
+    Currency = #domain_Currency{
+        name = <<"name">>,
+        symbolic_code = <<"RUB">>,
+        numeric_code = 643,
+        exponent = 2
+    },
+    Operations = [
+        {insert, #domain_conf_v2_InsertOp{
+            object = {currency, Currency}
+        }}
+    ],
+
+    {exception, #domain_conf_v2_OperationConflict{
+        conflict = {object_needs_reference, #domain_conf_v2_ObjectNeedsReference{object = {currency, Currency}}}
+    }} = dmt_client:commit(Revision, Operations, AuthorID, Client).
 
 insert_related_objects_success_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
