@@ -418,7 +418,7 @@ commit_operation(
 ) ->
     {Type, _} = Object,
     References = dmt_object_reference:refless_object_references(Object),
-    Ref = get_insert_object_id(Worker, ForceRef, Type),
+    Ref = get_insert_object_id(Worker, ForceRef, Type, Object),
     Data1 = give_data_id(Object, Ref),
     Ref = insert_object(Worker, Type, Ref, NewVersion, Data1),
     FinalOperation = {insert, #domain_conf_v2_FinalInsertOp{object = Data1}},
@@ -678,7 +678,7 @@ update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
             throw({error, Reason})
     end.
 
-get_insert_object_id(Worker, undefined, Type) ->
+get_insert_object_id(Worker, undefined, Type, Object) ->
     %%  Check if sequence column exists in table
     %%  -- if it doesn't, then raise exception
     case get_unique_numerical_id(Worker, Type) of
@@ -692,10 +692,10 @@ get_insert_object_id(Worker, undefined, Type) ->
                     {Type, NewUUIDRef}
             catch
                 throw:{not_supported, Type} ->
-                    throw({error, {object_type_requires_forced_id, Type}})
+                    throw({error, {operation_error, {conflict, {object_needs_reference, Object}}}})
             end
     end;
-get_insert_object_id(Worker, Ref, _Type) ->
+get_insert_object_id(Worker, Ref, _Type, _Object) ->
     Ref0 = dmt_mapper:to_string(Ref),
     case dmt_database:check_if_object_id_active(Worker, Ref0) of
         true ->
