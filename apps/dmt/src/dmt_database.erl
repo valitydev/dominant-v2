@@ -186,26 +186,24 @@ parse_entity_validation_error(Message) ->
 
 get_references_to(Worker, ID, Version) ->
     Query = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity relation at or before the requested version
-        SELECT source_entity_id, MAX(version) AS max_version_at_time
+    WITH LatestEdge AS (
+        SELECT source_entity_id, target_entity_id, MAX(version) AS max_v
         FROM entity_relation
         WHERE version <= $1
-        GROUP BY source_entity_id
+        GROUP BY source_entity_id, target_entity_id
     ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.source_entity_id, e.is_active
+    EdgeStatus AS (
+        SELECT e.source_entity_id, e.target_entity_id, e.is_active
         FROM entity_relation e
-        INNER JOIN LatestVersionAtRequestedTime lv
-        ON e.source_entity_id = lv.source_entity_id AND e.version = lv.max_version_at_time
+        JOIN LatestEdge le
+            ON e.source_entity_id = le.source_entity_id
+        AND e.target_entity_id = le.target_entity_id
+        AND e.version = le.max_v
     )
     SELECT DISTINCT target_entity_id
-    FROM entity_relation e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.source_entity_id = las.source_entity_id
-    WHERE e.source_entity_id = $2
-    AND e.version <= $1
-    AND las.is_active = TRUE
+    FROM EdgeStatus
+    WHERE source_entity_id = $2
+    AND is_active = TRUE
     """,
 
     Params = [Version, ID],
@@ -218,26 +216,24 @@ get_references_to(Worker, ID, Version) ->
 
 get_referenced_by(Worker, ID, Version) ->
     Query = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity relation at or before the requested version
-        SELECT target_entity_id, MAX(version) AS max_version_at_time
+    WITH LatestEdge AS (
+        SELECT source_entity_id, target_entity_id, MAX(version) AS max_v
         FROM entity_relation
         WHERE version <= $1
-        GROUP BY target_entity_id
+        GROUP BY source_entity_id, target_entity_id
     ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.target_entity_id, e.is_active
+    EdgeStatus AS (
+        SELECT e.source_entity_id, e.target_entity_id, e.is_active
         FROM entity_relation e
-        INNER JOIN LatestVersionAtRequestedTime lv
-        ON e.target_entity_id = lv.target_entity_id AND e.version = lv.max_version_at_time
+        JOIN LatestEdge le
+            ON e.source_entity_id = le.source_entity_id
+        AND e.target_entity_id = le.target_entity_id
+        AND e.version = le.max_v
     )
     SELECT DISTINCT source_entity_id
-    FROM entity_relation e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.target_entity_id = las.target_entity_id
-    WHERE e.target_entity_id = $2
-    AND e.version <= $1
-    AND las.is_active = TRUE
+    FROM EdgeStatus
+    WHERE target_entity_id = $2
+    AND is_active = TRUE
     """,
 
     Params = [Version, ID],
