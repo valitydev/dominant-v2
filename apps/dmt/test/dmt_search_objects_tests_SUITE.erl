@@ -181,6 +181,7 @@ search_limit_config_test(Config) ->
             object =
                 {limit_config, #limiter_config_LimitConfig{
                     processor_type = <<"test">>,
+                    started_at = <<"2021-01-01T00:00:00Z">>,
                     shard_size = 100,
                     time_range_type = {calendar, {day, #limiter_config_TimeRangeTypeCalendarDay{}}},
                     context_type =
