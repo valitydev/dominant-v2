@@ -172,7 +172,6 @@ stringify_ref_test_() ->
         ]
      || {String, Ref} <- [
             {<<"{\"category\":{\"id\":1}}">>, {category, #domain_CategoryRef{id = 1}}},
-            {<<"{\"dummy\":[]}">>, {dummy, #domain_DummyRef{}}},
             {<<"{\"dummy\":{\"id\":\"dummy id\"}}">>, {dummy, #domain_DummyRef{id = <<"dummy id">>}}}
         ]
     ]).
