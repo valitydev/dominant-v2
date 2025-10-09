@@ -3,13 +3,8 @@
 -export([encode/3]).
 -export([decode/3]).
 
--export([get_domain_object_thrift_type/1]).
--export([get_domain_object_reference_thrift_type/1]).
--export([get_commit_ops_type/0]).
-
 -export_type([thrift_type/0]).
 -export_type([function_schema/0]).
--export_type([struct_type/0]).
 -export_type([thrift_value/0]).
 
 -type thrift_value() :: term().
@@ -58,24 +53,3 @@ decode(binary, Type, Data) ->
     {ok, Value, Leftovers} = thrift_strict_binary_codec:read(Codec, Type),
     <<>> = thrift_strict_binary_codec:close(Leftovers),
     Value.
-
--spec get_domain_object_thrift_type(atom()) -> struct_type().
-get_domain_object_thrift_type(DomainObjectType) ->
-    {struct, union, DomainObjectTypes} = dmsl_domain_thrift:struct_info('DomainObject'),
-    get_thrift_type(DomainObjectType, DomainObjectTypes).
-
-get_thrift_type(Type, []) ->
-    erlang:throw({notfound, Type});
-get_thrift_type(Type, [{_, _, ThriftType, Type, _} | _]) ->
-    ThriftType;
-get_thrift_type(Type, [_ | ThriftDefinitions]) ->
-    get_thrift_type(Type, ThriftDefinitions).
-
--spec get_domain_object_reference_thrift_type(atom()) -> struct_type().
-get_domain_object_reference_thrift_type(Type) ->
-    {struct, union, DomainObjectReferenceTypes} = dmsl_domain_thrift:struct_info('Reference'),
-    get_thrift_type(Type, DomainObjectReferenceTypes).
-
--spec get_commit_ops_type() -> {list, thrift_type()}.
-get_commit_ops_type() ->
-    {list, {struct, union, {dmsl_domain_conf_thrift, 'Operation'}}}.
