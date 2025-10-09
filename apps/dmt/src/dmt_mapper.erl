@@ -6,6 +6,10 @@
 -export([to_marshalled_maps/3]).
 -export([marshall_object/1]).
 -export([datetime_to_binary/1]).
+-export([ref_to_string/1]).
+-export([string_to_ref/1]).
+-export([object_to_string/1]).
+-export([string_to_object/1]).
 -export([to_string/1]).
 -export([from_string/1]).
 -export([extract_searchable_text_from_term/1]).
@@ -54,13 +58,34 @@ marshall_object(#{
     <<"is_active">> := IsActive
 }) ->
     dmt_object:just_object(
-        from_string(ID),
+        string_to_ref(ID),
         Type,
         Version,
-        from_string(Data),
+        string_to_object(Data),
         CreatedAt,
         IsActive
     ).
+
+-define(REF_TYPE, {struct, union, {dmsl_domain_thrift, 'Reference'}}).
+-define(OBJECT_TYPE, {struct, union, {dmsl_domain_thrift, 'DomainObject'}}).
+
+ref_to_string({_Type, _} = Ref) ->
+    thrift_term_to_string_(Ref, ?REF_TYPE).
+
+string_to_ref(Str) ->
+    string_to_thrift_term_(Str, ?REF_TYPE).
+
+object_to_string({_Type, _} = Data) ->
+    thrift_term_to_string_(Data, ?OBJECT_TYPE).
+
+string_to_object(Str) ->
+    string_to_thrift_term_(Str, ?OBJECT_TYPE).
+
+thrift_term_to_string_(Term, ThriftType) ->
+    dmt_json:encode(dmt_json:term_to_json(Term, ThriftType)).
+
+string_to_thrift_term_(Str, ThriftType) ->
+    dmt_json:json_to_term(dmt_json:decode(Str), ThriftType).
 
 to_string(A0) ->
     A1 = term_to_binary(A0),
@@ -129,3 +154,42 @@ join_text_list(TextList) ->
 extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).
+
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("damsel/include/dmsl_domain_thrift.hrl").
+
+-spec test() -> _.
+
+-spec stringify_ref_test_() -> _.
+stringify_ref_test_() ->
+    lists:flatten([
+        [
+            ?_assertEqual(String, ref_to_string(Ref)),
+            ?_assertEqual(Ref, string_to_ref(String)),
+            ?_assertEqual(Ref, string_to_ref(ref_to_string(Ref)))
+        ]
+     || {String, Ref} <- [
+            {<<"{\"category\":{\"id\":1}}">>, {category, #domain_CategoryRef{id = 1}}},
+            {<<"{\"dummy\":{\"id\":\"dummy id\"}}">>, {dummy, #domain_DummyRef{id = <<"dummy id">>}}}
+        ]
+    ]).
+
+-spec stringify_object_test_() -> _.
+stringify_object_test_() ->
+    String =
+        <<"{\"category\":{\"ref\":{\"id\":1},",
+            "\"data\":{\"name\":\"name\",\"description\":\"description\",\"type\":\"test\"}}}">>,
+    Object =
+        {category, #domain_CategoryObject{
+            ref = #domain_CategoryRef{id = 1},
+            data = #domain_Category{name = <<"name">>, description = <<"description">>, type = test}
+        }},
+    [
+        ?_assertEqual(String, object_to_string(Object)),
+        ?_assertEqual(Object, string_to_object(String)),
+        ?_assertEqual(Object, string_to_object(object_to_string(Object)))
+    ].
+
+-endif.

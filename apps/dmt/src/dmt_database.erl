@@ -177,9 +177,9 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
 parse_entity_validation_error(Message) ->
     case binary:split(Message, <<"|">>, [global]) of
         [<<"ENTITY_NOT_EXISTS">>, <<"SOURCE">>, EntityId] ->
-            {source_entity_not_found, dmt_mapper:from_string(EntityId)};
+            {source_entity_not_found, dmt_mapper:string_to_ref(EntityId)};
         [<<"ENTITY_NOT_EXISTS">>, <<"TARGET">>, EntityId] ->
-            {target_entity_not_found, dmt_mapper:from_string(EntityId)};
+            {target_entity_not_found, dmt_mapper:string_to_ref(EntityId)};
         _ ->
             unknown
     end.
@@ -209,7 +209,7 @@ get_references_to(Worker, ID, Version) ->
     Params = [Version, ID],
     case epg_pool:query(Worker, Query, Params) of
         {ok, _Columns, Refs} ->
-            lists:map(fun({Res}) -> dmt_mapper:from_string(Res) end, Refs);
+            lists:map(fun({Res}) -> dmt_mapper:string_to_ref(Res) end, Refs);
         {error, Reason} ->
             {error, Reason}
     end.
@@ -239,7 +239,7 @@ get_referenced_by(Worker, ID, Version) ->
     Params = [Version, ID],
     case epg_pool:query(Worker, Query, Params) of
         {ok, _Columns, Refs} ->
-            lists:map(fun({Res}) -> dmt_mapper:from_string(Res) end, Refs);
+            lists:map(fun({Res}) -> dmt_mapper:string_to_ref(Res) end, Refs);
         {error, Reason} ->
             {error, Reason}
     end.
@@ -936,8 +936,8 @@ get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, Inclu
 parse_graph_edges_result(Rows) ->
     Edges = [
         #{
-            source_ref => dmt_mapper:from_string(SourceRef),
-            target_ref => dmt_mapper:from_string(TargetRef)
+            source_ref => dmt_mapper:string_to_ref(SourceRef),
+            target_ref => dmt_mapper:string_to_ref(TargetRef)
         }
      || {SourceRef, TargetRef} <- Rows
     ],

@@ -52,7 +52,7 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
 get_object_with_references(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
-            ObjectRefString = dmt_mapper:to_string(ObjectRef),
+            ObjectRefString = dmt_mapper:ref_to_string(ObjectRef),
             ReferencedByRefs = dmt_database:get_referenced_by(Worker, ObjectRefString, V),
             ReferencesToRefs = dmt_database:get_references_to(Worker, ObjectRefString, V),
 
@@ -83,7 +83,7 @@ get_objects(Worker, {version, V}, ObjectRefs) ->
     case dmt_database:check_version_exists(Worker, V) of
         true ->
             % Convert references to strings
-            StringRefs = lists:map(fun dmt_mapper:to_string/1, ObjectRefs),
+            StringRefs = lists:map(fun dmt_mapper:ref_to_string/1, ObjectRefs),
             % Get objects from database
             case dmt_database:get_objects(Worker, StringRefs, V) of
                 {ok, Objects0} ->
@@ -160,7 +160,7 @@ get_related_graph(Request) ->
         {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
         ok ?= validate_object_exists(Worker, ObjectRef, ResolvedVersion),
         % Use SQL-based graph traversal for better performance
-        ObjectRefString = dmt_mapper:to_string(ObjectRef),
+        ObjectRefString = dmt_mapper:ref_to_string(ObjectRef),
         {ok, {NodeMaps, EdgeMaps}} ?=
             dmt_database:get_related_graph(
                 Worker,
@@ -224,7 +224,7 @@ get_object_history(ObjectRef, RequestParams) ->
     } = RequestParams,
     Offset1 = maybe_from_string(Offset0, 0),
     maybe
-        StringRef = dmt_mapper:to_string(ObjectRef),
+        StringRef = dmt_mapper:ref_to_string(ObjectRef),
         {ok, Objects0, NewOffset} ?=
             dmt_database:get_object_history(default_pool, StringRef, Limit, Offset1),
         {ok, Objects1} = add_created_by_to_objects(default_pool, Objects0),
@@ -473,8 +473,8 @@ commit_operation(
     }.
 
 insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
-    OriginRef1 = dmt_mapper:to_string(OriginRef),
-    Reference1 = dmt_mapper:to_string(Reference),
+    OriginRef1 = dmt_mapper:ref_to_string(OriginRef),
+    Reference1 = dmt_mapper:ref_to_string(Reference),
     case dmt_database:insert_relations(Worker, OriginRef1, Reference1, NewVersion, IsActive) of
         ok ->
             ok;
@@ -492,7 +492,7 @@ insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
 commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
     maps:foreach(
         fun(OriginRef, References) ->
-            OriginRef1 = dmt_mapper:to_string(OriginRef),
+            OriginRef1 = dmt_mapper:ref_to_string(OriginRef),
             ExistingReferences = dmt_database:get_references_to(Worker, OriginRef1, NewVersion),
 
             ReferencesSet = ordsets:from_list(References),
@@ -574,7 +574,7 @@ validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
     ok.
 
 validate_no_references_to_entity(Worker, Ref, Version) ->
-    Ref1 = dmt_mapper:to_string(Ref),
+    Ref1 = dmt_mapper:ref_to_string(Ref),
     _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref, Version]),
     case dmt_database:get_referenced_by(Worker, Ref1, Version) of
         [] ->
@@ -585,7 +585,7 @@ validate_no_references_to_entity(Worker, Ref, Version) ->
     end.
 
 validate_latest_version(Worker, TargetVersion, Ref) ->
-    Ref0 = dmt_mapper:to_string(Ref),
+    Ref0 = dmt_mapper:ref_to_string(Ref),
     case dmt_database:get_object_latest_version(Worker, Ref0) of
         {ok, MostRecentVersion} when MostRecentVersion > TargetVersion ->
             throw({error, {object_update_too_old, {Ref, MostRecentVersion}}});
@@ -614,8 +614,8 @@ get_new_version(Worker, AuthorID) ->
     end.
 
 insert_object(Worker, Type, ID0, Version, Data0) ->
-    ID1 = dmt_mapper:to_string(ID0),
-    Data1 = dmt_mapper:to_string(Data0),
+    ID1 = dmt_mapper:ref_to_string(ID0),
+    Data1 = dmt_mapper:object_to_string(Data0),
     SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
     case dmt_database:insert_object(Worker, ID1, Type, Version, Data1, SearchVector) of
@@ -657,8 +657,8 @@ get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
 update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
-    Data1 = dmt_mapper:to_string(Data0),
-    ID1 = dmt_mapper:to_string(ID0),
+    Data1 = dmt_mapper:object_to_string(Data0),
+    ID1 = dmt_mapper:ref_to_string(ID0),
     SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
 
     case
@@ -696,7 +696,7 @@ get_insert_object_id(Worker, undefined, Type, Object) ->
             end
     end;
 get_insert_object_id(Worker, Ref, _Type, _Object) ->
-    Ref0 = dmt_mapper:to_string(Ref),
+    Ref0 = dmt_mapper:ref_to_string(Ref),
     case dmt_database:check_if_object_id_active(Worker, Ref0) of
         true ->
             throw({error, {operation_error, {conflict, {forced_id_exists, Ref}}}});
@@ -710,7 +710,7 @@ get_unique_numerical_id(Worker, Type) ->
     case dmt_database:get_next_sequence(Worker, Type) of
         {ok, NewID} ->
             NewRef = dmt_object_id:get_numerical_object_id(Type, NewID),
-            NewRefString = dmt_mapper:to_string({Type, NewRef}),
+            NewRefString = dmt_mapper:ref_to_string({Type, NewRef}),
             case dmt_database:check_if_object_id_active(Worker, NewRefString) of
                 true ->
                     get_unique_numerical_id(Worker, Type);
@@ -728,7 +728,7 @@ get_unique_numerical_id(Worker, Type) ->
 get_unique_uuid(Worker, Type) ->
     NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
-    NewRefString = dmt_mapper:to_string({Type, NewID}),
+    NewRefString = dmt_mapper:ref_to_string({Type, NewID}),
     case dmt_database:check_if_object_id_active(Worker, NewRefString) of
         true ->
             get_unique_uuid(Worker, Type);
@@ -739,7 +739,7 @@ get_unique_uuid(Worker, Type) ->
     end.
 
 get_target_object(Worker, Ref, Version) ->
-    Ref0 = dmt_mapper:to_string(Ref),
+    Ref0 = dmt_mapper:ref_to_string(Ref),
     case dmt_database:check_version_exists(Worker, Version) of
         true ->
             case dmt_database:get_object(Worker, Ref0, Version) of
@@ -776,7 +776,7 @@ add_created_by_to_object(Worker, Object) ->
     {ok, Object#{created_by => Author}}.
 
 get_latest_target_object(Worker, Ref) ->
-    Ref0 = dmt_mapper:to_string(Ref),
+    Ref0 = dmt_mapper:ref_to_string(Ref),
 
     case dmt_database:get_latest_object(Worker, Ref0) of
         {ok, LatestObject} ->
@@ -845,7 +845,7 @@ resolve_version_reference(Worker, Version) ->
     end.
 
 validate_object_exists(Worker, ObjectRef, Version) ->
-    ObjectRefString = dmt_mapper:to_string(ObjectRef),
+    ObjectRefString = dmt_mapper:ref_to_string(ObjectRef),
     case dmt_database:get_object(Worker, ObjectRefString, Version) of
         {ok, _Object} -> ok;
         {error, not_found} -> {error, object_not_found}
