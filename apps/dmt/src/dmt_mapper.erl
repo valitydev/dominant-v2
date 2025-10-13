@@ -10,8 +10,6 @@
 -export([string_to_ref/1]).
 -export([object_to_string/1]).
 -export([string_to_object/1]).
--export([to_string/1]).
--export([from_string/1]).
 -export([extract_searchable_text_from_term/1]).
 
 to_marshalled_maps(Columns, Rows) ->
@@ -86,14 +84,6 @@ thrift_term_to_string_(Term, ThriftType) ->
 
 string_to_thrift_term_(Str, ThriftType) ->
     dmt_json:json_to_term(dmt_json:decode(Str), ThriftType).
-
-to_string(A0) ->
-    A1 = term_to_binary(A0),
-    base64:encode(A1).
-
-from_string(B0) ->
-    B1 = base64:decode(B0),
-    binary_to_term(B1).
 
 %% Process terms recursively and build a list of text fragments
 extract_text(Term, Acc) when is_binary(Term) ->
