@@ -866,10 +866,11 @@ get_multiple_related_graph(Request) ->
     maybe
         Worker = default_pool,
         {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
-        ok ?= case validate_objects_exist(Worker, ObjectRefs, ResolvedVersion) of
-            ok -> ok;
-            {error, object_not_found} -> {error, object_not_found}
-        end,
+        ok ?=
+            case validate_objects_exist(Worker, ObjectRefs, ResolvedVersion) of
+                ok -> ok;
+                {error, object_not_found} -> {error, object_not_found}
+            end,
         % Use SQL-based graph traversal for multiple refs
         {ok, {NodeMaps, EdgeMaps}} ?=
             dmt_database:get_multiple_related_graph(
@@ -931,16 +932,18 @@ search_related_graph(Request) ->
         {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
         ok ?= maybe_check_entity_type_exists(SearchedType),
         % Convert types to binaries for database
-        SearchedTypeBinary = case SearchedType of
-            undefined -> undefined;
-            _ when is_atom(SearchedType) -> atom_to_binary(SearchedType, utf8);
-            _ -> SearchedType
-        end,
-        ReturnedTypeBinary = case ReturnedType of
-            undefined -> undefined;
-            _ when is_atom(ReturnedType) -> atom_to_binary(ReturnedType, utf8);
-            _ -> ReturnedType
-        end,
+        SearchedTypeBinary =
+            case SearchedType of
+                undefined -> undefined;
+                _ when is_atom(SearchedType) -> atom_to_binary(SearchedType, utf8);
+                _ -> SearchedType
+            end,
+        ReturnedTypeBinary =
+            case ReturnedType of
+                undefined -> undefined;
+                _ when is_atom(ReturnedType) -> atom_to_binary(ReturnedType, utf8);
+                _ -> ReturnedType
+            end,
         % Search for objects and get their related graphs
         {ok, {NodeMaps, EdgeMaps}} ?=
             dmt_database:search_related_graph(
@@ -988,21 +991,23 @@ search_related_graph(Request) ->
     end.
 
 validate_objects_exist(Worker, ObjectRefs, Version) ->
-    case lists:foldl(
-        fun(ObjectRef, Acc) ->
-            case Acc of
-                ok ->
-                    case validate_object_exists(Worker, ObjectRef, Version) of
-                        ok -> ok;
-                        {error, object_not_found} -> {error, object_not_found}
-                    end;
-                Error ->
-                    Error
-            end
-        end,
-        ok,
-        ObjectRefs
-    ) of
+    case
+        lists:foldl(
+            fun(ObjectRef, Acc) ->
+                case Acc of
+                    ok ->
+                        case validate_object_exists(Worker, ObjectRef, Version) of
+                            ok -> ok;
+                            {error, object_not_found} -> {error, object_not_found}
+                        end;
+                    Error ->
+                        Error
+                end
+            end,
+            ok,
+            ObjectRefs
+        )
+    of
         ok -> ok;
         {error, object_not_found} -> {error, object_not_found}
     end.

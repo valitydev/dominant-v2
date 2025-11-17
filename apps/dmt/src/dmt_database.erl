@@ -817,10 +817,11 @@ filter_nodes_by_type(Nodes, undefined) ->
     Nodes;
 filter_nodes_by_type(Nodes, FilterType) ->
     % FilterType should already be a binary from the repository layer
-    FilterTypeBinary = case FilterType of
-        _ when is_binary(FilterType) -> FilterType;
-        _ when is_atom(FilterType) -> atom_to_binary(FilterType, utf8)
-    end,
+    FilterTypeBinary =
+        case FilterType of
+            _ when is_binary(FilterType) -> FilterType;
+            _ when is_atom(FilterType) -> atom_to_binary(FilterType, utf8)
+        end,
     [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
 
 filter_edges_by_nodes(Edges, Nodes) ->
@@ -962,11 +963,13 @@ get_multiple_related_graph(
 ) ->
     % Convert all refs to strings
     ObjectRefStrings = [dmt_mapper:ref_to_string(Ref) || Ref <- ObjectRefs],
-    
+
     % Get graphs for each ref and combine them
-    case get_multiple_related_graph_edges(
-        Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound
-    ) of
+    case
+        get_multiple_related_graph_edges(
+            Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound
+        )
+    of
         {ok, {EntityIds, Edges}} ->
             get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, undefined);
         {error, Reason} ->
@@ -1060,7 +1063,7 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
     SELECT source_ref, target_ref
     FROM EdgeDetails
     """,
-    
+
     case epg_pool:query(Worker, Query, [ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound]) of
         {ok, _Columns, Rows} ->
             {EntityIds, Edges} = parse_graph_edges_result(Rows),
@@ -1083,73 +1086,77 @@ search_related_graph(
             undefined -> <<"NULL">>;
             _ -> SearchedType
         end,
-    
+
     % Use a simplified search without limit/offset to get all matching objects
-    SearchQuery = case Query of
-        <<"*">> ->
-            """
-            WITH LatestVersionAtRequestedTime AS (
-                SELECT id, MAX(version) AS max_version_at_time
-                FROM entity
-                WHERE version <= $2
-                GROUP BY id
-            ),
-            ActiveStatusAtRequestedTime AS (
-                SELECT e.id, e.is_active
+    SearchQuery =
+        case Query of
+            <<"*">> ->
+                """
+                WITH LatestVersionAtRequestedTime AS (
+                    SELECT id, MAX(version) AS max_version_at_time
+                    FROM entity
+                    WHERE version <= $2
+                    GROUP BY id
+                ),
+                ActiveStatusAtRequestedTime AS (
+                    SELECT e.id, e.is_active
+                    FROM entity e
+                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+                )
+                SELECT DISTINCT ON (e.id) e.id
                 FROM entity e
-                INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-            )
-            SELECT DISTINCT ON (e.id) e.id
-            FROM entity e
-            INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-            WHERE e.version <= $2
-            AND ($3 = 'NULL' OR e.entity_type = $3)
-            AND las.is_active = TRUE
-            ORDER BY e.id, e.version DESC
-            """;
-        _ ->
-            """
-            WITH LatestVersionAtRequestedTime AS (
-                SELECT id, MAX(version) AS max_version_at_time
-                FROM entity
-                WHERE version <= $2
-                GROUP BY id
-            ),
-            ActiveStatusAtRequestedTime AS (
-                SELECT e.id, e.is_active
+                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+                WHERE e.version <= $2
+                AND ($3 = 'NULL' OR e.entity_type = $3)
+                AND las.is_active = TRUE
+                ORDER BY e.id, e.version DESC
+                """;
+            _ ->
+                """
+                WITH LatestVersionAtRequestedTime AS (
+                    SELECT id, MAX(version) AS max_version_at_time
+                    FROM entity
+                    WHERE version <= $2
+                    GROUP BY id
+                ),
+                ActiveStatusAtRequestedTime AS (
+                    SELECT e.id, e.is_active
+                    FROM entity e
+                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+                )
+                SELECT DISTINCT ON (e.id) e.id
                 FROM entity e
-                INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-            )
-            SELECT DISTINCT ON (e.id) e.id
-            FROM entity e
-            INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-            WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
-            AND e.version <= $2
-            AND ($3 = 'NULL' OR e.entity_type = $3)
-            AND las.is_active = TRUE
-            ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
-            """
-    end,
-    
-    SearchParams = case Query of
-        <<"*">> -> [Version, TypeValue];
-        _ -> [Query, Version, TypeValue]
-    end,
-    
+                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+                WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+                AND e.version <= $2
+                AND ($3 = 'NULL' OR e.entity_type = $3)
+                AND las.is_active = TRUE
+                ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
+                """
+        end,
+
+    SearchParams =
+        case Query of
+            <<"*">> -> [Version, TypeValue];
+            _ -> [Query, Version, TypeValue]
+        end,
+
     case epg_pool:query(Worker, SearchQuery, SearchParams) of
         {ok, _Columns, Rows} ->
             % Extract entity IDs from search results
             MatchingRefs = [Id || {Id} <- Rows],
-            
+
             case MatchingRefs of
                 [] ->
                     % No matching objects, return empty graph
                     {ok, {[], []}};
                 _ ->
                     % Get related graph for all matching objects
-                    case get_multiple_related_graph_edges(
-                        Worker, MatchingRefs, Version, Depth, IncludeInbound, IncludeOutbound
-                    ) of
+                    case
+                        get_multiple_related_graph_edges(
+                            Worker, MatchingRefs, Version, Depth, IncludeInbound, IncludeOutbound
+                        )
+                    of
                         {ok, {EntityIds, Edges}} ->
                             get_objects_and_filter(Worker, EntityIds, Version, ReturnedType, Edges, undefined);
                         {error, Reason} ->
