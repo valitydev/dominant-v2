@@ -85,6 +85,28 @@ do_handle_function('GetRelatedGraph', {RelatedGraphRequest}, _Context, _Options)
             woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
         {error, Reason} ->
             woody_error:raise(system, {internal, Reason})
+    end;
+do_handle_function('GetMultipleRelatedGraph', {MultipleRelatedGraphRequest}, _Context, _Options) ->
+    case dmt_repository:get_multiple_related_graph(MultipleRelatedGraphRequest) of
+        {ok, Result} ->
+            {ok, Result};
+        {error, object_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_ObjectNotFound{});
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
+    end;
+do_handle_function('SearchRelatedGraph', {SearchRelatedGraphRequest}, _Context, _Options) ->
+    case dmt_repository:search_related_graph(SearchRelatedGraphRequest) of
+        {ok, Result} ->
+            {ok, Result};
+        {error, object_type_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_ObjectTypeNotFound{});
+        {error, version_not_found} ->
+            woody_error:raise(business, #domain_conf_v2_VersionNotFound{});
+        {error, Reason} ->
+            woody_error:raise(system, {internal, Reason})
     end.
 
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->

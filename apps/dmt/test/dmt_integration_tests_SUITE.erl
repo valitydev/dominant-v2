@@ -50,6 +50,10 @@
     get_related_graph_type_filter_test/1,
     get_related_graph_complex_chain_test/1,
     get_related_graph_error_handling_test/1,
+    get_multiple_related_graph_basic_test/1,
+    get_multiple_related_graph_multiple_refs_test/1,
+    search_related_graph_basic_test/1,
+    search_related_graph_with_type_filter_test/1,
     remove_referencing_and_referenced_same_commit_success_test/1
 ]).
 
@@ -113,6 +117,10 @@ groups() ->
             get_related_graph_type_filter_test,
             get_related_graph_complex_chain_test,
             get_related_graph_error_handling_test,
+            get_multiple_related_graph_basic_test,
+            get_multiple_related_graph_multiple_refs_test,
+            search_related_graph_basic_test,
+            search_related_graph_with_type_filter_test,
             remove_referencing_and_referenced_same_commit_success_test
         ]}
     ].
@@ -1797,6 +1805,328 @@ get_related_graph_error_handling_test(Config) ->
     {exception, #domain_conf_v2_VersionNotFound{}} = dmt_client:get_related_graph(
         InvalidVersionRequest, Client
     ).
+
+%% Test GetMultipleRelatedGraph functionality - Basic test
+get_multiple_related_graph_basic_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_multiple_related_graph_basic_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create two proxies
+    Proxy1Ops = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"multiple_test_proxy1">>,
+                    description = <<"proxy1 for multiple graph test">>,
+                    url = <<"http://multiple-test-proxy1.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = Proxy1Ref}}]
+    }} = dmt_client:commit(Revision1, Proxy1Ops, AuthorID, Client),
+
+    Proxy2Ops = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"multiple_test_proxy2">>,
+                    description = <<"proxy2 for multiple graph test">>,
+                    url = <<"http://multiple-test-proxy2.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{proxy, #domain_ProxyObject{ref = Proxy2Ref}}]
+    }} = dmt_client:commit(Revision2, Proxy2Ops, AuthorID, Client),
+
+    % Create a provider that references both proxies
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"multiple_test_provider">>,
+                    realm = test,
+                    description = <<"provider for multiple graph test">>,
+                    proxy = #domain_Proxy{ref = Proxy1Ref, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision3, ProviderOps, AuthorID, Client),
+
+    % Test GetMultipleRelatedGraph with both proxies
+    Request = #domain_conf_v2_MultipleRelatedGraphRequest{
+        refs = [{proxy, Proxy1Ref}, {proxy, Proxy2Ref}],
+        version = Revision4,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = Nodes,
+        edges = Edges
+    }} = dmt_client:get_multiple_related_graph(Request, Client),
+
+    % Verify nodes
+    ?assert(length(Nodes) >= 2, "Should have at least 2 nodes (proxy1 and proxy2)"),
+    NodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- Nodes],
+    ?assert(lists:member({proxy, Proxy1Ref}, NodeRefs), "Should contain proxy1 node"),
+    ?assert(lists:member({proxy, Proxy2Ref}, NodeRefs), "Should contain proxy2 node"),
+    % Provider should be included because it references proxy1
+    ?assert(lists:member({provider, ProviderRef}, NodeRefs), "Should contain provider node"),
+
+    % Verify edges
+    EdgeSourceTargets = [
+        {Source, Target}
+     || #domain_conf_v2_ReferenceEdge{source = Source, target = Target} <- Edges
+    ],
+    ?assert(
+        lists:member({{provider, ProviderRef}, {proxy, Proxy1Ref}}, EdgeSourceTargets),
+        "Should have edge from provider to proxy1"
+    ).
+
+%% Test GetMultipleRelatedGraph with multiple references
+get_multiple_related_graph_multiple_refs_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"get_multiple_related_graph_multiple_refs_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a category
+    CategoryOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {category, #domain_Category{
+                    name = <<"multiple_refs_category">>,
+                    description = <<"category for multiple refs test">>
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{category, #domain_CategoryObject{ref = CategoryRef}}]
+    }} = dmt_client:commit(Revision1, CategoryOps, AuthorID, Client),
+
+    % Create a proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"multiple_refs_proxy">>,
+                    description = <<"proxy for multiple refs test">>,
+                    url = <<"http://multiple-refs-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision2, ProxyOps, AuthorID, Client),
+
+    % Create a provider that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"multiple_refs_provider">>,
+                    realm = test,
+                    description = <<"provider for multiple refs test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision4,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision3, ProviderOps, AuthorID, Client),
+
+    % Test GetMultipleRelatedGraph with category and proxy
+    Request = #domain_conf_v2_MultipleRelatedGraphRequest{
+        refs = [{category, CategoryRef}, {proxy, ProxyRef}],
+        version = Revision4,
+        type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = Nodes,
+        edges = Edges
+    }} = dmt_client:get_multiple_related_graph(Request, Client),
+
+    % Verify nodes - should contain both starting refs and the provider that references them
+    NodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- Nodes],
+    ?assert(lists:member({category, CategoryRef}, NodeRefs), "Should contain category node"),
+    ?assert(lists:member({proxy, ProxyRef}, NodeRefs), "Should contain proxy node"),
+    ?assert(lists:member({provider, ProviderRef}, NodeRefs), "Should contain provider node"),
+
+    % Verify edges - should contain edge from provider to proxy
+    EdgeSourceTargets = [
+        {Source, Target}
+     || #domain_conf_v2_ReferenceEdge{source = Source, target = Target} <- Edges
+    ],
+    ?assert(
+        lists:member({{provider, ProviderRef}, {proxy, ProxyRef}}, EdgeSourceTargets),
+        "Should have edge from provider to proxy"
+    ).
+
+%% Test SearchRelatedGraph functionality - Basic test
+search_related_graph_basic_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"search_related_graph_basic_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a proxy with a searchable name
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"search_test_proxy">>,
+                    description = <<"proxy for search graph test">>,
+                    url = <<"http://search-test-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Create a provider that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"search_test_provider">>,
+                    realm = test,
+                    description = <<"provider for search graph test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Test SearchRelatedGraph searching for the proxy
+    Request = #domain_conf_v2_SearchRelatedGraphRequest{
+        query = <<"search_test_proxy">>,
+        searched_type = proxy,
+        version = Revision3,
+        returned_type = undefined,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = Nodes,
+        edges = Edges
+    }} = dmt_client:search_related_graph(Request, Client),
+
+    % Verify nodes
+    ?assert(length(Nodes) >= 2, "Should have at least 2 nodes (proxy and provider)"),
+    NodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- Nodes],
+    ?assert(lists:member({proxy, ProxyRef}, NodeRefs), "Should contain proxy node"),
+    ?assert(lists:member({provider, ProviderRef}, NodeRefs), "Should contain provider node"),
+
+    % Verify edges
+    EdgeSourceTargets = [
+        {Source, Target}
+     || #domain_conf_v2_ReferenceEdge{source = Source, target = Target} <- Edges
+    ],
+    ?assert(
+        lists:member({{provider, ProviderRef}, {proxy, ProxyRef}}, EdgeSourceTargets),
+        "Should have edge from provider to proxy"
+    ).
+
+%% Test SearchRelatedGraph with type filter
+search_related_graph_with_type_filter_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    Email = <<"search_related_graph_type_filter_test@example.com">>,
+    AuthorID = create_author(Email, Client),
+    Revision1 = 0,
+
+    % Create a proxy
+    ProxyOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {proxy, #domain_ProxyDefinition{
+                    name = <<"type_filter_proxy">>,
+                    description = <<"proxy for type filter test">>,
+                    url = <<"http://type-filter-proxy.example.com">>,
+                    options = #{}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision2,
+        new_objects = [{proxy, #domain_ProxyObject{ref = ProxyRef}}]
+    }} = dmt_client:commit(Revision1, ProxyOps, AuthorID, Client),
+
+    % Create a provider that references the proxy
+    ProviderOps = [
+        {insert, #domain_conf_v2_InsertOp{
+            object =
+                {provider, #domain_Provider{
+                    name = <<"type_filter_provider">>,
+                    realm = test,
+                    description = <<"provider for type filter test">>,
+                    proxy = #domain_Proxy{ref = ProxyRef, additional = #{}}
+                }}
+        }}
+    ],
+
+    {ok, #domain_conf_v2_CommitResponse{
+        version = Revision3,
+        new_objects = [{provider, #domain_ProviderObject{ref = ProviderRef}}]
+    }} = dmt_client:commit(Revision2, ProviderOps, AuthorID, Client),
+
+    % Test SearchRelatedGraph searching for proxy, but filtering returned nodes to provider type only
+    Request = #domain_conf_v2_SearchRelatedGraphRequest{
+        query = <<"type_filter_proxy">>,
+        searched_type = proxy,
+        version = Revision3,
+        returned_type = provider,
+        include_inbound = true,
+        include_outbound = true,
+        depth = 1
+    },
+
+    {ok, #domain_conf_v2_RelatedGraph{
+        nodes = Nodes,
+        edges = _Edges
+    }} = dmt_client:search_related_graph(Request, Client),
+
+    % Verify nodes - should only contain providers (due to returned_type filter)
+    NodeRefs = [Ref || #domain_conf_v2_LimitedVersionedObject{ref = Ref} <- Nodes],
+    ?assert(lists:member({provider, ProviderRef}, NodeRefs), "Should contain provider node"),
+    % Proxy should not be in nodes due to type filter
+    ?assertNot(lists:member({proxy, ProxyRef}, NodeRefs), "Should not contain proxy node due to type filter").
 
 %% Test removing referencing and referenced entities in the same commit succeeds
 remove_referencing_and_referenced_same_commit_success_test(Config) ->
