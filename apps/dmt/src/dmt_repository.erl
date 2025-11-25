@@ -866,12 +866,7 @@ get_multiple_related_graph(Request) ->
     maybe
         Worker = default_pool,
         {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
-        ok ?=
-            case validate_objects_exist(Worker, ObjectRefs, ResolvedVersion) of
-                ok -> ok;
-                {error, object_not_found} -> {error, object_not_found}
-            end,
-        % Use SQL-based graph traversal for multiple refs
+        ok ?= validate_objects_exist(Worker, ObjectRefs, ResolvedVersion),
         {ok, {NodeMaps, EdgeMaps}} ?=
             dmt_database:get_multiple_related_graph(
                 Worker,
@@ -882,7 +877,6 @@ get_multiple_related_graph(Request) ->
                 IncludeOutbound,
                 Type
             ),
-        % Convert to Thrift structures
         {ok, NodesWithAuthors} = add_created_by_to_objects(Worker, NodeMaps),
         NodesResult = [
             #domain_conf_v2_LimitedVersionedObject{
@@ -931,7 +925,6 @@ search_related_graph(Request) ->
         Worker = default_pool,
         {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
         ok ?= maybe_check_entity_type_exists(SearchedType),
-        % Convert types to binaries for database
         SearchedTypeBinary =
             case SearchedType of
                 undefined -> undefined;
@@ -944,7 +937,6 @@ search_related_graph(Request) ->
                 _ when is_atom(ReturnedType) -> atom_to_binary(ReturnedType, utf8);
                 _ -> ReturnedType
             end,
-        % Search for objects and get their related graphs
         {ok, {NodeMaps, EdgeMaps}} ?=
             dmt_database:search_related_graph(
                 Worker,
@@ -956,7 +948,6 @@ search_related_graph(Request) ->
                 IncludeOutbound,
                 ReturnedTypeBinary
             ),
-        % Convert to Thrift structures
         {ok, NodesWithAuthors} = add_created_by_to_objects(Worker, NodeMaps),
         NodesResult = [
             #domain_conf_v2_LimitedVersionedObject{
@@ -991,23 +982,13 @@ search_related_graph(Request) ->
     end.
 
 validate_objects_exist(Worker, ObjectRefs, Version) ->
-    case
-        lists:foldl(
-            fun(ObjectRef, Acc) ->
-                case Acc of
-                    ok ->
-                        case validate_object_exists(Worker, ObjectRef, Version) of
-                            ok -> ok;
-                            {error, object_not_found} -> {error, object_not_found}
-                        end;
-                    Error ->
-                        Error
-                end
-            end,
-            ok,
-            ObjectRefs
-        )
-    of
-        ok -> ok;
-        {error, object_not_found} -> {error, object_not_found}
-    end.
+    genlib_list:foldl_while(
+        fun(ObjectRef, _Acc) ->
+            case validate_object_exists(Worker, ObjectRef, Version) of
+                ok -> {cont, ok};
+                {error, object_not_found} -> {halt, {error, object_not_found}}
+            end
+        end,
+        ok,
+        ObjectRefs
+    ).

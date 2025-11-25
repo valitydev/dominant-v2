@@ -816,7 +816,6 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
 filter_nodes_by_type(Nodes, undefined) ->
     Nodes;
 filter_nodes_by_type(Nodes, FilterType) ->
-    % FilterType should already be a binary from the repository layer
     FilterTypeBinary =
         case FilterType of
             _ when is_binary(FilterType) -> FilterType;
@@ -956,15 +955,11 @@ parse_graph_edges_result(Rows) ->
 
     {EntityIds1, Edges}.
 
-%% Get related graph for multiple object references
-%% Combines graphs from all refs into a single graph
 get_multiple_related_graph(
     Worker, ObjectRefs, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
 ) ->
-    % Convert all refs to strings
     ObjectRefStrings = [dmt_mapper:ref_to_string(Ref) || Ref <- ObjectRefs],
 
-    % Get graphs for each ref and combine them
     case
         get_multiple_related_graph_edges(
             Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound
@@ -977,7 +972,6 @@ get_multiple_related_graph(
             {error, Reason}
     end.
 
-%% Get related graph edges for multiple object references
 get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound) ->
     Query = """
     WITH RECURSIVE
@@ -1075,22 +1069,18 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
             {error, Reason}
     end.
 
-%% Search for objects and get their related graphs
 search_related_graph(
     Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
 ) ->
-    % First, search for objects matching the query
-    % SearchedType should already be a binary from the repository layer
     TypeValue =
         case SearchedType of
             undefined -> <<"NULL">>;
             _ -> SearchedType
         end,
 
-    % Use a simplified search without limit/offset to get all matching objects
     SearchQuery =
         case Query of
-            <<"*">> ->
+            ~"*" ->
                 """
                 WITH LatestVersionAtRequestedTime AS (
                     SELECT id, MAX(version) AS max_version_at_time
@@ -1137,32 +1127,23 @@ search_related_graph(
 
     SearchParams =
         case Query of
-            <<"*">> -> [Version, TypeValue];
+            ~"*" -> [Version, TypeValue];
             _ -> [Query, Version, TypeValue]
         end,
 
     case epg_pool:query(Worker, SearchQuery, SearchParams) of
         {ok, _Columns, Rows} ->
-            % Extract entity IDs from search results
-            MatchingRefs = [Id || {Id} <- Rows],
-
-            case MatchingRefs of
-                [] ->
-                    % No matching objects, return empty graph
-                    {ok, {[], []}};
-                _ ->
-                    % Get related graph for all matching objects
-                    case
-                        get_multiple_related_graph_edges(
-                            Worker, MatchingRefs, Version, Depth, IncludeInbound, IncludeOutbound
-                        )
-                    of
-                        {ok, {EntityIds, Edges}} ->
-                            get_objects_and_filter(Worker, EntityIds, Version, ReturnedType, Edges, undefined);
-                        {error, Reason} ->
-                            logger:error("Error in search graph edge traversal: ~p", [Reason]),
-                            {error, Reason}
-                    end
+            MatchingRefs = [ID || {ID} <- Rows],
+            case
+                get_multiple_related_graph_edges(
+                    Worker, MatchingRefs, Version, Depth, IncludeInbound, IncludeOutbound
+                )
+            of
+                {ok, {EntityIds, Edges}} ->
+                    get_objects_and_filter(Worker, EntityIds, Version, ReturnedType, Edges, undefined);
+                {error, Reason} ->
+                    logger:error("Error in search graph edge traversal: ~p", [Reason]),
+                    {error, Reason}
             end;
         {error, Reason} ->
             logger:error("Error searching objects for graph: ~p", [Reason]),
