@@ -16,6 +16,8 @@
 -export([search_full_objects/1]).
 -export([filter_search_results/1]).
 -export([get_related_graph/1]).
+-export([get_multiple_related_graph/1]).
+-export([search_related_graph/1]).
 
 %%
 
@@ -850,3 +852,143 @@ validate_object_exists(Worker, ObjectRef, Version) ->
         {ok, _Object} -> ok;
         {error, not_found} -> {error, object_not_found}
     end.
+
+get_multiple_related_graph(Request) ->
+    #domain_conf_v2_MultipleRelatedGraphRequest{
+        refs = ObjectRefs,
+        version = Version,
+        type = Type,
+        include_inbound = IncludeInbound,
+        include_outbound = IncludeOutbound,
+        depth = Depth
+    } = Request,
+
+    maybe
+        Worker = default_pool,
+        {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
+        ok ?= validate_objects_exist(Worker, ObjectRefs, ResolvedVersion),
+        {ok, {NodeMaps, EdgeMaps}} ?=
+            dmt_database:get_multiple_related_graph(
+                Worker,
+                ObjectRefs,
+                ResolvedVersion,
+                Depth,
+                IncludeInbound,
+                IncludeOutbound,
+                Type
+            ),
+        {ok, NodesWithAuthors} = add_created_by_to_objects(Worker, NodeMaps),
+        NodesResult = [
+            #domain_conf_v2_LimitedVersionedObject{
+                info = marshall_to_object_info(Node),
+                ref = maps:get(id, Node),
+                name = dmt_domain:maybe_get_domain_object_data_field(name, maps:get(data, Node)),
+                description = dmt_domain:maybe_get_domain_object_data_field(
+                    description, maps:get(data, Node)
+                )
+            }
+         || Node <- NodesWithAuthors
+        ],
+        EdgesResult = [
+            #domain_conf_v2_ReferenceEdge{
+                source = maps:get(source_ref, Edge),
+                target = maps:get(target_ref, Edge)
+            }
+         || Edge <- EdgeMaps
+        ],
+        Result = #domain_conf_v2_RelatedGraph{
+            nodes = ordsets:from_list(NodesResult),
+            edges = ordsets:from_list(EdgesResult)
+        },
+        {ok, Result}
+    else
+        {error, object_not_found} ->
+            {error, object_not_found};
+        {error, version_not_found} ->
+            {error, version_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+search_related_graph(Request) ->
+    #domain_conf_v2_SearchRelatedGraphRequest{
+        query = Query,
+        searched_type = SearchedType,
+        version = Version,
+        returned_type = ReturnedType,
+        include_inbound = IncludeInbound,
+        include_outbound = IncludeOutbound,
+        depth = Depth
+    } = Request,
+
+    maybe
+        Worker = default_pool,
+        {ok, ResolvedVersion} ?= resolve_version_reference(Worker, Version),
+        ok ?= maybe_check_entity_type_exists(SearchedType),
+        SearchedTypeBinary =
+            case SearchedType of
+                undefined -> undefined;
+                _ when is_atom(SearchedType) -> atom_to_binary(SearchedType, utf8);
+                _ -> SearchedType
+            end,
+        ReturnedTypeBinary =
+            case ReturnedType of
+                undefined -> undefined;
+                _ when is_atom(ReturnedType) -> atom_to_binary(ReturnedType, utf8);
+                _ -> ReturnedType
+            end,
+        {ok, {NodeMaps, EdgeMaps}} ?=
+            dmt_database:search_related_graph(
+                Worker,
+                Query,
+                SearchedTypeBinary,
+                ResolvedVersion,
+                Depth,
+                IncludeInbound,
+                IncludeOutbound,
+                ReturnedTypeBinary
+            ),
+        {ok, NodesWithAuthors} = add_created_by_to_objects(Worker, NodeMaps),
+        NodesResult = [
+            #domain_conf_v2_LimitedVersionedObject{
+                info = marshall_to_object_info(Node),
+                ref = maps:get(id, Node),
+                name = dmt_domain:maybe_get_domain_object_data_field(name, maps:get(data, Node)),
+                description = dmt_domain:maybe_get_domain_object_data_field(
+                    description, maps:get(data, Node)
+                )
+            }
+         || Node <- NodesWithAuthors
+        ],
+        EdgesResult = [
+            #domain_conf_v2_ReferenceEdge{
+                source = maps:get(source_ref, Edge),
+                target = maps:get(target_ref, Edge)
+            }
+         || Edge <- EdgeMaps
+        ],
+        Result = #domain_conf_v2_RelatedGraph{
+            nodes = ordsets:from_list(NodesResult),
+            edges = ordsets:from_list(EdgesResult)
+        },
+        {ok, Result}
+    else
+        {error, object_type_not_found} ->
+            {error, object_type_not_found};
+        {error, version_not_found} ->
+            {error, version_not_found};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+validate_objects_exist(Worker, ObjectRefs, Version) ->
+    genlib_list:foldl_while(
+        fun(ObjectRef, _Acc) ->
+            case validate_object_exists(Worker, ObjectRef, Version) of
+                ok -> {cont, ok};
+                {error, object_not_found} -> {halt, {error, object_not_found}}
+            end
+        end,
+        ok,
+        ObjectRefs
+    ).

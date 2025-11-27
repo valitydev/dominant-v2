@@ -12,7 +12,9 @@
     commit/4,
     search_objects/2,
     search_full_objects/2,
-    get_related_graph/2
+    get_related_graph/2,
+    get_multiple_related_graph/2,
+    search_related_graph/2
 ]).
 
 -export([
@@ -80,3 +82,11 @@ delete_author(ID, Client) ->
 get_related_graph(Request, Client) ->
     Args = [Request],
     dmt_client_api:call(repository, 'GetRelatedGraph', Args, Client).
+
+get_multiple_related_graph(Request, Client) ->
+    Args = [Request],
+    dmt_client_api:call(repository, 'GetMultipleRelatedGraph', Args, Client).
+
+search_related_graph(Request, Client) ->
+    Args = [Request],
+    dmt_client_api:call(repository, 'SearchRelatedGraph', Args, Client).

@@ -22,6 +22,8 @@
 -export([check_entity_type_exists/2]).
 -export([get_all_objects/2]).
 -export([get_related_graph/7]).
+-export([get_multiple_related_graph/7]).
+-export([search_related_graph/8]).
 -export([parse_entity_validation_error/1]).
 
 get_latest_version(Worker) ->
@@ -814,7 +816,11 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
 filter_nodes_by_type(Nodes, undefined) ->
     Nodes;
 filter_nodes_by_type(Nodes, FilterType) ->
-    FilterTypeBinary = atom_to_binary(FilterType, utf8),
+    FilterTypeBinary =
+        case FilterType of
+            _ when is_binary(FilterType) -> FilterType;
+            _ when is_atom(FilterType) -> atom_to_binary(FilterType, utf8)
+        end,
     [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
 
 filter_edges_by_nodes(Edges, Nodes) ->
@@ -948,3 +954,198 @@ parse_graph_edges_result(Rows) ->
     EntityIds1 = ordsets:from_list(EntityIds0),
 
     {EntityIds1, Edges}.
+
+get_multiple_related_graph(
+    Worker, ObjectRefs, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
+) ->
+    ObjectRefStrings = [dmt_mapper:ref_to_string(Ref) || Ref <- ObjectRefs],
+
+    case
+        get_multiple_related_graph_edges(
+            Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound
+        )
+    of
+        {ok, {EntityIds, Edges}} ->
+            get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, undefined);
+        {error, Reason} ->
+            logger:error("Error in multiple graph edge traversal: ~p", [Reason]),
+            {error, Reason}
+    end.
+
+get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound) ->
+    Query = """
+    WITH RECURSIVE
+    -- Find active relationships at the requested version
+    ActiveRelations AS (
+        SELECT DISTINCT
+            r1.source_entity_id,
+            r1.target_entity_id
+        FROM entity_relation r1
+        WHERE r1.is_active = TRUE
+        AND r1.version = (
+            SELECT MAX(r2.version)
+            FROM entity_relation r2
+            WHERE r2.source_entity_id = r1.source_entity_id
+            AND r2.target_entity_id = r1.target_entity_id
+            AND r2.version <= $2
+        )
+    ),
+    -- Recursive graph traversal starting from multiple root objects
+    GraphTraversal AS (
+        -- Base case: start with all root objects
+        SELECT DISTINCT
+            unnest($1::TEXT[]) as entity_id,
+            0 as depth,
+            $1::TEXT[] as path
+
+        UNION ALL
+
+        -- Recursive case: find connected entities
+        SELECT DISTINCT
+            CASE
+                WHEN $4 = TRUE AND $5 = TRUE THEN
+                    -- Include both inbound and outbound
+                    CASE
+                        WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                        WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                        ELSE NULL
+                    END
+                WHEN $4 = TRUE AND $5 = FALSE THEN
+                    -- Include only inbound (entities that reference current entity)
+                    CASE WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id ELSE NULL END
+                WHEN $4 = FALSE AND $5 = TRUE THEN
+                    -- Include only outbound (entities that current entity references)
+                    CASE WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id ELSE NULL END
+                ELSE NULL
+            END as entity_id,
+            gt.depth + 1 as depth,
+            gt.path || CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END as path
+        FROM GraphTraversal gt
+        JOIN ActiveRelations ar ON (
+            (ar.source_entity_id = gt.entity_id AND $5 = TRUE) OR
+            (ar.target_entity_id = gt.entity_id AND $4 = TRUE)
+        )
+        WHERE gt.depth < $3
+        AND (
+            CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END
+        ) != ALL(gt.path) -- Prevent cycles
+        AND (
+            CASE
+                WHEN ar.source_entity_id = gt.entity_id THEN ar.target_entity_id
+                WHEN ar.target_entity_id = gt.entity_id THEN ar.source_entity_id
+                ELSE NULL
+            END
+        ) IS NOT NULL
+    ),
+    -- Get edges between traversed entities
+    EdgeDetails AS (
+        SELECT DISTINCT
+            ar.source_entity_id as source_ref,
+            ar.target_entity_id as target_ref
+        FROM ActiveRelations ar
+        JOIN GraphTraversal gt1 ON gt1.entity_id = ar.source_entity_id
+        JOIN GraphTraversal gt2 ON gt2.entity_id = ar.target_entity_id
+    )
+    SELECT source_ref, target_ref
+    FROM EdgeDetails
+    """,
+
+    case epg_pool:query(Worker, Query, [ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound]) of
+        {ok, _Columns, Rows} ->
+            {EntityIds, Edges} = parse_graph_edges_result(Rows),
+            % Always include the starting nodes even if they have no connections
+            AllEntityIds = ordsets:union(ordsets:from_list(ObjectRefStrings), EntityIds),
+            {ok, {AllEntityIds, Edges}};
+        {error, Reason} ->
+            logger:error("Error in multiple graph edge traversal: ~p", [Reason]),
+            {error, Reason}
+    end.
+
+search_related_graph(
+    Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
+) ->
+    TypeValue =
+        case SearchedType of
+            undefined -> <<"NULL">>;
+            _ -> SearchedType
+        end,
+
+    SearchQuery =
+        case Query of
+            ~"*" ->
+                """
+                WITH LatestVersionAtRequestedTime AS (
+                    SELECT id, MAX(version) AS max_version_at_time
+                    FROM entity
+                    WHERE version <= $2
+                    GROUP BY id
+                ),
+                ActiveStatusAtRequestedTime AS (
+                    SELECT e.id, e.is_active
+                    FROM entity e
+                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+                )
+                SELECT DISTINCT ON (e.id) e.id
+                FROM entity e
+                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+                WHERE e.version <= $2
+                AND ($3 = 'NULL' OR e.entity_type = $3)
+                AND las.is_active = TRUE
+                ORDER BY e.id, e.version DESC
+                """;
+            _ ->
+                """
+                WITH LatestVersionAtRequestedTime AS (
+                    SELECT id, MAX(version) AS max_version_at_time
+                    FROM entity
+                    WHERE version <= $2
+                    GROUP BY id
+                ),
+                ActiveStatusAtRequestedTime AS (
+                    SELECT e.id, e.is_active
+                    FROM entity e
+                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
+                )
+                SELECT DISTINCT ON (e.id) e.id
+                FROM entity e
+                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
+                WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+                AND e.version <= $2
+                AND ($3 = 'NULL' OR e.entity_type = $3)
+                AND las.is_active = TRUE
+                ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
+                """
+        end,
+
+    SearchParams =
+        case Query of
+            ~"*" -> [Version, TypeValue];
+            _ -> [Query, Version, TypeValue]
+        end,
+
+    case epg_pool:query(Worker, SearchQuery, SearchParams) of
+        {ok, _Columns, Rows} ->
+            MatchingRefs = [ID || {ID} <- Rows],
+            case
+                get_multiple_related_graph_edges(
+                    Worker, MatchingRefs, Version, Depth, IncludeInbound, IncludeOutbound
+                )
+            of
+                {ok, {EntityIds, Edges}} ->
+                    get_objects_and_filter(Worker, EntityIds, Version, ReturnedType, Edges, undefined);
+                {error, Reason} ->
+                    logger:error("Error in search graph edge traversal: ~p", [Reason]),
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            logger:error("Error searching objects for graph: ~p", [Reason]),
+            {error, Reason}
+    end.
