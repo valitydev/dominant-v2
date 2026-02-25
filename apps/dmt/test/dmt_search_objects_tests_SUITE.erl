@@ -11,6 +11,7 @@
     end_per_suite/1,
     init_per_group/2,
     end_per_group/2,
+    init_per_testcase/2,
     end_per_testcase/2,
     all/0,
     groups/0
@@ -79,7 +80,11 @@ init_per_group(_, C) ->
 end_per_group(_, _C) ->
     ok.
 
-end_per_testcase(_, _C) ->
+init_per_testcase(Name, C) ->
+    dmt_ct_helper:trace_testcase(?MODULE, Name, C).
+
+end_per_testcase(_Name, C) ->
+    ok = dmt_ct_helper:maybe_end_trace(C),
     dmt_ct_helper:cleanup_db(),
     ok.
 

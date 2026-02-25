@@ -1,0 +1,38 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  # Увеличиваем лимит gRPC (по умолчанию 4MB), чтобы большие ответы querier->frontend не падали с ResourceExhausted
+  grpc_server_max_recv_msg_size: 104857600   # 100 MiB
+  grpc_server_max_send_msg_size: 104857600   # 100 MiB
+
+common:
+  path_prefix: /tmp/loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  filesystem:
+    directory: /tmp/loki/chunks
+
+limits_config:
+  allow_structured_metadata: true
+  volume_enabled: true
+
+pattern_ingester:
+  enabled: true
+
+ruler:
+  enable_api: true

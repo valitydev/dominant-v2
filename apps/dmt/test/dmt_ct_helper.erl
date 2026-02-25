@@ -13,6 +13,9 @@
 -export([create_kafka_topics/0]).
 -export([delete_kafka_topics/0]).
 
+-export([trace_testcase/3]).
+-export([maybe_end_trace/1]).
+
 -export_type([config/0]).
 -export_type([test_case_name/0]).
 -export_type([group_name/0]).
@@ -201,3 +204,27 @@ create_kafka_topics() ->
 
 delete_kafka_topics() ->
     _ = brod:delete_topics(?BROKERS, [?TEST_TOPIC], 5000).
+
+%% OTEL trace span per test case (for Grafana/Tempo tracing)
+-spec trace_testcase(module(), atom(), config()) -> config().
+trace_testcase(Module, TestCaseName, Config) ->
+    SpanName = iolist_to_binary([
+        atom_to_binary(Module, utf8),
+        ":",
+        atom_to_binary(TestCaseName, utf8),
+        "/1"
+    ]),
+    Tracer = opentelemetry:get_application_tracer(Module),
+    SpanCtx = otel_tracer:start_span(Tracer, SpanName, #{kind => internal}),
+    _ = otel_tracer:set_current_span(SpanCtx),
+    [{span_ctx, SpanCtx} | Config].
+
+-spec maybe_end_trace(config()) -> ok.
+maybe_end_trace(Config) ->
+    case lists:keyfind(span_ctx, 1, Config) of
+        {span_ctx, SpanCtx} ->
+            _ = otel_span:end_span(SpanCtx),
+            ok;
+        _ ->
+            ok
+    end.
