@@ -229,39 +229,34 @@ application_get_env(App, Key, Default) ->
     end.
 
 ensure_otel_log_handler() ->
-    case logger:get_handler_config(otel_logs) of
-        {ok, _} ->
+    MaxQueue = application:get_env(?APP, otel_log_max_queue_size, 2048),
+    DelayMs = application:get_env(?APP, otel_log_scheduled_delay_ms, 1000),
+    TimeoutMs = application:get_env(?APP, otel_log_exporting_timeout_ms, 300000),
+    LogLevel = application:get_env(?APP, otel_log_level, info),
+    HandlerConfig = #{
+        report_cb => fun dmt_otel_log_filter:format_otp_report_utf8/1,
+        exporter =>
+            {otel_exporter_logs_otlp, #{
+                protocol => http_protobuf,
+                ssl_options => []
+            }},
+        max_queue_size => MaxQueue,
+        scheduled_delay_ms => DelayMs,
+        exporting_timeout_ms => TimeoutMs
+    },
+    LoggerHandlerConfig = #{
+        level => LogLevel,
+        filter_default => log,
+        filters => [{dmt_otel_trace_id_bytes, {fun dmt_otel_log_filter:filter/2, undefined}}],
+        config => HandlerConfig
+    },
+    case logger:add_handler(otel_logs, dmt_otel_log_handler, LoggerHandlerConfig) of
+        ok ->
             ok;
-        _ ->
-            MaxQueue = application:get_env(?APP, otel_log_max_queue_size, 2048),
-            DelayMs = application:get_env(?APP, otel_log_scheduled_delay_ms, 1000),
-            TimeoutMs = application:get_env(?APP, otel_log_exporting_timeout_ms, 300000),
-            LogLevel = application:get_env(?APP, otel_log_level, info),
-            HandlerConfig = #{
-                report_cb => fun dmt_otel_log_filter:format_otp_report_utf8/1,
-                exporter =>
-                    {otel_exporter_logs_otlp, #{
-                        protocol => http_protobuf,
-                        ssl_options => []
-                    }},
-                max_queue_size => MaxQueue,
-                scheduled_delay_ms => DelayMs,
-                exporting_timeout_ms => TimeoutMs
-            },
-            LoggerHandlerConfig = #{
-                level => LogLevel,
-                filter_default => log,
-                filters => [{dmt_otel_trace_id_bytes, {fun dmt_otel_log_filter:filter/2, undefined}}],
-                config => HandlerConfig
-            },
-            case logger:add_handler(otel_logs, dmt_otel_log_handler, LoggerHandlerConfig) of
-                ok ->
-                    ok;
-                {error, {already_exist, _}} ->
-                    ok;
-                {error, Reason} ->
-                    throw({otel_log_handler_failed, Reason})
-            end
+        {error, {already_exist, _}} ->
+            ok;
+        {error, Reason} ->
+            throw({otel_log_handler_failed, Reason})
     end.
 
 %% @doc Ждём отправки буферизованных логов перед остановкой.
