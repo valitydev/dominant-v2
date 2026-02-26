@@ -41,10 +41,11 @@ end_per_suite(_Config) ->
 
     ok.
 
-init_per_testcase(_TestCase, Config) ->
-    Config.
+init_per_testcase(TestCase, Config) ->
+    dmt_ct_helper:trace_testcase(?MODULE, TestCase, Config).
 
-end_per_testcase(_TestCase, _Config) ->
+end_per_testcase(_TestCase, Config) ->
+    ok = dmt_ct_helper:maybe_end_trace(Config),
     ok.
 
 %%====================================================================

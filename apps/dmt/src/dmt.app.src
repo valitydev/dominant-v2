@@ -23,8 +23,9 @@
         dmt_core,
         dmt_object,
         opentelemetry_api,
+        opentelemetry,
         opentelemetry_exporter,
-        opentelemetry
+        opentelemetry_experimental
     ]},
     {env, []},
     {modules, []},

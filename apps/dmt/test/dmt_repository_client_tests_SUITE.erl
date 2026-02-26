@@ -65,11 +65,13 @@ init_per_group(_, C) ->
 end_per_group(_, _C) ->
     ok.
 
-init_per_testcase(_, C) ->
-    AuthorID = create_author(<<"checkout_objects_test@tests">>, dmt_ct_helper:cfg(client, C)),
-    [{author_id, AuthorID} | C].
+init_per_testcase(Name, C) ->
+    C1 = dmt_ct_helper:trace_testcase(?MODULE, Name, C),
+    AuthorID = create_author(<<"checkout_objects_test@tests">>, dmt_ct_helper:cfg(client, C1)),
+    [{author_id, AuthorID} | C1].
 
-end_per_testcase(_, _C) ->
+end_per_testcase(_Name, C) ->
+    ok = dmt_ct_helper:maybe_end_trace(C),
     dmt_ct_helper:cleanup_db(),
     ok.
 

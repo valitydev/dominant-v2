@@ -13,6 +13,5 @@ start(_StartType, _StartArgs) ->
     dmt_sup:start_link().
 
 stop(_State) ->
+    ok = dmt_sup:flush_otel_logs(),
     ok.
-
-%% internal functions

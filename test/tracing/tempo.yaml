@@ -1,0 +1,41 @@
+server:
+  http_listen_port: 3200
+  # Лимиты gRPC (по умолчанию 4MB), чтобы большие трейсы/ответы не давали ResourceExhausted
+  grpc_server_max_recv_msg_size: 104857600   # 100 MiB
+  grpc_server_max_send_msg_size: 104857600   # 100 MiB
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+          max_recv_msg_size_mib: 100
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: docker-compose
+  storage:
+    path: /tmp/tempo/generator/wal
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
