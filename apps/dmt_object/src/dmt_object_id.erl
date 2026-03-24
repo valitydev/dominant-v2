@@ -49,5 +49,7 @@ get_uuid_object_id(shop_config, ID) ->
     #domain_ShopConfigRef{id = ID};
 get_uuid_object_id(wallet_config, ID) ->
     #domain_WalletConfigRef{id = ID};
+get_uuid_object_id(partner, ID) ->
+    #domain_PartnerRef{id = ID};
 get_uuid_object_id(Type, _ID) ->
     throw({not_supported, Type}).
