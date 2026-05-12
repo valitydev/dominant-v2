@@ -618,7 +618,16 @@ get_new_version(Worker, AuthorID) ->
 insert_object(Worker, Type, ID0, Version, Data0) ->
     ID1 = dmt_mapper:ref_to_string(ID0),
     Data1 = dmt_mapper:object_to_string(Data0),
-    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
+    %% NOTE Turns string containing nested json into space-separated string of
+    %% words/lexems.
+    %% As example, this turns
+    %%   {
+    %%     "hello": "world",
+    %%     "test": 42
+    %%   }
+    %% into
+    %%   hello world test 42
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data1)),
 
     case dmt_database:insert_object(Worker, ID1, Type, Version, Data1, SearchVector) of
         ok ->
