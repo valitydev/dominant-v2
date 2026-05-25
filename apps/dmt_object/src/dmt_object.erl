@@ -19,7 +19,10 @@
 -export_type([domain_object/0]).
 -export_type([refless_domain_object/0]).
 
--type object_type() :: atom().
+%% Object type tag. Constructed as an atom in code (e.g. `category`,
+%% `provider`) but stored as text in the DB, so values read back from a row
+%% surface as a binary. Both shapes flow through the same APIs.
+-type object_type() :: atom() | binary().
 -type object_id() :: term().
 -type timestamp() :: binary() | string().
 
@@ -98,7 +101,7 @@ just_object(
     CreatedAt,
     IsActive
 ) when
-    is_atom(Type),
+    is_atom(Type) orelse is_binary(Type),
     is_integer(Version) orelse is_binary(Version),
     is_binary(CreatedAt) orelse is_list(CreatedAt),
     is_boolean(IsActive)
