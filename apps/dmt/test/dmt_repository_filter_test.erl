@@ -4,7 +4,16 @@
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
 
 % We modify records in improper way in tests, so we need to suppress dialyzer warnings
--dialyzer({nowarn_function, [test_all_invalid_objects/0, test_mixed_valid_invalid_objects/0]}).
+-dialyzer(
+    {nowarn_function, [
+        test_all_valid_objects/0,
+        test_all_invalid_objects/0,
+        test_mixed_valid_invalid_objects/0,
+        test_single_valid_object/0,
+        test_single_invalid_object/0,
+        test_missing_data_field/0
+    ]}
+).
 
 %% Test the filter_search_results/1 function from dmt_repository module
 

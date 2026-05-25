@@ -52,6 +52,16 @@
     | {object_update_too_old, {object_ref(), version()}}
     | {conflict, binary()}.
 
+-export_type([
+    worker/0,
+    version/0,
+    version_reference/0,
+    object_ref/0,
+    db_object/0,
+    read_error/0,
+    commit_error/0
+]).
+
 %% API
 
 -export([commit/3]).
@@ -888,12 +898,12 @@ add_created_by_to_objects(Worker, Objects) ->
     Versions = [V || #{version := V} <- Objects],
     case load_authors_for_versions(Worker, Versions) of
         {ok, AuthorsOfVersions} ->
-    EnrichedObjects = [
-        Object#{
-            created_by => maps:get(thrift_version(maps:get(version, Object)), AuthorsOfVersions)
-        }
-     || Object <- Objects
-    ],
+            EnrichedObjects = [
+                Object#{
+                    created_by => maps:get(thrift_version(maps:get(version, Object)), AuthorsOfVersions)
+                }
+             || Object <- Objects
+            ],
             {ok, EnrichedObjects};
         {error, Reason} ->
             {error, Reason}
@@ -904,7 +914,15 @@ add_created_by_to_objects(Worker, Objects) ->
 load_authors_for_versions(Worker, Versions) ->
     Normalized = lists:uniq([thrift_version(V) || V <- Versions]),
     Results = [{Version, resolve_version_author(Worker, Version)} || Version <- Normalized],
-    case lists:all(fun({_, {ok, _}}) -> true; (_) -> false end, Results) of
+    case
+        lists:all(
+            fun
+                ({_, {ok, _}}) -> true;
+                (_) -> false
+            end,
+            Results
+        )
+    of
         true ->
             {ok, maps:from_list([{V, A} || {V, {ok, A}} <- Results])};
         false ->
