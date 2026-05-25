@@ -12,11 +12,7 @@
 decode(S) when is_binary(S) ->
     jsone:decode(S, [{keys, binary}, {object_format, proplist}]);
 decode(S) when is_list(S) ->
-    case unicode:characters_to_binary(S) of
-        Bin when is_binary(Bin) -> decode(Bin);
-        {error, Bin, _} when is_binary(Bin) -> decode(Bin);
-        {incomplete, Bin, _} when is_binary(Bin) -> decode(Bin)
-    end.
+    decode(unicode:characters_to_binary(S)).
 
 -spec encode(jsone:json_value()) -> binary().
 encode(J) ->
@@ -28,7 +24,7 @@ encode(J) ->
 -define(is_number(T), (?is_integer(T) orelse T == double)).
 -define(is_scalar(T), (?is_number(T) orelse T == string orelse element(1, T) == enum)).
 
--spec json_to_term(jsone:json_value(), dmt_thrift:thrift_type()) -> eqwalizer:dynamic().
+-spec json_to_term(jsone:json_value(), dmt_thrift:thrift_type()) -> term().
 json_to_term(Json, Type) ->
     json_to_term(Json, Type, []).
 

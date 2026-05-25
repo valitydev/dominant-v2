@@ -1,4 +1,5 @@
 -module(dmt_author_database).
+-typing([eqwalizer]).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("epgsql/include/epgsql.hrl").
@@ -13,7 +14,7 @@
     search/3
 ]).
 
--type worker() :: dmt_database:worker().
+-type worker() :: atom().
 -type author_id() :: dmt_author:author_id().
 -type name() :: dmt_author:name().
 -type email() :: dmt_author:email().
@@ -181,7 +182,9 @@ is_uuid(_) ->
 -spec try_string_to_uuid(uuid:uuid_string()) -> boolean().
 try_string_to_uuid(UUID) ->
     try uuid:string_to_uuid(UUID) of
-        _ -> true
+        _ ->
+            true
     catch
-        exit:badarg -> false
+        exit:badarg ->
+            false
     end.

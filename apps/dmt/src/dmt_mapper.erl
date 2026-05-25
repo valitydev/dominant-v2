@@ -14,20 +14,9 @@
 -export([from_string/1]).
 -export([extract_searchable_text_from_term/1]).
 
-%% Object map keyed by either atom (when produced from typed sources) or binary
-%% (when produced from epgsql row column names).
--type object_map() :: #{atom() | binary() => term()}.
--type pg_datetime() :: calendar:datetime() | {calendar:date(), {0..23, 0..59, float()}}.
-
--export_type([object_map/0, pg_datetime/0]).
-
--spec to_marshalled_maps([epgsql:column()], [epgsql:equery_row()]) -> [object_map()].
 to_marshalled_maps(Columns, Rows) ->
     to_marshalled_maps(Columns, Rows, fun marshall_object/1).
 
--spec to_marshalled_maps(
-    [epgsql:column()], [epgsql:equery_row()], fun((object_map()) -> Out)
-) -> [Out].
 to_marshalled_maps(Columns, Rows, TransformRowFun) ->
     ColNumbers = erlang:length(Columns),
     Seq = lists:seq(1, ColNumbers),
@@ -47,35 +36,19 @@ to_marshalled_maps(Columns, Rows, TransformRowFun) ->
     ).
 
 %% for reference https://github.com/epgsql/epgsql#data-representation
--spec convert(epgsql:epgsql_type(), term()) -> term().
 convert(timestamp, Value) ->
-    convert_datetime(Value);
+    datetime_to_binary(Value);
 convert(timestamptz, Value) ->
-    convert_datetime(Value);
+    datetime_to_binary(Value);
 convert(_Type, Value) ->
     Value.
 
--spec convert_datetime(term()) -> binary() | term().
-convert_datetime({{Y, Mo, D}, {H, Mi, S}} = Value) when
-    is_integer(Y),
-    is_integer(Mo),
-    is_integer(D),
-    is_integer(H),
-    is_integer(Mi),
-    is_integer(S) orelse is_float(S)
-->
-    datetime_to_binary(Value);
-convert_datetime(Other) ->
-    Other.
-
--spec datetime_to_binary(pg_datetime()) -> binary().
 datetime_to_binary({Date, {Hour, Minute, Second}}) when is_float(Second) ->
     datetime_to_binary({Date, {Hour, Minute, trunc(Second)}});
-datetime_to_binary({_Date, {_H, _M, S}} = DateTime) when is_integer(S) ->
+datetime_to_binary(DateTime) ->
     UnixTime = genlib_time:daytime_to_unixtime(DateTime),
     genlib_rfc3339:format(UnixTime, second).
 
--spec marshall_object(object_map()) -> dmt_object:object().
 marshall_object(#{
     <<"id">> := ID,
     <<"entity_type">> := Type,
@@ -83,11 +56,7 @@ marshall_object(#{
     <<"data">> := Data,
     <<"created_at">> := CreatedAt,
     <<"is_active">> := IsActive
-}) when
-    is_binary(ID),
-    is_binary(Data),
-    is_boolean(IsActive)
-->
+}) ->
     dmt_object:just_object(
         string_to_ref(ID),
         Type,
@@ -100,43 +69,28 @@ marshall_object(#{
 -define(REF_TYPE, {struct, union, {dmsl_domain_thrift, 'Reference'}}).
 -define(OBJECT_TYPE, {struct, union, {dmsl_domain_thrift, 'DomainObject'}}).
 
--spec ref_to_string(dmsl_domain_thrift:'Reference'()) -> binary().
 ref_to_string({_Type, _} = Ref) ->
     thrift_term_to_string_(Ref, ?REF_TYPE).
 
-%% Returns the decoded thrift Reference. The string is assumed to be the
-%% serialised form produced by `ref_to_string/1` — its shape is enforced by the
-%% JSON-to-thrift round-trip rather than the type system, hence the dynamic
-%% return type.
--spec string_to_ref(binary() | string()) -> eqwalizer:dynamic(dmsl_domain_thrift:'Reference'()).
 string_to_ref(Str) ->
     string_to_thrift_term_(Str, ?REF_TYPE).
 
--spec object_to_string(dmsl_domain_thrift:'DomainObject'()) -> binary().
 object_to_string({_Type, _} = Data) ->
     thrift_term_to_string_(Data, ?OBJECT_TYPE).
 
--spec string_to_object(binary() | string()) ->
-    eqwalizer:dynamic(dmsl_domain_thrift:'DomainObject'()).
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
--spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
 thrift_term_to_string_(Term, ThriftType) ->
     dmt_json:encode(dmt_json:term_to_json(Term, ThriftType)).
 
--spec string_to_thrift_term_(binary() | string(), dmt_thrift:thrift_type()) -> eqwalizer:dynamic().
 string_to_thrift_term_(Str, ThriftType) ->
     dmt_json:json_to_term(dmt_json:decode(Str), ThriftType).
 
--spec to_string(term()) -> binary().
 to_string(A0) ->
     A1 = term_to_binary(A0),
     base64:encode(A1).
 
-%% Returns the decoded term — its concrete shape depends on what was passed to
-%% `to_string/1` originally. Callers must guard the value before use.
--spec from_string(binary()) -> term().
 from_string(B0) ->
     B1 = base64:decode(B0),
     binary_to_term(B1).

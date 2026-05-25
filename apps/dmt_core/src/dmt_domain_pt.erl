@@ -5,16 +5,12 @@
 -spec parse_transform(Forms, term()) -> Forms when
     Forms :: [erl_parse:abstract_form() | erl_parse:form_info()].
 parse_transform(Forms, _Options) ->
-    %% Cast: `erl_syntax:revert/1` returns `erl_syntax:syntaxTree()` but the
-    %% `parse_transform/2` callback contract requires
-    %% `[erl_parse:abstract_form() | erl_parse:form_info()]`. The two are the
-    %% same underlying AST representation but have distinct nominal types.
-    eqwalizer:dynamic_cast([
+    [
         erl_syntax:revert(FormNext)
      || Form <- Forms,
         FormNext <- [erl_syntax_lib:map(fun transform/1, Form)],
         FormNext /= delete
-    ]).
+    ].
 
 transform(Form) ->
     case erl_syntax:type(Form) of

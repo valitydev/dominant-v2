@@ -2,28 +2,14 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
--behaviour(woody_server_thrift_handler).
-
 %% API
 -export([handle_function/4]).
 
--type options() :: dmt_api_woody_utils:handler_options().
-
--export_type([options/0]).
-
--spec handle_function(woody:func(), woody:args(), woody_context:ctx(), options()) ->
-    {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
-    %% Cast: `woody:args()` is `tuple() | any()`; each `do_handle_function/4`
-    %% clause pattern-matches a specific arg tuple guaranteed by the thrift
-    %% schema. The shape is enforced by woody at deserialisation, not by
-    %% the type system, so we cross the trust boundary explicitly here.
-    do_handle_function(Function, eqwalizer:dynamic_cast(Args), WoodyContext, Options).
+    do_handle_function(Function, Args, WoodyContext, Options).
 
--spec do_handle_function(woody:func(), eqwalizer:dynamic(tuple()), woody_context:ctx(), options()) ->
-    {ok, woody:result()} | no_return().
 do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options) ->
     case dmt_repository:commit(Version, Operations, AuthorID) of
         {ok, NextVersion, NewObjects} ->
@@ -123,13 +109,9 @@ do_handle_function('SearchRelatedGraph', {SearchRelatedGraphRequest}, _Context, 
             woody_error:raise(system, {internal, Reason})
     end.
 
--spec default_handling_timeout(options()) -> timeout().
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->
     Timeout.
 
--spec handle_operation_error({conflict, term()} | {invalid, term()}) ->
-    dmsl_domain_conf_v2_thrift:'OperationConflict'()
-    | dmsl_domain_conf_v2_thrift:'OperationInvalid'().
 handle_operation_error({conflict, Conflict}) ->
     #domain_conf_v2_OperationConflict{
         conflict = handle_operation_conflict(Conflict)
@@ -139,7 +121,6 @@ handle_operation_error({invalid, Invalid}) ->
         errors = handle_operation_invalid(Invalid)
     }.
 
--spec handle_operation_conflict(term()) -> dmsl_domain_conf_v2_thrift:'Conflict'() | no_return().
 handle_operation_conflict({object_already_exists, Ref}) ->
     {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = to_ref(Ref)}};
 handle_operation_conflict({forced_id_exists, Ref}) ->
@@ -155,7 +136,6 @@ handle_operation_conflict({object_needs_reference, Object}) ->
         object = to_refless_object(Object)
     }}.
 
--spec handle_operation_invalid(term()) -> [dmsl_domain_conf_v2_thrift:'OperationError'()] | no_return().
 handle_operation_invalid({objects_not_exist, Refs}) when is_list(Refs) ->
     [
         {object_not_exists, #domain_conf_v2_NonexistantObject{
@@ -170,22 +150,14 @@ handle_operation_invalid({object_reference_cycles, Cycles}) when is_list(Cycles)
      || Cycle <- Cycles
     ].
 
-%% @doc Narrow a `term()` to a `Reference` or crash with a useful diagnostic.
-%% Eqwalizer can't refine `{atom(), _}` to a thrift tagged-union, hence the
-%% `dynamic()` return type — the guard enforces the shape at runtime.
--spec to_ref(term()) -> eqwalizer:dynamic() | no_return().
 to_ref({Tag, _} = Ref) when is_atom(Tag) -> Ref;
 to_ref(Other) -> erlang:error({bad_reference, Other}).
 
--spec to_ref_list(term()) -> [eqwalizer:dynamic()] | no_return().
 to_ref_list(L) when is_list(L) -> [to_ref(R) || R <- L];
 to_ref_list(Other) -> erlang:error({bad_reference_list, Other}).
 
--spec to_refless_object(term()) -> eqwalizer:dynamic() | no_return().
 to_refless_object({Tag, _} = Obj) when is_atom(Tag) -> Obj;
 to_refless_object(Other) -> erlang:error({bad_refless_object, Other}).
 
-%% @doc Restrict a list of new objects to tagged-tuple shapes.
--spec filter_domain_objects([term()]) -> [eqwalizer:dynamic()].
 filter_domain_objects(L) ->
     [Obj || {Tag, _} = Obj <- L, is_atom(Tag)].

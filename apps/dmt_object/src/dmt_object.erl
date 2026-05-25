@@ -1,6 +1,5 @@
 -module(dmt_object).
-
--feature(maybe_expr, enable).
+-typing([eqwalizer]).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
@@ -10,50 +9,49 @@
 -export([just_object/6]).
 -export([filter_out_inactive_objects/1]).
 
--export_type([insertable_object/0]).
--export_type([object_changes/0]).
--export_type([object/0]).
--export_type([object_type/0]).
--export_type([object_id/0]).
--export_type([timestamp/0]).
--export_type([domain_object/0]).
--export_type([refless_domain_object/0]).
+-export_type([
+    insertable_object/0,
+    object_changes/0,
+    object/0,
+    object_type/0,
+    object_ref/0,
+    domain_object/0
+]).
 
 %% Object type tag. Constructed as an atom in code (e.g. `category`,
 %% `provider`) but stored as text in the DB, so values read back from a row
 %% surface as a binary. Both shapes flow through the same APIs.
 -type object_type() :: atom() | binary().
--type object_id() :: term().
--type timestamp() :: binary() | string().
-
--type domain_object() :: dmsl_domain_thrift:'DomainObject'().
+-type object_ref() :: {object_type(), term()}.
 -type refless_domain_object() :: dmsl_domain_thrift:'ReflessDomainObject'().
+-type domain_object() :: dmsl_domain_thrift:'DomainObject'().
 
 -type insertable_object() :: #{
-    tmp_id := binary(),
     type := object_type(),
+    tmp_id := binary(),
     forced_id := term() | undefined,
     data := refless_domain_object()
 }.
 
 -type object_changes() :: #{
-    id := {object_type(), object_id()},
+    id := object_ref(),
     type := object_type(),
-    %% Carries a domain object value; the shape is enforced by the producer
-    %% (`update_object/2` / `commit_operation/2`) and not by this type.
-    data := term(),
-    referenced_by => [term()],
+    references => [object_ref()],
+    referenced_by => [object_ref()],
+    data => domain_object(),
     is_active => boolean()
 }.
 
 -type object() :: #{
-    id := term(),
+    id := object_ref(),
     type := object_type(),
     version := number() | binary(),
     data := term(),
     created_at := binary() | list(),
     is_active := boolean(),
-    atom() => term()
+    references => [object_ref()],
+    referenced_by => [object_ref()],
+    created_by => binary()
 }.
 
 -spec new_object(dmsl_domain_conf_v2_thrift:'InsertOp'()) ->
@@ -74,9 +72,9 @@ new_object(#domain_conf_v2_InsertOp{
             {error, Error}
     end.
 
--spec update_object(domain_object() | term(), object_changes()) ->
+-spec update_object(domain_object(), object_changes()) ->
     {ok, object_changes()} | {error, {is_not_domain_object, term()}}.
-update_object({Type, {_Record, ID, _Data}} = Object, ExistingUpdate) when is_atom(Type) ->
+update_object({Type, {_Object, ID, _Data}} = Object, ExistingUpdate) ->
     {ok, ExistingUpdate#{
         id => {Type, ID},
         type => Type,
@@ -92,7 +90,14 @@ remove_object(OG) ->
         is_active => false
     }.
 
--spec just_object(term(), term(), term(), term(), term(), term()) -> object().
+-spec just_object(
+    object_ref(),
+    object_type(),
+    number() | binary(),
+    term(),
+    binary() | list(),
+    boolean()
+) -> object().
 just_object(
     ID,
     Type,

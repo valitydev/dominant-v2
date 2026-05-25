@@ -12,6 +12,24 @@ permissions:
   contents: read
 
 jobs:
+  dialyzer:
+    name: Dialyzer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Load .env
+        run: grep -v '^#' .env >> "$GITHUB_ENV"
+
+      - name: Build dev image
+        run: make dev-image
+
+      - name: Run dialyzer
+        run: make wc-dialyze
+
   eqwalizer:
     name: Eqwalizer
     runs-on: ubuntu-latest
@@ -28,11 +46,4 @@ jobs:
         run: make dev-image
 
       - name: Run eqwalizer
-        run: |
-          make wc-eqwalizer 2>&1 | tee /tmp/eqwalizer.log
-          # `elp eqwalize-all` exits 0 even when it reports errors; fail the
-          # job ourselves if any module produced errors.
-          if grep -qE "^[0-9]+ ERRORS" /tmp/eqwalizer.log; then
-            echo "::error::Eqwalizer reported errors"
-            exit 1
-          fi
+        run: make wc-eqwalizer
