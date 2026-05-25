@@ -8,16 +8,15 @@
 
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
 
-%% @doc Validate a domain object using thrift strict validation
--spec validate_domain_object(dmsl_domain_thrift:'DomainObject'()) ->
-    ok | {error, {invalid, [atom()], term()}}.
+%% @doc Validate a domain object using thrift strict validation. Takes any term
+%% (validation is the whole point) and either confirms shape or reports errors.
+-spec validate_domain_object(term()) -> ok | {error, {invalid, [atom()], term()}}.
 validate_domain_object(DomainObject) ->
     Type = dmsl_domain_thrift:struct_info('DomainObject'),
     thrift_strict_binary_codec:validate({Type, DomainObject}).
 
-%% @doc Validate a reference
--spec validate_reference(dmsl_domain_thrift:'Reference'()) ->
-    ok | {error, {invalid, [atom()], term()}}.
+%% @doc Validate a reference. Takes any term — validation is the whole point.
+-spec validate_reference(term()) -> ok | {error, {invalid, [atom()], term()}}.
 validate_reference(PayoutMethodRef) ->
     Type = dmsl_domain_thrift:struct_info('Reference'),
     thrift_strict_binary_codec:validate({Type, PayoutMethodRef}).

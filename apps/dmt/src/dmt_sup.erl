@@ -17,6 +17,7 @@
 -define(APP, dmt).
 -define(DEFAULT_DB, default_db).
 
+-spec start_link() -> supervisor:startlink_ret().
 start_link() ->
     supervisor:start_link({local, ?APP}, ?MODULE, []).
 
@@ -29,6 +30,7 @@ start_link() ->
 %%                  shutdown => shutdown(), % optional
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
+-spec init(term()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(_) ->
     ok = dbinit(),
     ok = setup_kafka(dmt_kafka_publisher:is_kafka_enabled()),
@@ -60,6 +62,7 @@ init(_) ->
 
     {ok, {SupFlags, ChildSpecs}}.
 
+-spec dbinit() -> ok | no_return().
 dbinit() ->
     WorkDir = get_env_var("WORK_DIR"),
     _ = set_database_url(),
@@ -75,17 +78,28 @@ dbinit() ->
             throw({migrations_error, Reason})
     end.
 
+-type db_conn_opts() :: #{
+    host := list(),
+    port := non_neg_integer(),
+    username := list(),
+    password := list(),
+    database := list()
+}.
+
+-spec set_database_url() -> true.
 set_database_url() ->
     EpgDbName = application_get_env(?APP, epg_db_name, ?DEFAULT_DB),
-    #{
-        EpgDbName := #{
-            host := PgHost,
-            port := PgPort,
-            username := PgUser,
-            password := PgPassword,
-            database := DbName
-        }
-    } = application_get_env(epg_connector, databases),
+    Databases = application_get_env(epg_connector, databases),
+    set_database_url_(get_db_opts(EpgDbName, Databases)).
+
+-spec set_database_url_(db_conn_opts()) -> true.
+set_database_url_(#{
+    host := PgHost,
+    port := PgPort,
+    username := PgUser,
+    password := PgPassword,
+    database := DbName
+}) ->
     %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
     PgPortStr = erlang:integer_to_list(PgPort),
     Value =
@@ -93,14 +107,45 @@ set_database_url() ->
             DbName,
     true = os:putenv("DATABASE_URL", Value).
 
+-spec get_db_opts(term(), term()) -> db_conn_opts().
+get_db_opts(EpgDbName, Databases) when is_map(Databases) ->
+    case maps:get(EpgDbName, Databases, undefined) of
+        #{
+            host := Host,
+            port := Port,
+            username := User,
+            password := Pass,
+            database := DbName
+        } when
+            is_list(Host),
+            is_integer(Port),
+            is_list(User),
+            is_list(Pass),
+            is_list(DbName)
+        ->
+            #{
+                host => Host,
+                port => Port,
+                username => User,
+                password => Pass,
+                database => DbName
+            };
+        Other ->
+            erlang:error({bad_db_config, EpgDbName, Other})
+    end;
+get_db_opts(_EpgDbName, Other) ->
+    erlang:error({bad_epg_connector_databases, Other}).
+
 %% internal functions
 
+-spec get_env_var(string()) -> string() | no_return().
 get_env_var(Name) ->
     case os:getenv(Name) of
         false -> throw({os_env_required, Name});
         V -> V
     end.
 
+-spec get_repository_handlers() -> [woody:http_handler(woody:th_handler())].
 get_repository_handlers() ->
     DefaultTimeout = application_get_env(?APP, default_woody_handling_timeout, timer:seconds(30)),
     [
@@ -136,6 +181,7 @@ get_handler(author, Options) ->
         {dmt_author_handler, Options}
     }}.
 
+-spec get_service(repository | repository_client | author) -> woody:service().
 get_service(repository) ->
     {dmsl_domain_conf_v2_thrift, 'Repository'};
 get_service(repository_client) ->
@@ -143,7 +189,7 @@ get_service(repository_client) ->
 get_service(author) ->
     {dmsl_domain_conf_v2_thrift, 'AuthorManagement'}.
 
--spec enable_health_logging(erl_health:check()) -> erl_health:check().
+-spec enable_health_logging(map()) -> map().
 enable_health_logging(Check) ->
     EvHandler = {erl_health_event_handler, []},
     maps:map(fun(_, {_, _, _} = V) -> #{runner => V, event_handler => EvHandler} end, Check).
@@ -153,6 +199,7 @@ get_prometheus_route() ->
     {"/metrics/[:registry]", prometheus_cowboy2_handler, []}.
 
 %% @doc Setup damsel version information from multiple sources
+-spec setup_damsel_version() -> ok.
 setup_damsel_version() ->
     DamselVersionInfo = get_damsel_version(),
     logger:warning("Damsel version info: ~p", [DamselVersionInfo]),
@@ -210,29 +257,48 @@ get_damsel_git_ref_from_lock() ->
 extract_damsel_ref_from_lock_data({_LockVersion, Deps}) when is_list(Deps) ->
     case lists:keyfind(<<"damsel">>, 1, Deps) of
         {<<"damsel">>, {git, _Url, {ref, Ref}}, _Level} ->
-            {ok, Ref};
+            ensure_string(Ref);
         _ ->
             error
     end;
 extract_damsel_ref_from_lock_data(_) ->
     error.
 
+-spec ensure_string(term()) -> {ok, string()} | error.
+ensure_string(S) when is_list(S) ->
+    case io_lib:printable_list(S) of
+        %% Cast: `is_list/1` narrows `term()` to `[term()]`, and
+        %% `io_lib:printable_list/1` is a runtime predicate eqwalizer can't use
+        %% to refine the element type further. We've just confirmed it's a
+        %% printable string at runtime so cast to `string() = [char()]`.
+        true -> {ok, eqwalizer:dynamic_cast(S)};
+        false -> error
+    end;
+ensure_string(_) ->
+    error.
+
+%% @doc Read an `application:get_env/2` value. The runtime contract is dynamic
+%% because sys.config is opaque to the type system, so callers narrow with
+%% guards before use.
+-spec application_get_env(atom(), atom()) -> eqwalizer:dynamic().
 application_get_env(App, Key) ->
     application_get_env(App, Key, undefined).
 
+-spec application_get_env(atom(), atom(), Default) -> eqwalizer:dynamic() | Default.
 application_get_env(App, Key, Default) ->
     case application:get_env(App, Key) of
         {ok, Value} -> Value;
         undefined -> Default
     end.
 
+-spec setup_kafka(boolean()) -> ok | no_return().
 setup_kafka(false) ->
     ok;
 setup_kafka(_) ->
     ClientName = dmt_kafka_client,
-    Clients = application_get_env(brod, clients, []),
-    Client = proplists:get_value(ClientName, Clients),
-    Endpoints = proplists:get_value(endpoints, Client),
+    Clients = ensure_list(application_get_env(brod, clients, [])),
+    Client = ensure_list(proplists:get_value(ClientName, Clients)),
+    Endpoints = ensure_list(proplists:get_value(endpoints, Client)),
     ClientConfig = proplists:delete(endpoints, Client),
 
     _ = logger:info("Starting Kafka client ~p with endpoints ~p and config ~p", [
@@ -248,3 +314,8 @@ setup_kafka(_) ->
             logger:error("Failed to start Kafka client ~p: ~p", [ClientName, Reason]),
             throw({kafka_client_start_error, Reason})
     end.
+
+%% @doc Narrow a `term()` to a list (defaulting to []).
+-spec ensure_list(term()) -> list().
+ensure_list(L) when is_list(L) -> L;
+ensure_list(_) -> [].

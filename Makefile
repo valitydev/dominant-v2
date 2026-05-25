@@ -92,6 +92,12 @@ check-format:
 dialyze:
 	$(REBAR) as test dialyzer
 
+eqwalizer:
+	$(REBAR) compile
+	# ERL_LIBS lets elp's erlang_service load compiled parse_transforms
+	# (e.g. dmt_domain_pt) when analysing modules that use them.
+	ERL_LIBS=$(CURDIR)/_build/default/lib elp eqwalize-all
+
 release:
 	$(REBAR) as prod release
 

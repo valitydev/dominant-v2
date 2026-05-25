@@ -5,6 +5,8 @@
 
 % We modify records in improper way in tests, so we need to suppress dialyzer warnings
 -dialyzer({nowarn_function, [test_all_invalid_objects/0, test_mixed_valid_invalid_objects/0]}).
+-eqwalizer({nowarn_function, test_all_invalid_objects/0}).
+-eqwalizer({nowarn_function, test_mixed_valid_invalid_objects/0}).
 
 %% Test the filter_search_results/1 function from dmt_repository module
 
