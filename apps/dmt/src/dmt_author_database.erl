@@ -1,4 +1,5 @@
 -module(dmt_author_database).
+-typing([eqwalizer]).
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("epgsql/include/epgsql.hrl").
@@ -13,6 +14,14 @@
     search/3
 ]).
 
+-type worker() :: atom().
+-type author_id() :: dmt_author:author_id().
+-type name() :: dmt_author:name().
+-type email() :: dmt_author:email().
+-type author() :: dmt_author:author().
+
+-spec insert(worker(), name(), email()) ->
+    {ok, author_id()} | {ok, {already_exists, author_id()}} | {error, unknown}.
 insert(Worker, Name, Email) ->
     Sql = """
     INSERT INTO author (name, email)
@@ -32,6 +41,7 @@ insert(Worker, Name, Email) ->
             {error, unknown}
     end.
 
+-spec get(worker(), author_id()) -> {ok, author()} | {error, author_not_found | term()}.
 get(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -40,6 +50,7 @@ get(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
+-spec get_(worker(), author_id()) -> {ok, author()} | {error, author_not_found | term()}.
 get_(Worker, AuthorID) ->
     Sql = """
     SELECT id, name, email
@@ -60,6 +71,7 @@ get_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+-spec get_by_email(worker(), email()) -> {ok, author()} | {error, author_not_found | term()}.
 get_by_email(Worker, Email) ->
     Sql = """
     SELECT id, name, email
@@ -80,6 +92,7 @@ get_by_email(Worker, Email) ->
             {error, Reason}
     end.
 
+-spec delete(worker(), author_id()) -> ok | {error, author_not_found | term()}.
 delete(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -88,6 +101,7 @@ delete(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
+-spec delete_(worker(), author_id()) -> ok | {error, author_not_found | term()}.
 delete_(Worker, AuthorID) ->
     Sql = """
     DELETE FROM author
@@ -103,6 +117,8 @@ delete_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+-spec list(worker(), pos_integer(), non_neg_integer()) ->
+    {ok, [author()]} | {error, term()}.
 list(Worker, Limit, Offset) ->
     Sql = """
     SELECT id, name, email
@@ -126,6 +142,7 @@ list(Worker, Limit, Offset) ->
             {error, Reason}
     end.
 
+-spec search(worker(), binary(), pos_integer()) -> {ok, [author()]} | {error, term()}.
 search(Worker, SearchTerm, Limit) ->
     Sql = """
     SELECT id, name, email FROM author
@@ -152,9 +169,18 @@ search(Worker, SearchTerm, Limit) ->
 
 %% Internal functions
 
-is_uuid(UUID) ->
+-spec is_uuid(term()) -> boolean().
+is_uuid(<<UUID:32/binary>>) ->
+    try_string_to_uuid(UUID);
+is_uuid(<<UUID:36/binary>>) ->
+    try_string_to_uuid(UUID);
+is_uuid(_) ->
+    false.
+
+-spec try_string_to_uuid(uuid:uuid_string()) -> boolean().
+try_string_to_uuid(UUID) ->
     try uuid:string_to_uuid(UUID) of
-        _UUID ->
+        _ ->
             true
     catch
         exit:badarg ->

@@ -1,6 +1,7 @@
 -module(dmt_author).
+-typing([eqwalizer]).
 
-%% Public API
+-include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
 -define(POOL_NAME, author_pool).
 
@@ -11,33 +12,26 @@
     delete/1
 ]).
 
-%% Optional: Extended API (can be uncommented if these functions should be exposed)
-%% -export([
-%%     list/2,
-%%     search/2
-%% ]).
+-type author_id() :: binary().
+-type name() :: binary().
+-type email() :: binary().
+-type author() :: dmsl_domain_conf_v2_thrift:'Author'().
 
+-export_type([author_id/0, name/0, email/0, author/0]).
+
+-spec insert(name(), email()) ->
+    {ok, author_id()} | {ok, {already_exists, author_id()}} | {error, unknown}.
 insert(Name, Email) ->
     dmt_author_database:insert(?POOL_NAME, Name, Email).
 
+-spec get(author_id()) -> {ok, author()} | {error, author_not_found | term()}.
 get(AuthorID) ->
     dmt_author_database:get(?POOL_NAME, AuthorID).
 
+-spec get_by_email(email()) -> {ok, author()} | {error, author_not_found | term()}.
 get_by_email(Email) ->
     dmt_author_database:get_by_email(?POOL_NAME, Email).
 
+-spec delete(author_id()) -> ok | {error, author_not_found | term()}.
 delete(AuthorID) ->
     dmt_author_database:delete(?POOL_NAME, AuthorID).
-
-%% Optional: Extended functionality that could be exposed if needed
-%% @doc Lists authors with pagination
-%% -spec list(Limit :: pos_integer(), Offset :: non_neg_integer()) ->
-%%     {ok, [#domain_conf_v2_Author{}]} | {error, term()}.
-%% list(Limit, Offset) ->
-%%     dmt_author_database:list(?POOL_NAME, Limit, Offset).
-
-%% @doc Searches for authors by name or email
-%% -spec search(SearchTerm :: binary(), Limit :: pos_integer()) ->
-%%     {ok, [#domain_conf_v2_Author{}]} | {error, term()}.
-%% search(SearchTerm, Limit) ->
-%%     dmt_author_database:search(?POOL_NAME, SearchTerm, Limit).
