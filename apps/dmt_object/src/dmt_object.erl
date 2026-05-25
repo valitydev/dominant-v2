@@ -13,6 +13,7 @@
 -export_type([object_changes/0]).
 -export_type([object/0]).
 -export_type([object_type/0]).
+-export_type([object_ref/0]).
 
 %% Object type tag. Constructed as an atom in code (e.g. `category`,
 %% `provider`) but stored as text in the DB, so values read back from a row
@@ -39,7 +40,7 @@
 }.
 
 -type object() :: #{
-    id := term(),
+    id := object_ref(),
     type := object_type(),
     version := number() | binary(),
     data := term(),
@@ -87,7 +88,7 @@ remove_object(OG) ->
     }.
 
 -spec just_object(
-    term(),
+    object_ref(),
     object_type(),
     number() | binary(),
     term(),

@@ -7,5 +7,5 @@ dmt_object
 dmt_author
 dmt_author_database
 
-# Phase 2a (uncomment when ready):
-# dmt_repository
+# Phase 2a–2b
+dmt_repository
