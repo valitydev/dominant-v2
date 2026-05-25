@@ -9,6 +9,13 @@ ARG TARGETARCH
 RUN wget -q -O- "https://github.com/valitydev/thrift/releases/download/${THRIFT_VERSION}/thrift-${THRIFT_VERSION}-linux-${TARGETARCH}.tar.gz" \
     | tar -xvz -C /usr/local/bin/
 
+# Install ELP (Erlang Language Platform) for eqWAlizer
+ARG ELP_VERSION
+ARG ELP_OTP_VERSION
+RUN ELP_ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
+    wget -q -O- "https://github.com/WhatsApp/erlang-language-platform/releases/download/${ELP_VERSION}/elp-linux-${ELP_ARCH}-unknown-linux-gnu-otp-${ELP_OTP_VERSION}.tar.gz" \
+    | tar -xvz -C /usr/local/bin/
+
 RUN apt-get update && apt-get install -y cmake
 
 # Set env

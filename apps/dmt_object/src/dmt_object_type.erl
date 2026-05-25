@@ -6,6 +6,7 @@
 -export([get_refless_object_type/1]).
 -export([get_ref_type/1]).
 
+-spec get_refless_object_type(tuple()) -> atom() | no_return().
 get_refless_object_type(#domain_Category{}) ->
     category;
 get_refless_object_type(#domain_Currency{}) ->
@@ -13,6 +14,7 @@ get_refless_object_type(#domain_Currency{}) ->
 get_refless_object_type(_) ->
     error(not_impl).
 
+-spec get_ref_type(tuple() | undefined) -> atom() | undefined | no_return().
 get_ref_type(#domain_CurrencyRef{}) ->
     currency;
 get_ref_type(#domain_CategoryRef{}) ->

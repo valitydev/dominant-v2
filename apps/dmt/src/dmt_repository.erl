@@ -19,8 +19,41 @@
 -export([get_multiple_related_graph/1]).
 -export([search_related_graph/1]).
 
+-type worker() :: dmt_database:worker().
+-type version() :: dmt_database:version().
+-type version_ref() :: {version, version()} | {head, dmsl_domain_conf_v2_thrift:'Head'()}.
+-type object_ref() :: dmsl_domain_thrift:'Reference'().
+-type author_id() :: dmt_author:author_id().
+-type operation() :: dmsl_domain_conf_v2_thrift:'Operation'().
+-type object_map() :: dmt_mapper:object_map().
+
+-type get_error() :: version_not_found | {object_not_found, object_ref()} | term().
+
+-type commit_error() ::
+    {operation_error, {conflict, term()} | {invalid, term()}}
+    | version_not_found
+    | author_not_found
+    | migration_in_progress
+    | {object_update_too_old, {object_ref(), version()}}
+    | {conflict, binary()}
+    | eqwalizer:dynamic().
+
+-export_type([
+    worker/0,
+    version/0,
+    version_ref/0,
+    object_ref/0,
+    author_id/0,
+    operation/0,
+    object_map/0,
+    get_error/0,
+    commit_error/0
+]).
+
 %%
 
+-spec get_object(worker(), version_ref(), object_ref()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'VersionedObject'()} | {error, get_error()}.
 get_object(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
@@ -51,6 +84,8 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
             {error, Reason}
     end.
 
+-spec get_object_with_references(worker(), version_ref(), object_ref()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'VersionedObjectWithReferences'()} | {error, get_error()}.
 get_object_with_references(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
@@ -81,6 +116,8 @@ get_object_with_references(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
     {ok, Version} = dmt_database:get_latest_version(Worker),
     get_object_with_references(Worker, {version, Version}, ObjectRef).
 
+-spec get_objects(worker(), version_ref(), [object_ref()]) ->
+    {ok, [dmsl_domain_conf_v2_thrift:'VersionedObject'()]} | {error, version_not_found | term()}.
 get_objects(Worker, {version, V}, ObjectRefs) ->
     case dmt_database:check_version_exists(Worker, V) of
         true ->
@@ -116,6 +153,8 @@ get_objects(Worker, {head, #domain_conf_v2_Head{}}, ObjectRefs) ->
             {error, Reason}
     end.
 
+-spec get_snapshot(worker(), version_ref()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'Snapshot'()} | {error, version_not_found | term()}.
 get_snapshot(Worker, {head, #domain_conf_v2_Head{}}) ->
     case dmt_database:get_latest_version(Worker) of
         {ok, LatestVersion} ->
@@ -133,10 +172,9 @@ get_snapshot(Worker, {version, Version}) ->
                         created_by := AuthorID
                     }} = dmt_database:get_version(Worker, Version),
                     {ok, Author} = dmt_author:get(AuthorID),
-                    Domain = #{K => V || #{id := K, data := V} <- Objects},
                     {ok, #domain_conf_v2_Snapshot{
                         version = Version,
-                        domain = Domain,
+                        domain = to_domain(Objects),
                         created_at = dmt_mapper:datetime_to_binary(CreatedAt),
                         changed_by = Author
                     }};
@@ -147,6 +185,9 @@ get_snapshot(Worker, {version, Version}) ->
             {error, version_not_found}
     end.
 
+-spec get_related_graph(dmsl_domain_conf_v2_thrift:'RelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_not_found | version_not_found | term()}.
 get_related_graph(Request) ->
     #domain_conf_v2_RelatedGraphRequest{
         ref = ObjectRef,
@@ -207,18 +248,28 @@ get_related_graph(Request) ->
             {error, Reason}
     end.
 
+%% @doc Build a thrift `Domain` map from a list of stored objects. Each row's
+%% `id` becomes the map key and `data` becomes the value; rows whose shape
+%% isn't a proper `{tag, _}` tagged tuple are skipped. The result is presented
+%% as `dynamic()` because eqwalizer can't refine `{atom(), _}` to the precise
+%% `Reference()` / `DomainObject()` tagged-union shapes.
+-spec to_domain([object_map()]) -> eqwalizer:dynamic().
+to_domain(Objects) ->
+    maps:from_list(
+        [{K, V} || #{id := {KT, _} = K, data := {VT, _} = V} <- Objects, is_atom(KT), is_atom(VT)]
+    ).
+
+-spec sort_objects_by_ids([object_map()], [term()]) -> [object_map()].
 sort_objects_by_ids(Objects, IDs) ->
     % Create a map of ID -> Object for easier lookup
     ObjectsMap = maps:from_list([{maps:get(id, Obj), Obj} || Obj <- Objects]),
 
     % Use list comprehension to order objects according to input IDs
     % Skip IDs that don't have corresponding objects
-    [
-        maps:get(ID, ObjectsMap, undefined)
-     || ID <- IDs,
-        maps:is_key(ID, ObjectsMap)
-    ].
+    [Obj || ID <- IDs, {ok, Obj} <- [maps:find(ID, ObjectsMap)]].
 
+-spec get_object_history(object_ref(), dmsl_domain_conf_v2_thrift:'RequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'ObjectVersionsResponse'()} | {error, not_found | term()}.
 get_object_history(ObjectRef, RequestParams) ->
     #domain_conf_v2_RequestParams{
         limit = Limit,
@@ -252,9 +303,12 @@ get_object_history(ObjectRef, RequestParams) ->
     end.
 
 % Done this way to keep hierarchy of calls
+-spec get_latest_version() -> {ok, version()} | {error, term()}.
 get_latest_version() ->
     dmt_database:get_latest_version(default_pool).
 
+-spec get_all_objects_history(dmsl_domain_conf_v2_thrift:'RequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'ObjectVersionsResponse'()} | {error, term()}.
 get_all_objects_history(Request) ->
     #domain_conf_v2_RequestParams{
         limit = Limit,
@@ -284,19 +338,47 @@ get_all_objects_history(Request) ->
             {error, Reason}
     end.
 
+-spec maybe_to_string(term(), Default) -> binary() | Default.
 maybe_to_string(undefined, Default) -> Default;
 maybe_to_string(Value, _) -> dmt_mapper:to_string(Value).
 
-maybe_from_string(undefined, Default) -> Default;
-maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
+-spec maybe_from_string(binary() | undefined, Default) -> integer() | Default | no_return().
+maybe_from_string(undefined, Default) ->
+    Default;
+maybe_from_string(Value, _) ->
+    case dmt_mapper:from_string(Value) of
+        N when is_integer(N) -> N;
+        Other -> erlang:error({bad_continuation_token, Other})
+    end.
 
+-spec marshall_to_object_info(object_map()) -> dmsl_domain_conf_v2_thrift:'VersionedObjectInfo'().
 marshall_to_object_info(Object) ->
     #domain_conf_v2_VersionedObjectInfo{
-        version = maps:get(version, Object),
-        changed_at = maps:get(created_at, Object),
-        changed_by = maps:get(created_by, Object)
+        version = get_version(Object),
+        changed_at = get_timestamp(created_at, Object),
+        changed_by = get_author(created_by, Object)
     }.
 
+-spec get_version(object_map()) -> dmsl_domain_conf_v2_thrift:'Version'() | no_return().
+get_version(#{version := V}) when is_integer(V) -> V;
+get_version(Object) -> erlang:error({bad_version, Object}).
+
+-spec get_timestamp(atom(), object_map()) -> dmsl_base_thrift:'Timestamp'() | no_return().
+get_timestamp(Key, Object) ->
+    case maps:get(Key, Object, undefined) of
+        B when is_binary(B) -> B;
+        Other -> erlang:error({bad_timestamp, Key, Other})
+    end.
+
+-spec get_author(atom(), object_map()) -> dmsl_domain_conf_v2_thrift:'Author'() | no_return().
+get_author(Key, Object) ->
+    case maps:get(Key, Object, undefined) of
+        #domain_conf_v2_Author{} = A -> A;
+        Other -> erlang:error({bad_author, Key, Other})
+    end.
+
+-spec search_objects(dmsl_domain_conf_v2_thrift:'SearchRequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'SearchResponse'()} | {error, object_type_not_found | term()}.
 search_objects(Request) ->
     #domain_conf_v2_SearchRequestParams{
         query = Query,
@@ -340,6 +422,9 @@ search_objects(Request) ->
             {error, Reason}
     end.
 
+-spec search_full_objects(dmsl_domain_conf_v2_thrift:'SearchRequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'SearchFullResponse'()}
+    | {error, object_type_not_found | term()}.
 search_full_objects(Request) ->
     #domain_conf_v2_SearchRequestParams{
         query = Query,
@@ -381,6 +466,7 @@ search_full_objects(Request) ->
             {error, Reason}
     end.
 
+-spec filter_search_results([object_map()]) -> [object_map()].
 filter_search_results(Objects) ->
     lists:filter(
         fun(Object) ->
@@ -403,6 +489,8 @@ filter_search_results(Objects) ->
         Objects
     ).
 
+-spec maybe_check_entity_type_exists(atom() | binary() | undefined) ->
+    ok | {error, object_type_not_found | term()}.
 maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
@@ -522,6 +610,8 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
         RelationsChanges
     ).
 
+-spec commit(version(), [operation()], author_id()) ->
+    {ok, version(), [term()]} | {error, commit_error()}.
 commit(Version, Operations, AuthorID) ->
     Result = epg_pool:transaction(
         default_pool,
@@ -550,7 +640,7 @@ commit(Version, Operations, AuthorID) ->
         end
     ),
     case Result of
-        {ok, ResVersion, NewObjects, AuthorID} ->
+        {ok, ResVersion, NewObjects, AuthorID} when is_integer(ResVersion), is_list(NewObjects) ->
             {ok, ResVersion, NewObjects};
         {error, {error, error, _, conflict_detected, Msg, _}} ->
             {error, {conflict, Msg}};
@@ -561,7 +651,11 @@ commit(Version, Operations, AuthorID) ->
         {error, {invalid, _} = Error} ->
             {error, {operation_error, Error}};
         {error, Error} ->
-            {error, Error}
+            %% Cast: catch-all for unrecognised errors from `epg_pool:transaction/2`.
+            %% `Error` is `term()` here; `commit_error()` enumerates the structured
+            %% alternatives we map. The handler maps the known atoms / tuples and
+            %% anything else propagates as-is for a generic internal-error response.
+            {error, eqwalizer:dynamic_cast(Error)}
     end.
 
 validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
@@ -644,11 +738,17 @@ give_data_id({Tag, Data}, Ref) ->
         end,
         DomainObjects
     ),
+    finish_give_data_id(ObjectName, Tag, Data, Ref).
+
+-spec finish_give_data_id(term(), atom(), term(), term()) -> {atom(), tuple()}.
+finish_give_data_id(ObjectName0, Tag, Data, Ref) when is_atom(ObjectName0) ->
+    %% Cast: `dmsl_domain_thrift:struct_info/1` and `:record_name/1` accept
+    %% a specific atom union (`struct_name() | exception_name()`). `ObjectName0`
+    %% was pulled out of a runtime schema tuple, so the type system can only
+    %% see `atom()` — wider than the union the callees declare.
+    ObjectName = eqwalizer:dynamic_cast(ObjectName0),
     RecordName = dmsl_domain_thrift:record_name(ObjectName),
-    {_, _, [
-        FirstField,
-        SecondField
-    ]} = dmsl_domain_thrift:struct_info(ObjectName),
+    {_, _, [FirstField, SecondField]} = dmsl_domain_thrift:struct_info(ObjectName),
     First = get_object_field(FirstField, Data, Ref),
     Second = get_object_field(SecondField, Data, Ref),
     {Tag, {RecordName, First, Second}}.
@@ -728,7 +828,9 @@ get_unique_numerical_id(Worker, Type) ->
     end.
 
 get_unique_uuid(Worker, Type) ->
-    NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
+    %% `uuid:uuid_to_string/2` with `binary_standard` always returns a binary
+    %% at runtime; assert and narrow with a binary pattern match.
+    <<_/binary>> = NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
     NewRefString = dmt_mapper:ref_to_string({Type, NewID}),
     case dmt_database:check_if_object_id_active(Worker, NewRefString) of
@@ -853,6 +955,9 @@ validate_object_exists(Worker, ObjectRef, Version) ->
         {error, not_found} -> {error, object_not_found}
     end.
 
+-spec get_multiple_related_graph(dmsl_domain_conf_v2_thrift:'MultipleRelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_not_found | version_not_found | term()}.
 get_multiple_related_graph(Request) ->
     #domain_conf_v2_MultipleRelatedGraphRequest{
         refs = ObjectRefs,
@@ -910,6 +1015,9 @@ get_multiple_related_graph(Request) ->
             {error, Reason}
     end.
 
+-spec search_related_graph(dmsl_domain_conf_v2_thrift:'SearchRelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_type_not_found | version_not_found | term()}.
 search_related_graph(Request) ->
     #domain_conf_v2_SearchRelatedGraphRequest{
         query = Query,

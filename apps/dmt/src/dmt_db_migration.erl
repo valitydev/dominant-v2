@@ -157,7 +157,9 @@ with_connection(Args, Fun) ->
         {ok, Conn} ->
             Fun(Conn);
         {error, Error} ->
-            {error, io_lib:format("Failed to connect to database: ~p~n", [Args]), [Error]}
+            {error, lists:flatten(io_lib:format("Failed to connect to database: ~p~n", [Args])), [
+                Error
+            ]}
     end.
 
 connection_opts(Args) ->
@@ -173,39 +175,70 @@ connection_opts(_Args, {url, DatabaseUrl}) ->
     case uri_string:parse(string:trim(DatabaseUrl)) of
         {error, Error, Term} ->
             {error, {Error, Term}};
-        Map = #{userinfo := UserPass, host := Host, path := Path} ->
-            {User, Pass} =
-                case string:split(UserPass, ":") of
-                    [[]] -> {"postgres", ""};
-                    [U] -> {U, ""};
-                    [[], []] -> {"postgres", ""};
-                    [U, P] -> {U, P}
-                end,
-
+        #{userinfo := UserPass, host := Host, path := Path} = Map ->
+            UserPassStr = to_string(UserPass),
+            PathStr = to_string(Path),
+            {User, Pass} = split_user_pass(UserPassStr),
             ConnectionOpts = #{
                 port => maps:get(port, Map, 5432),
                 username => User,
                 password => Pass,
                 host => Host,
-                database => string:slice(Path, 1)
+                database => string:slice(PathStr, 1)
             },
-
-            case maps:get(query, Map, []) of
-                [] ->
-                    {ok, ConnectionOpts};
-                "?" ++ QueryString ->
-                    case uri_string:dissect_query(QueryString) of
-                        [] ->
-                            {ok, ConnectionOpts};
-                        QueryList ->
-                            case proplists:get_value("ssl", QueryList) of
-                                undefined -> {ok, ConnectionOpts};
-                                [] -> {ok, maps:put(ssl, true, ConnectionOpts)};
-                                Value -> {ok, maps:put(ssl, list_to_atom(Value), ConnectionOpts)}
-                            end
-                    end
-            end
+            apply_query_opts(maps:get(query, Map, []), ConnectionOpts)
     end.
+
+%% @doc Normalise chardata into a string, dropping any error/incomplete tails.
+-spec to_string(unicode:chardata()) -> string().
+to_string(C) ->
+    case unicode:characters_to_list(C) of
+        L when is_list(L) -> L;
+        {error, L, _} when is_list(L) -> L;
+        {incomplete, L, _} when is_list(L) -> L
+    end.
+
+-spec split_user_pass(string()) -> {string(), string()}.
+split_user_pass(UserPass) ->
+    case string:split(UserPass, ":") of
+        [[]] -> {"postgres", ""};
+        [U] when is_list(U) -> {U, ""};
+        [[], []] -> {"postgres", ""};
+        [U, P] when is_list(U), is_list(P) -> {U, P};
+        _ -> {"postgres", ""}
+    end.
+
+-spec apply_query_opts(term(), map()) -> {ok, map()}.
+apply_query_opts([], ConnectionOpts) ->
+    {ok, ConnectionOpts};
+apply_query_opts([$? | QueryString], ConnectionOpts) when is_list(QueryString) ->
+    %% Cast: `uri_string:dissect_query/1` wants `uri_string:uri_string()`
+    %% (a specific `[char() | byte() | ...]` chardata variant).
+    %% `is_list/1` only narrows `term()` to `[term()]`; eqwalizer doesn't
+    %% refine list element types, but at runtime this is the tail of the
+    %% printable URL string we just parsed.
+    case uri_string:dissect_query(eqwalizer:dynamic_cast(QueryString)) of
+        [_ | _] = QueryList ->
+            apply_ssl_opt(proplists:get_value("ssl", QueryList), ConnectionOpts);
+        _ ->
+            {ok, ConnectionOpts}
+    end;
+apply_query_opts(_, ConnectionOpts) ->
+    {ok, ConnectionOpts}.
+
+-spec apply_ssl_opt(term(), map()) -> {ok, map()}.
+apply_ssl_opt(undefined, ConnectionOpts) ->
+    {ok, ConnectionOpts};
+apply_ssl_opt(true, ConnectionOpts) ->
+    {ok, maps:put(ssl, true, ConnectionOpts)};
+apply_ssl_opt(Value, ConnectionOpts) when is_list(Value) ->
+    %% Cast: `to_string/1` (and the underlying `unicode:characters_to_list/1`)
+    %% wants `unicode:chardata()`. `is_list/1` only proves `[term()]`; the
+    %% value comes from `uri_string:dissect_query/1` which produces chardata
+    %% at runtime.
+    {ok, maps:put(ssl, list_to_atom(to_string(eqwalizer:dynamic_cast(Value))), ConnectionOpts)};
+apply_ssl_opt(_, ConnectionOpts) ->
+    {ok, ConnectionOpts}.
 
 -spec open_connection(list() | map()) -> {ok, epgsql:connection()} | {error, term()}.
 open_connection(Args) when is_list(Args) ->

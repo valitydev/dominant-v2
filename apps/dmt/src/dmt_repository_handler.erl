@@ -2,20 +2,34 @@
 
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 
+-behaviour(woody_server_thrift_handler).
+
 %% API
 -export([handle_function/4]).
 
+-type options() :: dmt_api_woody_utils:handler_options().
+
+-export_type([options/0]).
+
+-spec handle_function(woody:func(), woody:args(), woody_context:ctx(), options()) ->
+    {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
-    do_handle_function(Function, Args, WoodyContext, Options).
+    %% Cast: `woody:args()` is `tuple() | any()`; each `do_handle_function/4`
+    %% clause pattern-matches a specific arg tuple guaranteed by the thrift
+    %% schema. The shape is enforced by woody at deserialisation, not by
+    %% the type system, so we cross the trust boundary explicitly here.
+    do_handle_function(Function, eqwalizer:dynamic_cast(Args), WoodyContext, Options).
 
+-spec do_handle_function(woody:func(), eqwalizer:dynamic(tuple()), woody_context:ctx(), options()) ->
+    {ok, woody:result()} | no_return().
 do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options) ->
     case dmt_repository:commit(Version, Operations, AuthorID) of
         {ok, NextVersion, NewObjects} ->
             {ok, #domain_conf_v2_CommitResponse{
                 version = NextVersion,
-                new_objects = ordsets:from_list(NewObjects)
+                new_objects = ordsets:from_list(filter_domain_objects(NewObjects))
             }};
         {error, {operation_error, Error}} ->
             woody_error:raise(business, handle_operation_error(Error));
@@ -109,9 +123,13 @@ do_handle_function('SearchRelatedGraph', {SearchRelatedGraphRequest}, _Context, 
             woody_error:raise(system, {internal, Reason})
     end.
 
+-spec default_handling_timeout(options()) -> timeout().
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->
     Timeout.
 
+-spec handle_operation_error({conflict, term()} | {invalid, term()}) ->
+    dmsl_domain_conf_v2_thrift:'OperationConflict'()
+    | dmsl_domain_conf_v2_thrift:'OperationInvalid'().
 handle_operation_error({conflict, Conflict}) ->
     #domain_conf_v2_OperationConflict{
         conflict = handle_operation_conflict(Conflict)
@@ -121,27 +139,53 @@ handle_operation_error({invalid, Invalid}) ->
         errors = handle_operation_invalid(Invalid)
     }.
 
+-spec handle_operation_conflict(term()) -> dmsl_domain_conf_v2_thrift:'Conflict'() | no_return().
 handle_operation_conflict({object_already_exists, Ref}) ->
-    {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = Ref}};
+    {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = to_ref(Ref)}};
 handle_operation_conflict({forced_id_exists, Ref}) ->
-    {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = Ref}};
+    {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = to_ref(Ref)}};
 handle_operation_conflict({object_not_found, Ref}) ->
-    {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{object_ref = Ref}};
+    {object_not_found, #domain_conf_v2_ObjectNotFoundConflict{object_ref = to_ref(Ref)}};
 handle_operation_conflict({object_reference_mismatch, Ref}) ->
-    {object_reference_mismatch, #domain_conf_v2_ObjectReferenceMismatchConflict{object_ref = Ref}};
+    {object_reference_mismatch, #domain_conf_v2_ObjectReferenceMismatchConflict{
+        object_ref = to_ref(Ref)
+    }};
 handle_operation_conflict({object_needs_reference, Object}) ->
-    {object_needs_reference, #domain_conf_v2_ObjectNeedsReference{object = Object}}.
+    {object_needs_reference, #domain_conf_v2_ObjectNeedsReference{
+        object = to_refless_object(Object)
+    }}.
 
-handle_operation_invalid({objects_not_exist, Refs}) ->
+-spec handle_operation_invalid(term()) -> [dmsl_domain_conf_v2_thrift:'OperationError'()] | no_return().
+handle_operation_invalid({objects_not_exist, Refs}) when is_list(Refs) ->
     [
         {object_not_exists, #domain_conf_v2_NonexistantObject{
-            object_ref = Ref,
-            referenced_by = ReferencedBy
+            object_ref = to_ref(Ref),
+            referenced_by = to_ref_list(ReferencedBy)
         }}
      || {Ref, ReferencedBy} <- Refs
     ];
-handle_operation_invalid({object_reference_cycles, Cycles}) ->
+handle_operation_invalid({object_reference_cycles, Cycles}) when is_list(Cycles) ->
     [
-        {object_reference_cycle, #domain_conf_v2_ObjectReferenceCycle{cycle = Cycle}}
+        {object_reference_cycle, #domain_conf_v2_ObjectReferenceCycle{cycle = to_ref_list(Cycle)}}
      || Cycle <- Cycles
     ].
+
+%% @doc Narrow a `term()` to a `Reference` or crash with a useful diagnostic.
+%% Eqwalizer can't refine `{atom(), _}` to a thrift tagged-union, hence the
+%% `dynamic()` return type — the guard enforces the shape at runtime.
+-spec to_ref(term()) -> eqwalizer:dynamic() | no_return().
+to_ref({Tag, _} = Ref) when is_atom(Tag) -> Ref;
+to_ref(Other) -> erlang:error({bad_reference, Other}).
+
+-spec to_ref_list(term()) -> [eqwalizer:dynamic()] | no_return().
+to_ref_list(L) when is_list(L) -> [to_ref(R) || R <- L];
+to_ref_list(Other) -> erlang:error({bad_reference_list, Other}).
+
+-spec to_refless_object(term()) -> eqwalizer:dynamic() | no_return().
+to_refless_object({Tag, _} = Obj) when is_atom(Tag) -> Obj;
+to_refless_object(Other) -> erlang:error({bad_refless_object, Other}).
+
+%% @doc Restrict a list of new objects to tagged-tuple shapes.
+-spec filter_domain_objects([term()]) -> [eqwalizer:dynamic()].
+filter_domain_objects(L) ->
+    [Obj || {Tag, _} = Obj <- L, is_atom(Tag)].
