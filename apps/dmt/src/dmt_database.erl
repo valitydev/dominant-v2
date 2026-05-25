@@ -43,6 +43,8 @@
     version/0,
     entity_id/0,
     entity_type/0,
+    author_id/0,
+    object_map/0,
     sql_error/0,
     edge_map/0
 ]).

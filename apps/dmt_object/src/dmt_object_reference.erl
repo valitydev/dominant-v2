@@ -14,6 +14,8 @@
 -type struct_info() :: dmt_thrift:struct_info().
 -type field_info() :: dmt_thrift:field_info().
 
+-export_type([object_reference/0]).
+
 -spec get_domain_object_ref(tuple()) -> object_reference().
 get_domain_object_ref({Tag, _Struct} = DomainObject) ->
     {_Type, Ref} = get_domain_object_field(ref, DomainObject),

@@ -10,6 +10,8 @@
 -type uuid_id() :: binary().
 -type type_tag() :: atom().
 
+-export_type([numerical_id/0, uuid_id/0, type_tag/0]).
+
 -spec get_numerical_object_id(type_tag(), numerical_id()) -> tuple() | no_return().
 get_numerical_object_id(category, ID) ->
     #domain_CategoryRef{id = ID};

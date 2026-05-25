@@ -14,6 +14,8 @@
 
 -export_type([operation_error/0]).
 -export_type([domain_object/0]).
+-export_type([thrift_type/0]).
+-export_type([object_reference/0]).
 
 %%
 

@@ -38,6 +38,18 @@
     | {conflict, binary()}
     | eqwalizer:dynamic().
 
+-export_type([
+    worker/0,
+    version/0,
+    version_ref/0,
+    object_ref/0,
+    author_id/0,
+    operation/0,
+    object_map/0,
+    get_error/0,
+    commit_error/0
+]).
+
 %%
 
 -spec get_object(worker(), version_ref(), object_ref()) ->
@@ -816,10 +828,9 @@ get_unique_numerical_id(Worker, Type) ->
     end.
 
 get_unique_uuid(Worker, Type) ->
-    NewUUID =
-        case uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard) of
-            B when is_binary(B) -> B
-        end,
+    %% `uuid:uuid_to_string/2` with `binary_standard` always returns a binary
+    %% at runtime; assert and narrow with a binary pattern match.
+    <<_/binary>> = NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
     NewRefString = dmt_mapper:ref_to_string({Type, NewID}),
     case dmt_database:check_if_object_id_active(Worker, NewRefString) of

@@ -10,6 +10,8 @@
 
 -type options() :: dmt_api_woody_utils:handler_options().
 
+-export_type([options/0]).
+
 -spec handle_function(woody:func(), woody:args(), woody_context:ctx(), options()) ->
     {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->

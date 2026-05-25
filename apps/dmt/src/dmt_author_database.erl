@@ -19,6 +19,8 @@
 -type email() :: dmt_author:email().
 -type author() :: dmt_author:author().
 
+-export_type([worker/0, author_id/0, name/0, email/0, author/0]).
+
 -spec insert(worker(), name(), email()) ->
     {ok, author_id()} | {ok, {already_exists, author_id()}} | {error, unknown}.
 insert(Worker, Name, Email) ->
