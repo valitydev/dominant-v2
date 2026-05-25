@@ -6,25 +6,17 @@
 -export_type([thrift_type/0]).
 -export_type([function_schema/0]).
 -export_type([thrift_value/0]).
--export_type([struct_info/0]).
--export_type([field_info/0]).
--export_type([struct_flavour/0]).
--export_type([type_ref/0]).
 
 -type thrift_value() :: term().
 
-%% A thrift field type. Recursive: structs may carry their own inline schema
-%% or a reference to a struct by name.
 -type thrift_type() ::
     base_type()
     | collection_type()
     | enum_type()
-    | struct_type()
-    | struct_info().
+    | struct_type().
 
 -type base_type() ::
     bool
-    | byte
     | double
     | i8
     | i16
@@ -41,16 +33,11 @@
     {enum, type_ref()}.
 
 -type struct_type() ::
-    {struct, struct_flavour(), type_ref()}.
+    {struct, struct_flavor(), type_ref()}.
 
--type struct_flavour() :: struct | union | exception.
+-type struct_flavor() :: struct | union | exception.
 
 -type type_ref() :: {module(), Name :: atom()}.
-
-%% Inline struct schema as produced by `<thrift_module>:struct_info/1`.
--type struct_info() :: {struct, struct_flavour(), [field_info()]}.
-
--type field_info() :: {pos_integer(), atom(), thrift_type(), atom(), term()}.
 
 -type function_schema() :: tuple().
 

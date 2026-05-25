@@ -26,30 +26,6 @@
 -export([search_related_graph/8]).
 -export([parse_entity_validation_error/1]).
 
--type worker() :: atom() | epgsql:connection().
--type version() :: integer().
--type entity_id() :: binary().
--type entity_type() :: atom() | binary().
--type author_id() :: dmt_author:author_id().
--type object_map() :: dmt_mapper:object_map().
--type edge_map() :: #{
-    source_ref := dmsl_domain_thrift:'Reference'(),
-    target_ref := dmsl_domain_thrift:'Reference'()
-}.
--type sql_error() :: term().
-
--export_type([
-    worker/0,
-    version/0,
-    entity_id/0,
-    entity_type/0,
-    author_id/0,
-    object_map/0,
-    sql_error/0,
-    edge_map/0
-]).
-
--spec get_latest_version(worker()) -> {ok, version()} | {error, sql_error()}.
 get_latest_version(Worker) ->
     Query1 =
         """
@@ -64,8 +40,6 @@ get_latest_version(Worker) ->
             {error, Reason}
     end.
 
--spec get_object_latest_version(worker(), entity_id()) ->
-    {ok, version()} | {error, not_found | sql_error()}.
 get_object_latest_version(Worker, ChangedObjectId) ->
     Query0 =
         """
@@ -86,7 +60,6 @@ get_object_latest_version(Worker, ChangedObjectId) ->
             {error, Reason}
     end.
 
--spec get_new_version(worker(), author_id()) -> {ok, version()} | {error, sql_error()}.
 get_new_version(Worker, AuthorID) ->
     {ok, #{
         git_ref := GitRef
@@ -103,13 +76,12 @@ get_new_version(Worker, AuthorID) ->
             {error, Reason}
     end.
 
--spec clean_utf8_string(binary() | string()) -> binary().
 clean_utf8_string(String) ->
     % Convert to binary if it's not already
     Binary =
         case is_binary(String) of
             true -> String;
-            false -> to_utf8_binary(unicode:characters_to_binary(String))
+            false -> unicode:characters_to_binary(String)
         end,
     % Remove any invalid UTF-8 sequences
     case unicode:characters_to_binary(Binary, utf8, utf8) of
@@ -118,22 +90,11 @@ clean_utf8_string(String) ->
             % and convert it to UTF-8.
             % binary_to_list(Binary) gives a list of bytes (0-255),
             % which are treated as Latin-1 codepoints.
-            to_utf8_binary(unicode:characters_to_binary(binary_to_list(Binary), utf8));
-        CleanBinary when is_binary(CleanBinary) ->
-            CleanBinary;
-        {incomplete, Bin, _Rest} when is_binary(Bin) ->
-            Bin
+            unicode:characters_to_binary(binary_to_list(Binary), utf8);
+        CleanBinary ->
+            CleanBinary
     end.
 
--spec to_utf8_binary(
-    binary() | {error, binary(), term()} | {incomplete, binary(), binary()}
-) -> binary().
-to_utf8_binary(Bin) when is_binary(Bin) -> Bin;
-to_utf8_binary({error, Bin, _Rest}) when is_binary(Bin) -> Bin;
-to_utf8_binary({incomplete, Bin, _Rest}) when is_binary(Bin) -> Bin.
-
--spec insert_object(worker(), entity_id(), entity_type(), version(), binary(), binary() | string()) ->
-    ok | {error, sql_error()}.
 insert_object(Worker, ID1, Type, Version, Data1, SearchVector) ->
     Query = """
     INSERT INTO entity
@@ -152,10 +113,6 @@ insert_object(Worker, ID1, Type, Version, Data1, SearchVector) ->
             {error, Reason}
     end.
 
--spec update_object(
-    worker(), entity_id(), entity_type(), version(), binary(), binary() | string(), boolean()
-) ->
-    ok | {error, sql_error()}.
 update_object(
     Worker,
     ID1,
@@ -181,13 +138,6 @@ update_object(
             {error, Reason}
     end.
 
--spec insert_relations(worker(), entity_id(), entity_id(), version(), boolean()) ->
-    ok
-    | {error,
-        {duplicate_relation, binary()}
-        | {source_entity_not_found, dmsl_domain_thrift:'Reference'()}
-        | {target_entity_not_found, dmsl_domain_thrift:'Reference'()}
-        | sql_error()}.
 insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
     Query = """
     INSERT INTO entity_relation
@@ -223,8 +173,8 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
 %% @doc Parse validation error messages from the validate_entity_exists trigger
 %% Expected format: "ENTITY_NOT_EXISTS|SOURCE|entity_id" or "ENTITY_NOT_EXISTS|TARGET|entity_id"
 -spec parse_entity_validation_error(binary()) ->
-    {source_entity_not_found, dmsl_domain_thrift:'Reference'()}
-    | {target_entity_not_found, dmsl_domain_thrift:'Reference'()}
+    {source_entity_not_found, binary()}
+    | {target_entity_not_found, binary()}
     | unknown.
 parse_entity_validation_error(Message) ->
     case binary:split(Message, <<"|">>, [global]) of
@@ -236,8 +186,6 @@ parse_entity_validation_error(Message) ->
             unknown
     end.
 
--spec get_references_to(worker(), entity_id(), version()) ->
-    [dmsl_domain_thrift:'Reference'()] | no_return().
 get_references_to(Worker, ID, Version) ->
     Query = """
     WITH LatestEdge AS (
@@ -263,13 +211,11 @@ get_references_to(Worker, ID, Version) ->
     Params = [Version, ID],
     case epg_pool:query(Worker, Query, Params) of
         {ok, _Columns, Refs} ->
-            [dmt_mapper:string_to_ref(Res) || {Res} <- Refs, is_binary(Res)];
+            lists:map(fun({Res}) -> dmt_mapper:string_to_ref(Res) end, Refs);
         {error, Reason} ->
-            erlang:error({sql_error, Reason})
+            {error, Reason}
     end.
 
--spec get_referenced_by(worker(), entity_id(), version()) ->
-    [dmsl_domain_thrift:'Reference'()] | no_return().
 get_referenced_by(Worker, ID, Version) ->
     Query = """
     WITH LatestEdge AS (
@@ -295,13 +241,11 @@ get_referenced_by(Worker, ID, Version) ->
     Params = [Version, ID],
     case epg_pool:query(Worker, Query, Params) of
         {ok, _Columns, Refs} ->
-            [dmt_mapper:string_to_ref(Res) || {Res} <- Refs, is_binary(Res)];
+            lists:map(fun({Res}) -> dmt_mapper:string_to_ref(Res) end, Refs);
         {error, Reason} ->
-            erlang:error({sql_error, Reason})
+            {error, Reason}
     end.
 
--spec get_next_sequence(worker(), entity_type()) ->
-    {ok, integer()} | {error, sequence_not_enabled | sql_error()}.
 get_next_sequence(Worker, Type) ->
     Query = """
     UPDATE entity_type
@@ -320,7 +264,6 @@ get_next_sequence(Worker, Type) ->
             {error, Reason}
     end.
 
--spec check_if_object_id_active(worker(), entity_id()) -> boolean() | {error, sql_error()}.
 check_if_object_id_active(Worker, ID0) ->
     Query = """
     SELECT is_active
@@ -338,7 +281,6 @@ check_if_object_id_active(Worker, ID0) ->
             {error, Reason}
     end.
 
--spec check_version_exists(worker(), version()) -> boolean() | {error, sql_error()}.
 check_version_exists(Worker, Version) ->
     Query = """
     SELECT 1
@@ -355,8 +297,6 @@ check_version_exists(Worker, Version) ->
             {error, Reason}
     end.
 
--spec get_object(worker(), entity_id(), version()) ->
-    {ok, object_map()} | {error, not_found | sql_error()}.
 get_object(Worker, ID0, Version) ->
     Request = """
     WITH LatestVersionAtRequestedTime AS (
@@ -398,8 +338,6 @@ get_object(Worker, ID0, Version) ->
             end
     end.
 
--spec get_objects(worker(), [entity_id()], version()) ->
-    {ok, [object_map()]} | {error, sql_error()}.
 get_objects(Worker, IDs, Version) ->
     Request = """
     WITH LatestVersionAtRequestedTime AS (
@@ -436,8 +374,6 @@ get_objects(Worker, IDs, Version) ->
             {error, Reason}
     end.
 
--spec get_latest_object(worker(), entity_id()) ->
-    {ok, object_map()} | {error, not_found | sql_error()}.
 get_latest_object(Worker, ID0) ->
     Request = """
     WITH LatestVersion AS (
@@ -473,8 +409,6 @@ get_latest_object(Worker, ID0) ->
             end
     end.
 
--spec get_version_creator(worker(), version()) ->
-    {ok, author_id()} | {error, not_found | sql_error()}.
 get_version_creator(Worker, Version) ->
     Request = """
     SELECT created_by
@@ -490,13 +424,6 @@ get_version_creator(Worker, Version) ->
             {ok, CreatedBy}
     end.
 
--spec get_version(worker(), version()) ->
-    {ok, #{
-        version := version(),
-        created_at := dmt_mapper:pg_datetime(),
-        created_by := author_id()
-    }}
-    | {error, not_found | sql_error()}.
 get_version(Worker, Version) ->
     Request = """
     SELECT version, created_at, created_by
@@ -508,34 +435,14 @@ get_version(Worker, Version) ->
     case epg_pool:query(Worker, Request, [Version]) of
         {ok, _Columns, []} ->
             {error, not_found};
-        {ok, _Columns, [{Version, CreatedAt, CreatedBy}]} when is_binary(CreatedBy) ->
+        {ok, _Columns, [{Version, CreatedAt, CreatedBy}]} ->
             {ok, #{
                 version => Version,
-                created_at => ensure_pg_datetime(CreatedAt),
+                created_at => CreatedAt,
                 created_by => CreatedBy
-            }};
-        {error, Reason} ->
-            {error, Reason}
+            }}
     end.
 
-%% @doc Refine an opaque epgsql column value into `pg_datetime()`. Does no
-%% conversion — just asserts the runtime shape and lets the type system see it.
--spec ensure_pg_datetime(term()) -> dmt_mapper:pg_datetime() | no_return().
-ensure_pg_datetime({{Y, Mo, D}, {H, Mi, S}} = T) when
-    is_integer(Y),
-    is_integer(Mo),
-    is_integer(D),
-    is_integer(H),
-    is_integer(Mi),
-    is_integer(S) orelse is_float(S)
-->
-    T;
-ensure_pg_datetime(Other) ->
-    erlang:error({bad_pg_datetime, Other}).
-
--spec get_object_history(worker(), entity_id(), pos_integer(), non_neg_integer()) ->
-    {ok, [object_map()], non_neg_integer() | undefined}
-    | {error, not_found | sql_error()}.
 get_object_history(Worker, Ref, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -568,7 +475,6 @@ get_object_history(Worker, Ref, Limit, Offset) ->
             {error, Reason}
     end.
 
--spec has_more_object_history(worker(), entity_id(), non_neg_integer()) -> boolean().
 has_more_object_history(Worker, Ref, Offset) ->
     Query = """
     SELECT 1
@@ -589,9 +495,6 @@ has_more_object_history(Worker, Ref, Offset) ->
             false
     end.
 
--spec get_all_objects_history(worker(), pos_integer(), non_neg_integer()) ->
-    {ok, [object_map()], non_neg_integer() | undefined}
-    | {error, sql_error()}.
 get_all_objects_history(Worker, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -621,7 +524,6 @@ get_all_objects_history(Worker, Limit, Offset) ->
             {error, Reason}
     end.
 
--spec has_more_all_objects_history(worker(), non_neg_integer()) -> boolean().
 has_more_all_objects_history(Worker, Offset) ->
     % Сначала проверим, есть ли еще записи после текущего смещения + лимит
     Query = """
@@ -643,10 +545,6 @@ has_more_all_objects_history(Worker, Offset) ->
             false
     end.
 
--spec search_objects(
-    worker(), binary(), version(), entity_type() | undefined, pos_integer(), non_neg_integer()
-) ->
-    {ok, {[object_map()], non_neg_integer() | undefined}}.
 search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
     % Use a pattern where the condition is always true when Type is NULL
     TypeValue =
@@ -766,10 +664,6 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     end.
 
 % Helper function to check if there are more search results
--spec has_more_search_results(
-    worker(), binary(), version(), entity_type() | undefined, non_neg_integer()
-) ->
-    boolean().
 has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
     CheckMoreQuery = """
     WITH LatestVersionAtRequestedTime AS (
@@ -840,8 +734,6 @@ has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
             false
     end.
 
--spec check_entity_type_exists(worker(), entity_type()) ->
-    ok | {error, object_type_not_found}.
 check_entity_type_exists(Worker, Type) ->
     CheckMoreQuery = """
     SELECT 1 FROM entity_type
@@ -861,8 +753,6 @@ check_entity_type_exists(Worker, Type) ->
             {error, object_type_not_found}
     end.
 
--spec get_all_objects(worker(), version()) ->
-    {ok, [object_map()]} | {error, sql_error()}.
 get_all_objects(Worker, Version) ->
     Query = """
     WITH LatestVersions AS (
@@ -897,16 +787,6 @@ get_all_objects(Worker, Version) ->
             {error, Reason}
     end.
 
--spec get_related_graph(
-    worker(),
-    entity_id(),
-    version(),
-    non_neg_integer() | undefined,
-    boolean() | undefined,
-    boolean() | undefined,
-    entity_type() | undefined
-) ->
-    {ok, {[object_map()], [edge_map()]}} | {error, sql_error()}.
 get_related_graph(
     Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
 ) ->
@@ -920,10 +800,6 @@ get_related_graph(
     end.
 
 %% Helper function to get objects and apply type filter
--spec get_objects_and_filter(
-    worker(), [entity_id()], version(), entity_type() | undefined, [edge_map()], term()
-) ->
-    {ok, {[object_map()], [edge_map()]}} | {error, sql_error()}.
 get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef) ->
     case get_objects(Worker, EntityIds, Version) of
         {ok, AllNodes} ->
@@ -937,7 +813,6 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
     end.
 
 %% Filter nodes by type if type filter is specified
--spec filter_nodes_by_type([object_map()], entity_type() | undefined) -> [object_map()].
 filter_nodes_by_type(Nodes, undefined) ->
     Nodes;
 filter_nodes_by_type(Nodes, FilterType) ->
@@ -948,7 +823,6 @@ filter_nodes_by_type(Nodes, FilterType) ->
         end,
     [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
 
--spec filter_edges_by_nodes([edge_map()], [object_map()]) -> [edge_map()].
 filter_edges_by_nodes(Edges, Nodes) ->
     logger:error("filter_edges_by_nodes Edges: ~p, Nodes: ~p", [Edges, Nodes]),
     lists:filter(
@@ -970,15 +844,6 @@ filter_edges_by_nodes(Edges, Nodes) ->
         Edges
     ).
 
--spec get_related_graph_edges(
-    worker(),
-    entity_id(),
-    version(),
-    non_neg_integer() | undefined,
-    boolean() | undefined,
-    boolean() | undefined
-) ->
-    {ok, {[binary()], [edge_map()]}} | {error, sql_error()}.
 get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound) ->
     Query = """
     WITH RECURSIVE
@@ -1074,7 +939,6 @@ get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, Inclu
             {error, Reason}
     end.
 
--spec parse_graph_edges_result([{binary(), binary()}]) -> {[binary()], [edge_map()]}.
 parse_graph_edges_result(Rows) ->
     Edges = [
         #{
@@ -1091,16 +955,6 @@ parse_graph_edges_result(Rows) ->
 
     {EntityIds1, Edges}.
 
--spec get_multiple_related_graph(
-    worker(),
-    [dmsl_domain_thrift:'Reference'()],
-    version(),
-    non_neg_integer() | undefined,
-    boolean() | undefined,
-    boolean() | undefined,
-    entity_type() | undefined
-) ->
-    {ok, {[object_map()], [edge_map()]}} | {error, sql_error()}.
 get_multiple_related_graph(
     Worker, ObjectRefs, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
 ) ->
@@ -1118,15 +972,6 @@ get_multiple_related_graph(
             {error, Reason}
     end.
 
--spec get_multiple_related_graph_edges(
-    worker(),
-    [binary()],
-    version(),
-    non_neg_integer() | undefined,
-    boolean() | undefined,
-    boolean() | undefined
-) ->
-    {ok, {[binary()], [edge_map()]}} | {error, sql_error()}.
 get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound) ->
     Query = """
     WITH RECURSIVE
@@ -1224,17 +1069,6 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
             {error, Reason}
     end.
 
--spec search_related_graph(
-    worker(),
-    binary(),
-    binary() | undefined,
-    version(),
-    non_neg_integer() | undefined,
-    boolean() | undefined,
-    boolean() | undefined,
-    binary() | undefined
-) ->
-    {ok, {[object_map()], [edge_map()]}} | {error, sql_error()}.
 search_related_graph(
     Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
 ) ->

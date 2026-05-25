@@ -8,15 +8,6 @@
 
 -define(DOMAIN, dmsl_domain_thrift).
 
--type object_type() :: dmt_object:object_type().
--type object_reference() :: {object_type(), term()}.
--type thrift_type() :: dmt_thrift:thrift_type().
--type struct_info() :: dmt_thrift:struct_info().
--type field_info() :: dmt_thrift:field_info().
-
--export_type([object_reference/0]).
-
--spec get_domain_object_ref(tuple()) -> object_reference().
 get_domain_object_ref({Tag, _Struct} = DomainObject) ->
     {_Type, Ref} = get_domain_object_field(ref, DomainObject),
     {Tag, Ref}.
@@ -24,12 +15,10 @@ get_domain_object_ref({Tag, _Struct} = DomainObject) ->
 %% RefflessObject ZONE
 
 %% FIXME doesn't work
--spec refless_object_references(tuple()) -> [object_reference()].
 refless_object_references(DomainObject) ->
     {Data, DataType} = get_refless_data(DomainObject),
     references(Data, DataType).
 
--spec get_refless_data(tuple()) -> {eqwalizer:dynamic(), thrift_type()}.
 get_refless_data({Tag, Struct}) ->
     SchemaInfo = get_struct_info('ReflessDomainObject'),
     case get_field_info(Tag, SchemaInfo) of
@@ -41,38 +30,30 @@ get_refless_data({Tag, Struct}) ->
 
 %% DomainObject ZONE
 
--spec domain_object_references(tuple()) -> [object_reference()].
 domain_object_references(DomainObject) ->
     {Data, DataType} = get_domain_object_data(DomainObject),
     references(Data, DataType).
 
--spec get_domain_object_data(tuple()) -> {eqwalizer:dynamic(), thrift_type()}.
 get_domain_object_data(DomainObject) ->
     get_domain_object_field(data, DomainObject).
 
--spec get_domain_object_field(atom(), tuple()) -> {eqwalizer:dynamic(), thrift_type()}.
 get_domain_object_field(Field, {Tag, Struct}) ->
     get_field(Field, Struct, get_domain_object_schema(Tag)).
 
--spec get_domain_object_schema(atom()) -> struct_info().
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),
     {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
     get_struct_info(ObjectStructName).
 
--spec get_field(atom(), tuple(), struct_info()) -> {eqwalizer:dynamic(), thrift_type()}.
 get_field(Field, Struct, StructInfo) when is_atom(Field) ->
     {FieldIndex, {_, _, Type, _, _}} = get_field_index(Field, StructInfo),
     {element(FieldIndex, Struct), Type}.
 
--spec get_field_index(atom(), struct_info()) -> {pos_integer(), field_info()} | false.
 get_field_index(Field, {struct, _StructType, FieldsInfo}) ->
     % NOTE
     % This `2` gives index of the first significant field in a record tuple.
     get_field_index(Field, 2, FieldsInfo).
 
--spec get_field_index(atom(), pos_integer(), [field_info()]) ->
-    {pos_integer(), field_info()} | false.
 get_field_index(_Field, _, []) ->
     false;
 get_field_index(Field, I, [F | Rest]) ->
@@ -85,12 +66,9 @@ get_field_index(Field, I, [F | Rest]) ->
 
 %% References Gathering ZONE
 
--spec references(eqwalizer:dynamic(), thrift_type()) -> [object_reference()].
 references(Object, DataType) ->
     references(Object, DataType, []).
 
--spec references(eqwalizer:dynamic(), thrift_type(), [object_reference()]) ->
-    [object_reference()].
 references(undefined, _StructInfo, Refs) ->
     Refs;
 references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when
@@ -148,8 +126,6 @@ references(Object, {map, KeyType, ValueType}, Refs) ->
 references(_DomainObject, _Primitive, Refs) ->
     Refs.
 
--spec check_reference_type(eqwalizer:dynamic(), thrift_type(), [object_reference()]) ->
-    [object_reference()].
 check_reference_type(Object, Type, Refs) ->
     case is_reference_type(Type) of
         {true, Tag} ->
@@ -158,16 +134,10 @@ check_reference_type(Object, Type, Refs) ->
             references(Object, Type, Refs)
     end.
 
--spec is_reference_type(thrift_type()) -> {true, atom()} | false.
 is_reference_type(Type) ->
-    case get_struct_info('Reference') of
-        {struct, union, StructInfo} when is_list(StructInfo) ->
-            is_reference_type(Type, StructInfo);
-        _ ->
-            false
-    end.
+    {struct, union, StructInfo} = get_struct_info('Reference'),
+    is_reference_type(Type, StructInfo).
 
--spec is_reference_type(thrift_type(), [field_info()]) -> {true, atom()} | false.
 is_reference_type(_Type, []) ->
     false;
 is_reference_type(Type, [{_, _, Type, Tag, _} | _Rest]) ->
@@ -175,7 +145,6 @@ is_reference_type(Type, [{_, _, Type, Tag, _} | _Rest]) ->
 is_reference_type(Type, [_ | Rest]) ->
     is_reference_type(Type, Rest).
 
--spec indexfold(fun((pos_integer(), Elem, Acc) -> Acc), Acc, pos_integer(), [Elem]) -> Acc.
 indexfold(Fun, Acc, I, [E | Rest]) ->
     indexfold(Fun, Fun(I, E, Acc), I + 1, Rest);
 indexfold(_Fun, Acc, _I, []) ->
@@ -183,28 +152,13 @@ indexfold(_Fun, Acc, _I, []) ->
 
 %% Common
 
--spec get_struct_info(atom()) -> struct_info().
 get_struct_info('LimitConfig') ->
-    %% Cast: each `dmsl_*_thrift` module exports its own nominal `struct_info()`
-    %% type. Ours is the structurally identical local alias — eqwalizer treats
-    %% the two as distinct nominal types so the cross-module boundary needs an
-    %% explicit cast.
-    eqwalizer:dynamic_cast(dmsl_limiter_config_thrift:struct_info('LimitConfig'));
+    dmsl_limiter_config_thrift:struct_info('LimitConfig');
 get_struct_info(StructName) ->
-    %% Outer cast: same nominal-vs-structural reason as the `LimitConfig` clause.
-    %% Inner cast on `StructName`: `dmsl_domain_thrift:struct_info/1` expects a
-    %% specific atom union (`struct_name() | exception_name()`); the value here
-    %% comes from runtime schema lookups so we only know it's an `atom()`.
-    eqwalizer:dynamic_cast(
-        dmsl_domain_thrift:struct_info(eqwalizer:dynamic_cast(StructName))
-    ).
+    dmsl_domain_thrift:struct_info(StructName).
 
--spec get_field_info(atom(), struct_info()) -> field_info() | false.
 get_field_info(Field, {struct, _StructType, FieldsInfo}) ->
-    case lists:keyfind(Field, 4, FieldsInfo) of
-        false -> false;
-        T -> T
-    end.
+    lists:keyfind(Field, 4, FieldsInfo).
 
 -ifdef(TEST).
 

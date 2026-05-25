@@ -6,13 +6,6 @@
 -export([get_numerical_object_id/2]).
 -export([get_uuid_object_id/2]).
 
--type numerical_id() :: integer().
--type uuid_id() :: binary().
--type type_tag() :: atom().
-
--export_type([numerical_id/0, uuid_id/0, type_tag/0]).
-
--spec get_numerical_object_id(type_tag(), numerical_id()) -> tuple() | no_return().
 get_numerical_object_id(category, ID) ->
     #domain_CategoryRef{id = ID};
 get_numerical_object_id(business_schedule, ID) ->
@@ -50,7 +43,6 @@ get_numerical_object_id(document_type, ID) ->
 get_numerical_object_id(Type, _ID) ->
     throw({not_supported, Type}).
 
--spec get_uuid_object_id(type_tag(), uuid_id()) -> tuple() | no_return().
 get_uuid_object_id(party_config, ID) ->
     #domain_PartyConfigRef{id = ID};
 get_uuid_object_id(shop_config, ID) ->
