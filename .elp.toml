@@ -1,0 +1,3 @@
+[eqwalizer]
+enable_all = false
+max_tasks = 4

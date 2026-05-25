@@ -13,51 +13,42 @@
 -export_type([insertable_object/0]).
 -export_type([object_changes/0]).
 -export_type([object/0]).
--export_type([object_type/0]).
--export_type([object_id/0]).
--export_type([timestamp/0]).
--export_type([domain_object/0]).
--export_type([refless_domain_object/0]).
 
 %% Object type tag. Constructed as an atom in code (e.g. `category`,
 %% `provider`) but stored as text in the DB, so values read back from a row
 %% surface as a binary. Both shapes flow through the same APIs.
 -type object_type() :: atom() | binary().
--type object_id() :: term().
--type timestamp() :: binary() | string().
-
--type domain_object() :: dmsl_domain_thrift:'DomainObject'().
--type refless_domain_object() :: dmsl_domain_thrift:'ReflessDomainObject'().
+-type object_id() :: string().
+-type timestamp() :: string().
 
 -type insertable_object() :: #{
-    tmp_id := binary(),
     type := object_type(),
-    forced_id := term() | undefined,
-    data := refless_domain_object()
+    tmp_id := object_id(),
+    forced_id := string() | undefined,
+    references := [{object_type(), object_id()}],
+    data := binary()
 }.
 
 -type object_changes() :: #{
-    id := {object_type(), object_id()},
+    id := object_id(),
     type := object_type(),
-    %% Carries a domain object value; the shape is enforced by the producer
-    %% (`update_object/2` / `commit_operation/2`) and not by this type.
-    data := term(),
-    referenced_by => [term()],
+    references => [{object_type(), object_id()}],
+    referenced_by => [{object_type(), object_id()}],
+    data => binary(),
     is_active => boolean()
 }.
 
 -type object() :: #{
-    id := term(),
+    id := object_id(),
     type := object_type(),
-    version := number() | binary(),
-    data := term(),
-    created_at := binary() | list(),
-    is_active := boolean(),
-    atom() => term()
+    version := string(),
+    references := [{object_type(), object_id()}],
+    referenced_by := [{object_type(), object_id()}],
+    data := binary(),
+    created_at := timestamp(),
+    created_by := string()
 }.
 
--spec new_object(dmsl_domain_conf_v2_thrift:'InsertOp'()) ->
-    {ok, insertable_object()} | {error, {type_mismatch, term(), term()}}.
 new_object(#domain_conf_v2_InsertOp{
     object = NewObject,
     force_ref = ForcedRef
@@ -74,25 +65,26 @@ new_object(#domain_conf_v2_InsertOp{
             {error, Error}
     end.
 
--spec update_object(domain_object() | term(), object_changes()) ->
-    {ok, object_changes()} | {error, {is_not_domain_object, term()}}.
-update_object({Type, {_Record, ID, _Data}} = Object, ExistingUpdate) when is_atom(Type) ->
-    {ok, ExistingUpdate#{
-        id => {Type, ID},
-        type => Type,
-        data => Object
-    }};
-update_object(Obj, _ExistingUpdate) ->
-    {error, {is_not_domain_object, Obj}}.
+update_object(
+    Object,
+    ExistingUpdate
+) ->
+    maybe
+        {ok, Type} ?= get_object_type(Object),
+        {ok, ID} ?= get_object_ref(Object),
+        {ok, ExistingUpdate#{
+            id => ID,
+            type => Type,
+            data => Object
+        }}
+    end.
 
--spec remove_object(object_changes()) -> object_changes().
 remove_object(OG) ->
     OG#{
         referenced_by => [],
         is_active => false
     }.
 
--spec just_object(term(), term(), term(), term(), term(), term()) -> object().
 just_object(
     ID,
     Type,
@@ -115,8 +107,6 @@ just_object(
         is_active => IsActive
     }.
 
--spec get_checked_type(term() | undefined, refless_domain_object()) ->
-    {ok, object_type()} | {error, {type_mismatch, term(), term()}}.
 get_checked_type(undefined, {Type, _}) ->
     {ok, Type};
 get_checked_type({Type, _}, {Type, _}) ->
@@ -124,7 +114,16 @@ get_checked_type({Type, _}, {Type, _}) ->
 get_checked_type(Ref, Object) ->
     {error, {type_mismatch, Ref, Object}}.
 
--spec filter_out_inactive_objects([object()]) -> [object()].
+get_object_type({Type, {_Object, _Ref, _Data}}) ->
+    {ok, Type};
+get_object_type(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
+
+get_object_ref({Type, {_Object, ID, _Data}}) ->
+    {ok, {Type, ID}};
+get_object_ref(Obj) ->
+    {error, {is_not_domain_object, Obj}}.
+
 filter_out_inactive_objects(Objects) ->
     lists:filter(
         fun(Obj) ->

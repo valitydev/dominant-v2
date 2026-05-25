@@ -92,11 +92,13 @@ check-format:
 dialyze:
 	$(REBAR) as test dialyzer
 
+EQW_MODULES ?= $(shell grep -v '^\#' eqwalizer.modules | tr '\n' ' ')
+
 eqwalizer:
 	$(REBAR) compile
-	# ERL_LIBS lets elp's erlang_service load compiled parse_transforms
-	# (e.g. dmt_domain_pt) when analysing modules that use them.
-	ERL_LIBS=$(CURDIR)/_build/default/lib elp eqwalize-all
+	@for m in $(EQW_MODULES); do \
+	  ERL_LIBS=$(CURDIR)/_build/default/lib elp eqwalize $$m || exit 1; \
+	done
 
 release:
 	$(REBAR) as prod release

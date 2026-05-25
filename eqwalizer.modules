@@ -1,0 +1,11 @@
+# Modules checked by `make eqwalizer` / CI eqwalizer job.
+# One module name per line; lines starting with # are ignored.
+#
+# Phase 1 (uncomment when ready):
+# dmt_object_id
+# dmt_object
+# dmt_author
+# dmt_author_database
+#
+# Phase 2a (uncomment when ready):
+# dmt_repository
