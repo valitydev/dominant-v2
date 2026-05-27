@@ -1,5 +1,11 @@
 -module(dmt_repository_client_tests_SUITE).
 
+%% CT test case signatures are fixed by the Common Test framework; specs would
+%% be boilerplate. Suppress the missing-spec warnings for the whole suite.
+%% `untyped_record` is also disabled because suite files reference records
+%% from third-party deps (e.g. brod) whose fields lack type info.
+-compile([nowarn_missing_spec, nowarn_missing_spec_all, nowarn_untyped_record]).
+
 -include_lib("damsel/include/dmsl_domain_conf_v2_thrift.hrl").
 -include_lib("damsel/include/dmsl_domain_thrift.hrl").
 -include_lib("stdlib/include/assert.hrl").

@@ -6,6 +6,12 @@
 -export([get_refless_object_type/1]).
 -export([get_ref_type/1]).
 
+-export_type([refless_object_type/0]).
+
+-type refless_object_type() :: category | currency.
+
+-spec get_refless_object_type(dmsl_domain_thrift:'Category'() | dmsl_domain_thrift:'Currency'() | term()) ->
+    refless_object_type() | no_return().
 get_refless_object_type(#domain_Category{}) ->
     category;
 get_refless_object_type(#domain_Currency{}) ->
@@ -13,6 +19,8 @@ get_refless_object_type(#domain_Currency{}) ->
 get_refless_object_type(_) ->
     error(not_impl).
 
+-spec get_ref_type(dmsl_domain_thrift:'CurrencyRef'() | dmsl_domain_thrift:'CategoryRef'() | undefined | term()) ->
+    refless_object_type() | undefined | no_return().
 get_ref_type(#domain_CurrencyRef{}) ->
     currency;
 get_ref_type(#domain_CategoryRef{}) ->

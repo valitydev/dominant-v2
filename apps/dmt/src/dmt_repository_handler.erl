@@ -5,11 +5,15 @@
 %% API
 -export([handle_function/4]).
 
+-spec handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
+-spec do_handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options) ->
     case dmt_repository:commit(Version, Operations, AuthorID) of
         {ok, NextVersion, NewObjects} ->
@@ -109,9 +113,13 @@ do_handle_function('SearchRelatedGraph', {SearchRelatedGraphRequest}, _Context, 
             woody_error:raise(system, {internal, Reason})
     end.
 
+-spec default_handling_timeout(woody:options()) -> timeout().
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->
     Timeout.
 
+-spec handle_operation_error(dmt_domain:operation_error() | term()) ->
+    dmsl_domain_conf_v2_thrift:'OperationConflict'()
+    | dmsl_domain_conf_v2_thrift:'OperationInvalid'().
 handle_operation_error({conflict, Conflict}) ->
     #domain_conf_v2_OperationConflict{
         conflict = handle_operation_conflict(Conflict)
@@ -121,6 +129,7 @@ handle_operation_error({invalid, Invalid}) ->
         errors = handle_operation_invalid(Invalid)
     }.
 
+-spec handle_operation_conflict(term()) -> dmsl_domain_conf_v2_thrift:'Conflict'().
 handle_operation_conflict({object_already_exists, Ref}) ->
     {object_already_exists, #domain_conf_v2_ObjectAlreadyExistsConflict{object_ref = Ref}};
 handle_operation_conflict({forced_id_exists, Ref}) ->
@@ -132,6 +141,7 @@ handle_operation_conflict({object_reference_mismatch, Ref}) ->
 handle_operation_conflict({object_needs_reference, Object}) ->
     {object_needs_reference, #domain_conf_v2_ObjectNeedsReference{object = Object}}.
 
+-spec handle_operation_invalid(term()) -> [dmsl_domain_conf_v2_thrift:'OperationError'()].
 handle_operation_invalid({objects_not_exist, Refs}) ->
     [
         {object_not_exists, #domain_conf_v2_NonexistantObject{

@@ -8,6 +8,30 @@
 
 -define(DOMAIN, dmsl_domain_thrift).
 
+%% NOTE: The thrift-related types (struct_field_info, field_type, field_name)
+%% are defined in `dmsl_domain_thrift` but not exported, so we mirror them
+%% here. They are stable parts of the generated thrift surface.
+-type struct_flavour() :: struct | exception | union.
+-type field_name() :: atom().
+-type field_type() ::
+    bool
+    | byte
+    | i16
+    | i32
+    | i64
+    | string
+    | double
+    | {enum, {module(), atom()}}
+    | {struct, struct_flavour(), {module(), atom()}}
+    | {list, field_type()}
+    | {set, field_type()}
+    | {map, field_type(), field_type()}.
+-type struct_field_info() :: {pos_integer(), required | optional | undefined, field_type(), field_name(), term()}.
+-type struct_info() :: {struct, struct_flavour(), [struct_field_info()]}.
+-type struct_name() :: atom().
+-type domain_reference() :: dmsl_domain_thrift:'Reference'().
+
+-spec get_domain_object_ref(dmsl_domain_thrift:'DomainObject'()) -> domain_reference().
 get_domain_object_ref({Tag, _Struct} = DomainObject) ->
     {_Type, Ref} = get_domain_object_field(ref, DomainObject),
     {Tag, Ref}.
@@ -15,10 +39,12 @@ get_domain_object_ref({Tag, _Struct} = DomainObject) ->
 %% RefflessObject ZONE
 
 %% FIXME doesn't work
+-spec refless_object_references(dmsl_domain_thrift:'ReflessDomainObject'()) -> [domain_reference()].
 refless_object_references(DomainObject) ->
     {Data, DataType} = get_refless_data(DomainObject),
     references(Data, DataType).
 
+-spec get_refless_data(dmsl_domain_thrift:'ReflessDomainObject'()) -> {tuple(), field_type()}.
 get_refless_data({Tag, Struct}) ->
     SchemaInfo = get_struct_info('ReflessDomainObject'),
     case get_field_info(Tag, SchemaInfo) of
@@ -30,30 +56,40 @@ get_refless_data({Tag, Struct}) ->
 
 %% DomainObject ZONE
 
+-spec domain_object_references(dmsl_domain_thrift:'DomainObject'()) -> [domain_reference()].
 domain_object_references(DomainObject) ->
     {Data, DataType} = get_domain_object_data(DomainObject),
     references(Data, DataType).
 
+-spec get_domain_object_data(dmsl_domain_thrift:'DomainObject'()) -> {term(), field_type()}.
 get_domain_object_data(DomainObject) ->
     get_domain_object_field(data, DomainObject).
 
+-spec get_domain_object_field(field_name(), dmsl_domain_thrift:'DomainObject'()) ->
+    {term(), field_type()}.
 get_domain_object_field(Field, {Tag, Struct}) ->
     get_field(Field, Struct, get_domain_object_schema(Tag)).
 
+-spec get_domain_object_schema(atom()) -> struct_info().
 get_domain_object_schema(Tag) ->
     SchemaInfo = get_struct_info('DomainObject'),
     {_, _, {struct, _, {_, ObjectStructName}}, _, _} = get_field_info(Tag, SchemaInfo),
     get_struct_info(ObjectStructName).
 
+-spec get_field(field_name(), tuple(), struct_info()) -> {term(), field_type()}.
 get_field(Field, Struct, StructInfo) when is_atom(Field) ->
     {FieldIndex, {_, _, Type, _, _}} = get_field_index(Field, StructInfo),
     {element(FieldIndex, Struct), Type}.
 
+-spec get_field_index(field_name(), struct_info()) ->
+    {pos_integer(), struct_field_info()} | false.
 get_field_index(Field, {struct, _StructType, FieldsInfo}) ->
     % NOTE
     % This `2` gives index of the first significant field in a record tuple.
     get_field_index(Field, 2, FieldsInfo).
 
+-spec get_field_index(field_name(), pos_integer(), [struct_field_info()]) ->
+    {pos_integer(), struct_field_info()} | false.
 get_field_index(_Field, _, []) ->
     false;
 get_field_index(Field, I, [F | Rest]) ->
@@ -66,9 +102,11 @@ get_field_index(Field, I, [F | Rest]) ->
 
 %% References Gathering ZONE
 
+-spec references(term(), field_type() | struct_info()) -> [domain_reference()].
 references(Object, DataType) ->
     references(Object, DataType, []).
 
+-spec references(term(), field_type() | struct_info(), [domain_reference()]) -> [domain_reference()].
 references(undefined, _StructInfo, Refs) ->
     Refs;
 references({Tag, Object}, {struct, union, FieldsInfo} = StructInfo, Refs) when
@@ -126,6 +164,7 @@ references(Object, {map, KeyType, ValueType}, Refs) ->
 references(_DomainObject, _Primitive, Refs) ->
     Refs.
 
+-spec check_reference_type(term(), field_type() | struct_info(), [domain_reference()]) -> [domain_reference()].
 check_reference_type(Object, Type, Refs) ->
     case is_reference_type(Type) of
         {true, Tag} ->
@@ -134,10 +173,13 @@ check_reference_type(Object, Type, Refs) ->
             references(Object, Type, Refs)
     end.
 
+-spec is_reference_type(field_type() | struct_info()) -> {true, atom()} | false.
 is_reference_type(Type) ->
     {struct, union, StructInfo} = get_struct_info('Reference'),
     is_reference_type(Type, StructInfo).
 
+-spec is_reference_type(field_type() | struct_info(), [struct_field_info()]) ->
+    {true, atom()} | false.
 is_reference_type(_Type, []) ->
     false;
 is_reference_type(Type, [{_, _, Type, Tag, _} | _Rest]) ->
@@ -145,6 +187,7 @@ is_reference_type(Type, [{_, _, Type, Tag, _} | _Rest]) ->
 is_reference_type(Type, [_ | Rest]) ->
     is_reference_type(Type, Rest).
 
+-spec indexfold(fun((pos_integer(), Elem, Acc) -> Acc), Acc, pos_integer(), [Elem]) -> Acc.
 indexfold(Fun, Acc, I, [E | Rest]) ->
     indexfold(Fun, Fun(I, E, Acc), I + 1, Rest);
 indexfold(_Fun, Acc, _I, []) ->
@@ -152,11 +195,13 @@ indexfold(_Fun, Acc, _I, []) ->
 
 %% Common
 
+-spec get_struct_info(struct_name()) -> struct_info().
 get_struct_info('LimitConfig') ->
     dmsl_limiter_config_thrift:struct_info('LimitConfig');
 get_struct_info(StructName) ->
     dmsl_domain_thrift:struct_info(StructName).
 
+-spec get_field_info(field_name(), struct_info()) -> struct_field_info() | false.
 get_field_info(Field, {struct, _StructType, FieldsInfo}) ->
     lists:keyfind(Field, 4, FieldsInfo).
 

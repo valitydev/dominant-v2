@@ -26,6 +26,14 @@
 -export([search_related_graph/8]).
 -export([parse_entity_validation_error/1]).
 
+-type worker() :: atom() | pid().
+-type version() :: dmsl_domain_conf_v2_thrift:'Version'().
+-type author_id() :: dmsl_domain_conf_v2_thrift:'AuthorID'().
+-type entity_id() :: binary().
+-type entity_type() :: binary() | atom().
+-type edge() :: #{source_ref := dmsl_domain_thrift:'Reference'(), target_ref := dmsl_domain_thrift:'Reference'()}.
+
+-spec get_latest_version(worker()) -> {ok, version()} | {error, term()}.
 get_latest_version(Worker) ->
     Query1 =
         """
@@ -40,6 +48,7 @@ get_latest_version(Worker) ->
             {error, Reason}
     end.
 
+-spec get_object_latest_version(worker(), entity_id()) -> {ok, version()} | {error, not_found | term()}.
 get_object_latest_version(Worker, ChangedObjectId) ->
     Query0 =
         """
@@ -60,6 +69,7 @@ get_object_latest_version(Worker, ChangedObjectId) ->
             {error, Reason}
     end.
 
+-spec get_new_version(worker(), author_id()) -> {ok, version()} | {error, term()}.
 get_new_version(Worker, AuthorID) ->
     {ok, #{
         git_ref := GitRef
@@ -76,6 +86,12 @@ get_new_version(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+%% NOTE: on malformed input `unicode:characters_to_binary/3` can also return
+%% `{error, _, _}` or `{incomplete, _, _}` rather than a binary — those cases
+%% fall through here unchanged. Pre-existing behavior.
+%% TODO catch errors and return what it can
+-spec clean_utf8_string(binary() | string() | unicode:chardata()) ->
+    unicode:chardata() | {error, binary(), unicode:chardata()} | {incomplete, binary(), binary()}.
 clean_utf8_string(String) ->
     % Convert to binary if it's not already
     Binary =
@@ -95,6 +111,8 @@ clean_utf8_string(String) ->
             CleanBinary
     end.
 
+-spec insert_object(worker(), entity_id(), entity_type(), version(), binary(), binary() | string()) ->
+    ok | {error, term()}.
 insert_object(Worker, ID1, Type, Version, Data1, SearchVector) ->
     Query = """
     INSERT INTO entity
@@ -113,6 +131,10 @@ insert_object(Worker, ID1, Type, Version, Data1, SearchVector) ->
             {error, Reason}
     end.
 
+-spec update_object(
+    worker(), entity_id(), entity_type(), version(), binary(), binary() | string(), boolean()
+) ->
+    ok | {error, term()}.
 update_object(
     Worker,
     ID1,
@@ -138,6 +160,14 @@ update_object(
             {error, Reason}
     end.
 
+-spec insert_relations(worker(), entity_id(), entity_id(), version(), boolean()) ->
+    ok
+    | {error,
+        {duplicate_relation, binary()}
+        | {source_entity_not_found, dmsl_domain_thrift:'Reference'()}
+        | {target_entity_not_found, dmsl_domain_thrift:'Reference'()}
+        | binary()
+        | term()}.
 insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
     Query = """
     INSERT INTO entity_relation
@@ -173,8 +203,8 @@ insert_relations(Worker, SourceID, TargetID, Version, IsActive) ->
 %% @doc Parse validation error messages from the validate_entity_exists trigger
 %% Expected format: "ENTITY_NOT_EXISTS|SOURCE|entity_id" or "ENTITY_NOT_EXISTS|TARGET|entity_id"
 -spec parse_entity_validation_error(binary()) ->
-    {source_entity_not_found, binary()}
-    | {target_entity_not_found, binary()}
+    {source_entity_not_found, dmsl_domain_thrift:'Reference'()}
+    | {target_entity_not_found, dmsl_domain_thrift:'Reference'()}
     | unknown.
 parse_entity_validation_error(Message) ->
     case binary:split(Message, <<"|">>, [global]) of
@@ -186,6 +216,8 @@ parse_entity_validation_error(Message) ->
             unknown
     end.
 
+-spec get_references_to(worker(), entity_id(), version()) ->
+    [dmsl_domain_thrift:'Reference'()] | {error, term()}.
 get_references_to(Worker, ID, Version) ->
     Query = """
     WITH LatestEdge AS (
@@ -216,6 +248,8 @@ get_references_to(Worker, ID, Version) ->
             {error, Reason}
     end.
 
+-spec get_referenced_by(worker(), entity_id(), version()) ->
+    [dmsl_domain_thrift:'Reference'()] | {error, term()}.
 get_referenced_by(Worker, ID, Version) ->
     Query = """
     WITH LatestEdge AS (
@@ -246,6 +280,8 @@ get_referenced_by(Worker, ID, Version) ->
             {error, Reason}
     end.
 
+-spec get_next_sequence(worker(), entity_type() | atom()) ->
+    {ok, integer()} | {error, sequence_not_enabled | term()}.
 get_next_sequence(Worker, Type) ->
     Query = """
     UPDATE entity_type
@@ -264,6 +300,7 @@ get_next_sequence(Worker, Type) ->
             {error, Reason}
     end.
 
+-spec check_if_object_id_active(worker(), entity_id()) -> boolean() | {error, term()}.
 check_if_object_id_active(Worker, ID0) ->
     Query = """
     SELECT is_active
@@ -281,6 +318,7 @@ check_if_object_id_active(Worker, ID0) ->
             {error, Reason}
     end.
 
+-spec check_version_exists(worker(), version()) -> boolean() | {error, term()}.
 check_version_exists(Worker, Version) ->
     Query = """
     SELECT 1
@@ -297,6 +335,8 @@ check_version_exists(Worker, Version) ->
             {error, Reason}
     end.
 
+-spec get_object(worker(), entity_id(), version()) ->
+    {ok, dmt_object:object()} | {error, not_found | term()}.
 get_object(Worker, ID0, Version) ->
     Request = """
     WITH LatestVersionAtRequestedTime AS (
@@ -338,6 +378,8 @@ get_object(Worker, ID0, Version) ->
             end
     end.
 
+-spec get_objects(worker(), [entity_id()], version()) ->
+    {ok, [dmt_object:object()]} | {error, term()}.
 get_objects(Worker, IDs, Version) ->
     Request = """
     WITH LatestVersionAtRequestedTime AS (
@@ -374,6 +416,8 @@ get_objects(Worker, IDs, Version) ->
             {error, Reason}
     end.
 
+-spec get_latest_object(worker(), entity_id()) ->
+    {ok, dmt_object:object()} | {error, not_found | term()}.
 get_latest_object(Worker, ID0) ->
     Request = """
     WITH LatestVersion AS (
@@ -409,6 +453,7 @@ get_latest_object(Worker, ID0) ->
             end
     end.
 
+-spec get_version_creator(worker(), version()) -> {ok, author_id()} | {error, not_found}.
 get_version_creator(Worker, Version) ->
     Request = """
     SELECT created_by
@@ -424,6 +469,9 @@ get_version_creator(Worker, Version) ->
             {ok, CreatedBy}
     end.
 
+-spec get_version(worker(), version()) ->
+    {ok, #{version := version(), created_at := dmsl_base_thrift:'Timestamp'() | term(), created_by := author_id()}}
+    | {error, not_found}.
 get_version(Worker, Version) ->
     Request = """
     SELECT version, created_at, created_by
@@ -443,6 +491,8 @@ get_version(Worker, Version) ->
             }}
     end.
 
+-spec get_object_history(worker(), entity_id(), non_neg_integer(), non_neg_integer()) ->
+    {ok, [dmt_object:object()], non_neg_integer() | undefined} | {error, not_found | term()}.
 get_object_history(Worker, Ref, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -475,6 +525,7 @@ get_object_history(Worker, Ref, Limit, Offset) ->
             {error, Reason}
     end.
 
+-spec has_more_object_history(worker(), entity_id(), non_neg_integer()) -> boolean().
 has_more_object_history(Worker, Ref, Offset) ->
     Query = """
     SELECT 1
@@ -495,6 +546,8 @@ has_more_object_history(Worker, Ref, Offset) ->
             false
     end.
 
+-spec get_all_objects_history(worker(), non_neg_integer(), non_neg_integer()) ->
+    {ok, [dmt_object:object()], non_neg_integer() | undefined} | {error, term()}.
 get_all_objects_history(Worker, Limit, Offset) ->
     Query = """
     SELECT e.id,
@@ -524,6 +577,7 @@ get_all_objects_history(Worker, Limit, Offset) ->
             {error, Reason}
     end.
 
+-spec has_more_all_objects_history(worker(), non_neg_integer()) -> boolean().
 has_more_all_objects_history(Worker, Offset) ->
     % Сначала проверим, есть ли еще записи после текущего смещения + лимит
     Query = """
@@ -545,6 +599,10 @@ has_more_all_objects_history(Worker, Offset) ->
             false
     end.
 
+-spec search_objects(
+    worker(), binary(), version(), entity_type() | undefined, non_neg_integer(), non_neg_integer()
+) ->
+    {ok, {[dmt_object:object()], non_neg_integer() | undefined}}.
 search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
     % Use a pattern where the condition is always true when Type is NULL
     TypeValue =
@@ -664,6 +722,7 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
     end.
 
 % Helper function to check if there are more search results
+-spec has_more_search_results(worker(), binary(), version(), entity_type(), non_neg_integer()) -> boolean().
 has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
     CheckMoreQuery = """
     WITH LatestVersionAtRequestedTime AS (
@@ -734,6 +793,8 @@ has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
             false
     end.
 
+-spec check_entity_type_exists(worker(), entity_type() | atom()) ->
+    ok | {error, object_type_not_found}.
 check_entity_type_exists(Worker, Type) ->
     CheckMoreQuery = """
     SELECT 1 FROM entity_type
@@ -753,6 +814,8 @@ check_entity_type_exists(Worker, Type) ->
             {error, object_type_not_found}
     end.
 
+-spec get_all_objects(worker(), version()) ->
+    {ok, [dmt_object:object()]} | {error, term()}.
 get_all_objects(Worker, Version) ->
     Query = """
     WITH LatestVersions AS (
@@ -787,6 +850,16 @@ get_all_objects(Worker, Version) ->
             {error, Reason}
     end.
 
+-spec get_related_graph(
+    worker(),
+    entity_id(),
+    version(),
+    non_neg_integer(),
+    boolean(),
+    boolean(),
+    entity_type() | atom() | undefined
+) ->
+    {ok, {[dmt_object:object()], [edge()]}} | {error, term()}.
 get_related_graph(
     Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
 ) ->
@@ -800,6 +873,15 @@ get_related_graph(
     end.
 
 %% Helper function to get objects and apply type filter
+-spec get_objects_and_filter(
+    worker(),
+    [entity_id()],
+    version(),
+    entity_type() | atom() | undefined,
+    [edge()],
+    entity_id() | undefined
+) ->
+    {ok, {[dmt_object:object()], [edge()]}} | {error, term()}.
 get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef) ->
     case get_objects(Worker, EntityIds, Version) of
         {ok, AllNodes} ->
@@ -813,6 +895,12 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
     end.
 
 %% Filter nodes by type if type filter is specified
+%% NOTE: graph node maps have a different shape from `dmt_object:object()` —
+%% the `type` value comes from SQL as a `binary()`. Dialyzer can't see that
+%% from the call sites, so the `=:=` test below looks like `atom() =:= binary()`.
+-dialyzer({nowarn_function, [filter_nodes_by_type/2]}).
+-spec filter_nodes_by_type([map()], entity_type() | atom() | undefined) ->
+    [map()].
 filter_nodes_by_type(Nodes, undefined) ->
     Nodes;
 filter_nodes_by_type(Nodes, FilterType) ->
@@ -823,6 +911,7 @@ filter_nodes_by_type(Nodes, FilterType) ->
         end,
     [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
 
+-spec filter_edges_by_nodes([edge()], [dmt_object:object()]) -> [edge()].
 filter_edges_by_nodes(Edges, Nodes) ->
     logger:error("filter_edges_by_nodes Edges: ~p, Nodes: ~p", [Edges, Nodes]),
     lists:filter(
@@ -844,6 +933,10 @@ filter_edges_by_nodes(Edges, Nodes) ->
         Edges
     ).
 
+-spec get_related_graph_edges(
+    worker(), entity_id(), version(), non_neg_integer(), boolean(), boolean()
+) ->
+    {ok, {[entity_id()], [edge()]}} | {error, term()}.
 get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound) ->
     Query = """
     WITH RECURSIVE
@@ -939,6 +1032,7 @@ get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, Inclu
             {error, Reason}
     end.
 
+-spec parse_graph_edges_result([{entity_id(), entity_id()}]) -> {[entity_id()], [edge()]}.
 parse_graph_edges_result(Rows) ->
     Edges = [
         #{
@@ -955,6 +1049,16 @@ parse_graph_edges_result(Rows) ->
 
     {EntityIds1, Edges}.
 
+-spec get_multiple_related_graph(
+    worker(),
+    [dmsl_domain_thrift:'Reference'()],
+    version(),
+    non_neg_integer(),
+    boolean(),
+    boolean(),
+    entity_type() | atom() | undefined
+) ->
+    {ok, {[dmt_object:object()], [edge()]}} | {error, term()}.
 get_multiple_related_graph(
     Worker, ObjectRefs, Version, Depth, IncludeInbound, IncludeOutbound, TypeFilter
 ) ->
@@ -972,6 +1076,10 @@ get_multiple_related_graph(
             {error, Reason}
     end.
 
+-spec get_multiple_related_graph_edges(
+    worker(), [entity_id()], version(), non_neg_integer(), boolean(), boolean()
+) ->
+    {ok, {[entity_id()], [edge()]}} | {error, term()}.
 get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, IncludeInbound, IncludeOutbound) ->
     Query = """
     WITH RECURSIVE
@@ -1069,6 +1177,17 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
             {error, Reason}
     end.
 
+-spec search_related_graph(
+    worker(),
+    binary(),
+    entity_type() | atom() | undefined,
+    version(),
+    non_neg_integer(),
+    boolean(),
+    boolean(),
+    entity_type() | atom() | undefined
+) ->
+    {ok, {[dmt_object:object()], [edge()]}} | {error, term()}.
 search_related_graph(
     Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
 ) ->

@@ -161,6 +161,7 @@ create_client() ->
 create_client(TraceID) ->
     create_client_w_context(woody_context:new(TraceID)).
 
+-spec create_client_w_context(woody_context:ctx()) -> dmt_client_api:t().
 create_client_w_context(WoodyCtx) ->
     dmt_client_api:new(WoodyCtx).
 
@@ -187,6 +188,7 @@ cleanup_db() ->
     {ok, _, _} = epg_pool:query(default_pool, Query),
     ok.
 
+-spec create_kafka_topics() -> ok | {error, term()}.
 create_kafka_topics() ->
     TopicConfig = [
         #{
@@ -199,5 +201,6 @@ create_kafka_topics() ->
     ],
     _ = brod:create_topics(?BROKERS, TopicConfig, #{timeout => 5000}).
 
+-spec delete_kafka_topics() -> ok | {error, term()}.
 delete_kafka_topics() ->
     _ = brod:delete_topics(?BROKERS, [?TEST_TOPIC], 5000).

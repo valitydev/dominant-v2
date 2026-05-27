@@ -19,8 +19,37 @@
 -export([get_multiple_related_graph/1]).
 -export([search_related_graph/1]).
 
+-type worker() :: atom() | pid().
+-type version() :: dmsl_domain_conf_v2_thrift:'Version'().
+-type version_reference() :: dmsl_domain_conf_v2_thrift:'VersionReference'().
+-type object_ref() :: dmsl_domain_thrift:'Reference'().
+-type domain_object() :: dmsl_domain_thrift:'DomainObject'().
+-type author_id() :: dmsl_domain_conf_v2_thrift:'AuthorID'().
+-type object() :: dmt_object:object().
+-type enriched_object() :: dmt_object:enriched_object().
+-type entity_type() :: binary() | atom().
+-type operation() :: dmsl_domain_conf_v2_thrift:'Operation'().
+-type final_operation() ::
+    {insert, dmsl_domain_conf_v2_thrift:'FinalInsertOp'()}
+    | {update, dmsl_domain_conf_v2_thrift:'UpdateOp'()}
+    | {remove, dmsl_domain_conf_v2_thrift:'RemoveOp'()}.
+-type relations_changes() :: #{object_ref() => [object_ref()]}.
+-type node_map() :: #{atom() => term()}.
+-type commit_acc() :: {
+    worker(),
+    version(),
+    version(),
+    relations_changes(),
+    [final_operation()],
+    [domain_object()],
+    [object_ref()]
+}.
+
 %%
 
+-spec get_object(worker(), version_reference(), object_ref()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'VersionedObject'()}
+    | {error, {object_not_found, object_ref()} | version_not_found | term()}.
 get_object(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
@@ -51,6 +80,9 @@ get_object(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
             {error, Reason}
     end.
 
+-spec get_object_with_references(worker(), version_reference(), object_ref()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'VersionedObjectWithReferences'()}
+    | {error, {object_not_found, object_ref()} | version_not_found | term()}.
 get_object_with_references(Worker, {version, V}, ObjectRef) ->
     case get_target_object(Worker, ObjectRef, V) of
         {ok, #{data := Data} = Object} ->
@@ -81,6 +113,9 @@ get_object_with_references(Worker, {head, #domain_conf_v2_Head{}}, ObjectRef) ->
     {ok, Version} = dmt_database:get_latest_version(Worker),
     get_object_with_references(Worker, {version, Version}, ObjectRef).
 
+-spec get_objects(worker(), version_reference(), [object_ref()] | ordsets:ordset(object_ref())) ->
+    {ok, [dmsl_domain_conf_v2_thrift:'VersionedObject'()]}
+    | {error, version_not_found | term()}.
 get_objects(Worker, {version, V}, ObjectRefs) ->
     case dmt_database:check_version_exists(Worker, V) of
         true ->
@@ -116,6 +151,9 @@ get_objects(Worker, {head, #domain_conf_v2_Head{}}, ObjectRefs) ->
             {error, Reason}
     end.
 
+-spec get_snapshot(worker(), version_reference()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'Snapshot'()}
+    | {error, version_not_found | term()}.
 get_snapshot(Worker, {head, #domain_conf_v2_Head{}}) ->
     case dmt_database:get_latest_version(Worker) of
         {ok, LatestVersion} ->
@@ -147,6 +185,9 @@ get_snapshot(Worker, {version, Version}) ->
             {error, version_not_found}
     end.
 
+-spec get_related_graph(dmsl_domain_conf_v2_thrift:'RelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_not_found | version_not_found | term()}.
 get_related_graph(Request) ->
     #domain_conf_v2_RelatedGraphRequest{
         ref = ObjectRef,
@@ -207,6 +248,7 @@ get_related_graph(Request) ->
             {error, Reason}
     end.
 
+-spec sort_objects_by_ids([object()], [object_ref()]) -> [object()].
 sort_objects_by_ids(Objects, IDs) ->
     % Create a map of ID -> Object for easier lookup
     ObjectsMap = maps:from_list([{maps:get(id, Obj), Obj} || Obj <- Objects]),
@@ -219,6 +261,9 @@ sort_objects_by_ids(Objects, IDs) ->
         maps:is_key(ID, ObjectsMap)
     ].
 
+-spec get_object_history(object_ref(), dmsl_domain_conf_v2_thrift:'RequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'ObjectVersionsResponse'()}
+    | {error, not_found | term()}.
 get_object_history(ObjectRef, RequestParams) ->
     #domain_conf_v2_RequestParams{
         limit = Limit,
@@ -252,9 +297,13 @@ get_object_history(ObjectRef, RequestParams) ->
     end.
 
 % Done this way to keep hierarchy of calls
+-spec get_latest_version() -> {ok, version()} | {error, term()}.
 get_latest_version() ->
     dmt_database:get_latest_version(default_pool).
 
+-spec get_all_objects_history(dmsl_domain_conf_v2_thrift:'RequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'ObjectVersionsResponse'()}
+    | {error, term()}.
 get_all_objects_history(Request) ->
     #domain_conf_v2_RequestParams{
         limit = Limit,
@@ -284,12 +333,17 @@ get_all_objects_history(Request) ->
             {error, Reason}
     end.
 
+-spec maybe_to_string(term() | undefined, Default) -> binary() | Default when Default :: term().
 maybe_to_string(undefined, Default) -> Default;
 maybe_to_string(Value, _) -> dmt_mapper:to_string(Value).
 
+-spec maybe_from_string(binary() | string() | undefined, Default) -> term() | Default when
+    Default :: term().
 maybe_from_string(undefined, Default) -> Default;
 maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
 
+-spec marshall_to_object_info(object() | enriched_object() | node_map()) ->
+    dmsl_domain_conf_v2_thrift:'VersionedObjectInfo'().
 marshall_to_object_info(Object) ->
     #domain_conf_v2_VersionedObjectInfo{
         version = maps:get(version, Object),
@@ -297,6 +351,9 @@ marshall_to_object_info(Object) ->
         changed_by = maps:get(created_by, Object)
     }.
 
+-spec search_objects(dmsl_domain_conf_v2_thrift:'SearchRequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'SearchResponse'()}
+    | {error, object_type_not_found | term()}.
 search_objects(Request) ->
     #domain_conf_v2_SearchRequestParams{
         query = Query,
@@ -340,6 +397,9 @@ search_objects(Request) ->
             {error, Reason}
     end.
 
+-spec search_full_objects(dmsl_domain_conf_v2_thrift:'SearchRequestParams'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'SearchFullResponse'()}
+    | {error, object_type_not_found | term()}.
 search_full_objects(Request) ->
     #domain_conf_v2_SearchRequestParams{
         query = Query,
@@ -381,6 +441,10 @@ search_full_objects(Request) ->
             {error, Reason}
     end.
 
+%% NOTE: the input is any map carrying at least `id` (a Reference) and `data`
+%% (a DomainObject), so we type it loosely — search-result rows from the DB
+%% don't always carry the full `object()` shape (e.g. no `is_active`).
+-spec filter_search_results([map()]) -> [map()].
 filter_search_results(Objects) ->
     lists:filter(
         fun(Object) ->
@@ -403,9 +467,13 @@ filter_search_results(Objects) ->
         Objects
     ).
 
+-spec maybe_check_entity_type_exists(entity_type() | undefined) ->
+    ok | {error, object_type_not_found}.
 maybe_check_entity_type_exists(undefined) -> ok;
 maybe_check_entity_type_exists(Type) -> dmt_database:check_entity_type_exists(default_pool, Type).
 
+-spec commit_operations(worker(), [operation()], version(), version()) ->
+    {relations_changes(), [final_operation()], [domain_object()], [object_ref()]}.
 commit_operations(Worker, Operations, TargetVersion, NewVersion) ->
     {_, _, _, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences} = lists:foldl(
         fun commit_operation/2,
@@ -414,6 +482,7 @@ commit_operations(Worker, Operations, TargetVersion, NewVersion) ->
     ),
     {RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}.
 
+-spec commit_operation(operation(), commit_acc()) -> commit_acc() | no_return().
 commit_operation(
     {insert, #domain_conf_v2_InsertOp{object = Object, force_ref = ForceRef}},
     {Worker, TargetVersion, NewVersion, RelationsChanges, FinalOperations, NewObjects, RemovedObjectsReferences}
@@ -474,6 +543,8 @@ commit_operation(
         [Ref | RemovedObjectsReferences]
     }.
 
+-spec insert_relation(worker(), object_ref(), object_ref(), version(), boolean()) ->
+    ok | no_return().
 insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
     OriginRef1 = dmt_mapper:ref_to_string(OriginRef),
     Reference1 = dmt_mapper:ref_to_string(Reference),
@@ -491,6 +562,7 @@ insert_relation(Worker, OriginRef, Reference, NewVersion, IsActive) ->
             throw({error, Reason})
     end.
 
+-spec commit_relations_changes(worker(), version(), relations_changes()) -> ok | no_return().
 commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
     maps:foreach(
         fun(OriginRef, References) ->
@@ -522,6 +594,13 @@ commit_relations_changes(Worker, NewVersion, RelationsChanges) ->
         RelationsChanges
     ).
 
+-spec commit(version(), [operation()], author_id()) ->
+    {ok, version(), [domain_object()]}
+    | {error,
+        {conflict, term()}
+        | {operation_error, dmt_domain:operation_error() | term()}
+        | author_not_found
+        | term()}.
 commit(Version, Operations, AuthorID) ->
     Result = epg_pool:transaction(
         default_pool,
@@ -564,6 +643,7 @@ commit(Version, Operations, AuthorID) ->
             {error, Error}
     end.
 
+-spec validate_no_references_to_entities(worker(), [object_ref()], version()) -> ok | no_return().
 validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
     %% Ensure there are no inbound references to any removed objects at Version
     %% If any exist, validate_no_references_to_entity/3 will throw
@@ -575,6 +655,7 @@ validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
     ),
     ok.
 
+-spec validate_no_references_to_entity(worker(), object_ref(), version()) -> ok | no_return().
 validate_no_references_to_entity(Worker, Ref, Version) ->
     Ref1 = dmt_mapper:ref_to_string(Ref),
     _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref, Version]),
@@ -586,6 +667,7 @@ validate_no_references_to_entity(Worker, Ref, Version) ->
             throw({error, {invalid, {objects_not_exist, [{Ref, ReferencedBy}]}}})
     end.
 
+-spec validate_latest_version(worker(), version(), object_ref()) -> ok | no_return().
 validate_latest_version(Worker, TargetVersion, Ref) ->
     Ref0 = dmt_mapper:ref_to_string(Ref),
     case dmt_database:get_object_latest_version(Worker, Ref0) of
@@ -599,6 +681,7 @@ validate_latest_version(Worker, TargetVersion, Ref) ->
             throw(Error)
     end.
 
+-spec validate_author_exists(worker(), author_id()) -> ok | no_return().
 validate_author_exists(Worker, AuthorID) ->
     case dmt_author_database:get(Worker, AuthorID) of
         {ok, _} ->
@@ -607,6 +690,7 @@ validate_author_exists(Worker, AuthorID) ->
             throw({error, author_not_found})
     end.
 
+-spec get_new_version(worker(), author_id()) -> version() | no_return().
 get_new_version(Worker, AuthorID) ->
     case dmt_database:get_new_version(Worker, AuthorID) of
         {ok, NewVersion} ->
@@ -615,6 +699,8 @@ get_new_version(Worker, AuthorID) ->
             throw({error, Reason})
     end.
 
+-spec insert_object(worker(), entity_type(), object_ref(), version(), domain_object()) ->
+    object_ref() | no_return().
 insert_object(Worker, Type, ID0, Version, Data0) ->
     ID1 = dmt_mapper:ref_to_string(ID0),
     Data1 = dmt_mapper:object_to_string(Data0),
@@ -631,6 +717,8 @@ insert_object(Worker, Type, ID0, Version, Data0) ->
             throw({error, Reason})
     end.
 
+-spec give_data_id(dmsl_domain_thrift:'ReflessDomainObject'() | {atom(), tuple()}, object_ref()) ->
+    domain_object().
 give_data_id({Tag, Data}, Ref) ->
     {struct, union, DomainObjects} = dmsl_domain_thrift:struct_info('DomainObject'),
     {value, {_, _, {_, _, {_, ObjectName}}, Tag, _}} = lists:search(
@@ -653,11 +741,14 @@ give_data_id({Tag, Data}, Ref) ->
     Second = get_object_field(SecondField, Data, Ref),
     {Tag, {RecordName, First, Second}}.
 
+-spec get_object_field(tuple(), term(), object_ref()) -> term().
 get_object_field({_, _, _, ref, _}, _Data, {_Type, Ref}) ->
     Ref;
 get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
+-spec update_object(worker(), entity_type(), object_ref(), boolean(), domain_object(), version()) ->
+    ok | no_return().
 update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
     Data1 = dmt_mapper:object_to_string(Data0),
     ID1 = dmt_mapper:ref_to_string(ID0),
@@ -680,6 +771,13 @@ update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
             throw({error, Reason})
     end.
 
+-spec get_insert_object_id(
+    worker(),
+    object_ref() | undefined,
+    entity_type(),
+    dmsl_domain_thrift:'ReflessDomainObject'()
+) ->
+    object_ref() | no_return().
 get_insert_object_id(Worker, undefined, Type, Object) ->
     %%  Check if sequence column exists in table
     %%  -- if it doesn't, then raise exception
@@ -708,6 +806,10 @@ get_insert_object_id(Worker, Ref, _Type, _Object) ->
             throw({error, Reason})
     end.
 
+-spec get_unique_numerical_id(worker(), entity_type()) ->
+    {ok, dmt_object_id:numerical_ref()}
+    | {error, sequence_not_enabled}
+    | no_return().
 get_unique_numerical_id(Worker, Type) ->
     case dmt_database:get_next_sequence(Worker, Type) of
         {ok, NewID} ->
@@ -727,6 +829,7 @@ get_unique_numerical_id(Worker, Type) ->
             throw({error, Reason})
     end.
 
+-spec get_unique_uuid(worker(), entity_type()) -> {ok, dmt_object_id:uuid_ref()} | no_return().
 get_unique_uuid(Worker, Type) ->
     NewUUID = uuid:uuid_to_string(uuid:get_v4_urandom(), binary_standard),
     NewID = dmt_object_id:get_uuid_object_id(Type, NewUUID),
@@ -740,6 +843,8 @@ get_unique_uuid(Worker, Type) ->
             throw({error, Reason})
     end.
 
+-spec get_target_object(worker(), object_ref(), version()) ->
+    {ok, enriched_object()} | {error, {object_not_found, object_ref()} | version_not_found | term()}.
 get_target_object(Worker, Ref, Version) ->
     Ref0 = dmt_mapper:ref_to_string(Ref),
     case dmt_database:check_version_exists(Worker, Version) of
@@ -754,6 +859,8 @@ get_target_object(Worker, Ref, Version) ->
             {error, version_not_found}
     end.
 
+-spec add_created_by_to_objects(worker(), [object() | node_map()]) ->
+    {ok, [enriched_object() | node_map()]}.
 add_created_by_to_objects(Worker, Objects) ->
     Versions = lists:uniq([Version || #{version := Version} <- Objects]),
     AuthorsOfVersions =
@@ -771,12 +878,15 @@ add_created_by_to_objects(Worker, Objects) ->
     ],
     {ok, EnrichedObjects}.
 
+-spec add_created_by_to_object(worker(), object()) -> {ok, enriched_object()}.
 add_created_by_to_object(Worker, Object) ->
     #{version := Version} = Object,
     {ok, AuthorID} = dmt_database:get_version_creator(Worker, Version),
     {ok, Author} = dmt_author:get(AuthorID),
     {ok, Object#{created_by => Author}}.
 
+-spec get_latest_target_object(worker(), object_ref()) ->
+    {ok, enriched_object()} | {error, {object_not_found, object_ref()}}.
 get_latest_target_object(Worker, Ref) ->
     Ref0 = dmt_mapper:ref_to_string(Ref),
 
@@ -787,15 +897,19 @@ get_latest_target_object(Worker, Ref) ->
             {error, {object_not_found, Ref}}
     end.
 
+-spec get_version(worker(), version() | undefined) -> version().
 get_version(Worker, undefined) ->
     {ok, LatestVersion} = dmt_database:get_latest_version(Worker),
     LatestVersion;
 get_version(_Worker, Version) ->
     Version.
 
+-spec get_object_ref(domain_object()) -> {ok, object_ref()}.
 get_object_ref({Type, {_Object, ID, _Data}}) ->
     {ok, {Type, ID}}.
 
+-spec publish_commit_event(version(), [final_operation()], author_id()) ->
+    ok | {error, term()}.
 publish_commit_event(Version, FinalOperations, AuthorID) ->
     try
         %% Get author information
@@ -835,6 +949,8 @@ publish_commit_event(Version, FinalOperations, AuthorID) ->
 
 %% Helper functions for get_related_graph
 
+-spec resolve_version_reference(worker(), version() | undefined) ->
+    {ok, version()} | {error, version_not_found | term()}.
 resolve_version_reference(Worker, undefined) ->
     case dmt_database:get_latest_version(Worker) of
         {ok, LatestVersion} -> {ok, LatestVersion};
@@ -846,6 +962,8 @@ resolve_version_reference(Worker, Version) ->
         false -> {error, version_not_found}
     end.
 
+-spec validate_object_exists(worker(), object_ref(), version()) ->
+    ok | {error, object_not_found}.
 validate_object_exists(Worker, ObjectRef, Version) ->
     ObjectRefString = dmt_mapper:ref_to_string(ObjectRef),
     case dmt_database:get_object(Worker, ObjectRefString, Version) of
@@ -853,6 +971,9 @@ validate_object_exists(Worker, ObjectRef, Version) ->
         {error, not_found} -> {error, object_not_found}
     end.
 
+-spec get_multiple_related_graph(dmsl_domain_conf_v2_thrift:'MultipleRelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_not_found | version_not_found | term()}.
 get_multiple_related_graph(Request) ->
     #domain_conf_v2_MultipleRelatedGraphRequest{
         refs = ObjectRefs,
@@ -910,6 +1031,9 @@ get_multiple_related_graph(Request) ->
             {error, Reason}
     end.
 
+-spec search_related_graph(dmsl_domain_conf_v2_thrift:'SearchRelatedGraphRequest'()) ->
+    {ok, dmsl_domain_conf_v2_thrift:'RelatedGraph'()}
+    | {error, object_type_not_found | version_not_found | term()}.
 search_related_graph(Request) ->
     #domain_conf_v2_SearchRelatedGraphRequest{
         query = Query,
@@ -981,6 +1105,8 @@ search_related_graph(Request) ->
             {error, Reason}
     end.
 
+-spec validate_objects_exist(worker(), [object_ref()], version()) ->
+    ok | {error, object_not_found}.
 validate_objects_exist(Worker, ObjectRefs, Version) ->
     genlib_list:foldl_while(
         fun(ObjectRef, _Acc) ->

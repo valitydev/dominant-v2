@@ -14,9 +14,14 @@
 -export([from_string/1]).
 -export([extract_searchable_text_from_term/1]).
 
+-type row() :: tuple().
+-type transform_fun() :: fun((map()) -> term()).
+
+-spec to_marshalled_maps([#column{}], [row()]) -> [term()].
 to_marshalled_maps(Columns, Rows) ->
     to_marshalled_maps(Columns, Rows, fun marshall_object/1).
 
+-spec to_marshalled_maps([#column{}], [row()], transform_fun()) -> [term()].
 to_marshalled_maps(Columns, Rows, TransformRowFun) ->
     ColNumbers = erlang:length(Columns),
     Seq = lists:seq(1, ColNumbers),
@@ -36,6 +41,7 @@ to_marshalled_maps(Columns, Rows, TransformRowFun) ->
     ).
 
 %% for reference https://github.com/epgsql/epgsql#data-representation
+-spec convert(atom(), term()) -> term().
 convert(timestamp, Value) ->
     datetime_to_binary(Value);
 convert(timestamptz, Value) ->
@@ -43,12 +49,15 @@ convert(timestamptz, Value) ->
 convert(_Type, Value) ->
     Value.
 
+-spec datetime_to_binary(calendar:datetime() | {calendar:date(), {0..23, 0..59, float()}}) ->
+    binary().
 datetime_to_binary({Date, {Hour, Minute, Second}}) when is_float(Second) ->
     datetime_to_binary({Date, {Hour, Minute, trunc(Second)}});
 datetime_to_binary(DateTime) ->
     UnixTime = genlib_time:daytime_to_unixtime(DateTime),
     genlib_rfc3339:format(UnixTime, second).
 
+-spec marshall_object(map()) -> dmt_object:object().
 marshall_object(#{
     <<"id">> := ID,
     <<"entity_type">> := Type,
@@ -69,33 +78,42 @@ marshall_object(#{
 -define(REF_TYPE, {struct, union, {dmsl_domain_thrift, 'Reference'}}).
 -define(OBJECT_TYPE, {struct, union, {dmsl_domain_thrift, 'DomainObject'}}).
 
+-spec ref_to_string(dmsl_domain_thrift:'Reference'()) -> binary().
 ref_to_string({_Type, _} = Ref) ->
     thrift_term_to_string_(Ref, ?REF_TYPE).
 
+-spec string_to_ref(binary() | string()) -> dmsl_domain_thrift:'Reference'().
 string_to_ref(Str) ->
     string_to_thrift_term_(Str, ?REF_TYPE).
 
+-spec object_to_string(dmsl_domain_thrift:'DomainObject'()) -> binary().
 object_to_string({_Type, _} = Data) ->
     thrift_term_to_string_(Data, ?OBJECT_TYPE).
 
+-spec string_to_object(binary() | string()) -> dmsl_domain_thrift:'DomainObject'().
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
+-spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
 thrift_term_to_string_(Term, ThriftType) ->
     dmt_json:encode(dmt_json:term_to_json(Term, ThriftType)).
 
+-spec string_to_thrift_term_(binary() | string(), dmt_thrift:thrift_type()) -> term().
 string_to_thrift_term_(Str, ThriftType) ->
     dmt_json:json_to_term(dmt_json:decode(Str), ThriftType).
 
+-spec to_string(term()) -> binary().
 to_string(A0) ->
     A1 = term_to_binary(A0),
     base64:encode(A1).
 
+-spec from_string(binary() | string()) -> term().
 from_string(B0) ->
     B1 = base64:decode(B0),
     binary_to_term(B1).
 
 %% Process terms recursively and build a list of text fragments
+-spec extract_text(term(), [string()]) -> [string()].
 extract_text(Term, Acc) when is_binary(Term) ->
     % Convert binary to string safely
     case unicode:characters_to_list(Term) of
@@ -147,10 +165,12 @@ extract_text(_, Acc) ->
     Acc.
 
 %% Convert the accumulated list to a single string
+-spec join_text_list([string()]) -> string().
 join_text_list(TextList) ->
     string:join(lists:reverse(TextList), " ").
 
 %% @doc Extract searchable text from an Erlang term and return as string
+-spec extract_searchable_text_from_term(term()) -> string().
 extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).

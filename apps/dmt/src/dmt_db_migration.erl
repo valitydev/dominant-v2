@@ -16,6 +16,7 @@
 process(Args) ->
     handle_command(getopt:parse(?OPTS, Args)).
 
+-spec handle_command({ok, {[term()], [string()]}} | {error, term()}) -> ok | {error, term()}.
 handle_command({error, Error}) ->
     logger:error("~p", [Error]),
     {error, Error};
@@ -150,8 +151,8 @@ handle_command_result({error, Fmt, Args}) ->
     logger:error(Fmt, Args),
     {error, Fmt}.
 
--spec with_connection(list() | map(), fun((pid()) -> command_result())) ->
-    command_result().
+-spec with_connection(list() | map(), fun((pid()) -> Result)) ->
+    Result | {error, string(), [term()]}.
 with_connection(Args, Fun) ->
     case open_connection(Args) of
         {ok, Conn} ->
@@ -160,9 +161,11 @@ with_connection(Args, Fun) ->
             {error, io_lib:format("Failed to connect to database: ~p~n", [Args]), [Error]}
     end.
 
+-spec connection_opts(list()) -> {ok, map()} | {error, term()}.
 connection_opts(Args) ->
     connection_opts(Args, {env, "DATABASE_URL"}).
 
+-spec connection_opts(list(), {env, string()} | {url, string()}) -> {ok, map()} | {error, term()}.
 connection_opts(Args, {env, URLName}) ->
     maybe_load_dot_env(dot_env(Args)),
     case os:getenv(URLName) of
@@ -214,6 +217,7 @@ open_connection(Args) when is_list(Args) ->
 open_connection(Opts) ->
     epgsql:connect(Opts).
 
+-spec target_dir(list()) -> file:name_all().
 target_dir(Args) ->
     case lists:keyfind(dir, 1, Args) of
         false ->
@@ -223,6 +227,7 @@ target_dir(Args) ->
             Dir
     end.
 
+-spec maybe_load_dot_env(file:name_all()) -> ok.
 maybe_load_dot_env(DotEnv) ->
     case filelib:is_file(DotEnv) of
         true -> envloader:load(DotEnv);
@@ -230,6 +235,7 @@ maybe_load_dot_env(DotEnv) ->
         false -> ok
     end.
 
+-spec dot_env(list()) -> string().
 dot_env(Args) ->
     case lists:keyfind(env, 1, Args) of
         false -> ".env";
@@ -248,11 +254,15 @@ report_migrations(down, Results) ->
 
 -define(DRIVER, epgsql).
 
+-spec record_migration(up | down, epgsql:connection(), string()) ->
+    epgsql_cmd_equery:response().
 record_migration(up, Conn, V) ->
     epgsql:equery(Conn, "INSERT INTO __migrations (id) VALUES ($1)", [V]);
 record_migration(down, Conn, V) ->
     epgsql:equery(Conn, "DELETE FROM __migrations WHERE id = $1", [V]).
 
+-spec apply_migrations(up | down, [{string(), term()}], epgsql:connection()) ->
+    [{string(), ok | {error, term()}}].
 apply_migrations(Type, Migrations, Conn) ->
     Results = lists:foldl(
         fun
@@ -269,6 +279,8 @@ apply_migrations(Type, Migrations, Conn) ->
     ),
     lists:reverse(Results).
 
+-spec apply_migration(up | down, {string(), term()}, epgsql:connection()) ->
+    ok | {error, term()}.
 apply_migration(Type, {Version, Migration}, Conn) ->
     case eql:get_query(Type, Migration) of
         {ok, Query} ->
@@ -284,6 +296,7 @@ apply_migration(Type, {Version, Migration}, Conn) ->
             ok
     end.
 
+-spec if_ok(term() | [term()]) -> ok | {error, term()}.
 if_ok(Rs) when is_list(Rs) ->
     Result = lists:map(fun(R) -> if_ok(R) end, Rs),
     case lists:keyfind(error, 1, Result) of
@@ -301,6 +314,7 @@ if_ok({error, {error, error, _, _, Descr, _}}) ->
 if_ok(Error) ->
     {error, Error}.
 
+-spec available_migrations(list()) -> [{string(), term()}].
 available_migrations(Args) ->
     Dir = target_dir(Args),
     Files = filelib:wildcard(filename:join(Dir, "*.sql")),
@@ -312,6 +326,8 @@ available_migrations(Args) ->
         lists:usort(Files)
     ).
 
+-spec applied_migrations(list() | pid()) ->
+    [string()] | ok | {error, term()} | {error, string(), [term()]}.
 applied_migrations(Args) when is_list(Args) ->
     with_connection(
         Args,
