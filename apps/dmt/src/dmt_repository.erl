@@ -29,6 +29,19 @@
 -type enriched_object() :: dmt_object:enriched_object().
 -type entity_type() :: binary() | atom().
 -type operation() :: dmsl_domain_conf_v2_thrift:'Operation'().
+
+-export_type([
+    worker/0,
+    version/0,
+    version_reference/0,
+    object_ref/0,
+    domain_object/0,
+    author_id/0,
+    object/0,
+    enriched_object/0,
+    entity_type/0,
+    operation/0
+]).
 -type final_operation() ::
     {insert, dmsl_domain_conf_v2_thrift:'FinalInsertOp'()}
     | {update, dmsl_domain_conf_v2_thrift:'UpdateOp'()}

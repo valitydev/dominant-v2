@@ -31,6 +31,8 @@
 -type struct_name() :: atom().
 -type domain_reference() :: dmsl_domain_thrift:'Reference'().
 
+-export_type([domain_reference/0]).
+
 -spec get_domain_object_ref(dmsl_domain_thrift:'DomainObject'()) -> domain_reference().
 get_domain_object_ref({Tag, _Struct} = DomainObject) ->
     {_Type, Ref} = get_domain_object_field(ref, DomainObject),

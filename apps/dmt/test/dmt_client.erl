@@ -27,6 +27,10 @@
 -type client() :: dmt_client_api:t().
 -type call_result() :: {ok, term()} | {exception, term()} | {error, term()}.
 
+-export_type([
+    client/0, call_result/0
+]).
+
 -spec checkout_object(
     dmsl_domain_conf_v2_thrift:'VersionReference'(),
     dmsl_domain_thrift:'Reference'(),

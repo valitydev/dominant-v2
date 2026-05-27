@@ -16,12 +16,22 @@
 
 -type row() :: tuple().
 -type transform_fun() :: fun((map()) -> term()).
+%% `column/0` is opaque to hide the epgsql record shape from consumers and to
+%% satisfy elvis's `no_spec_with_records` (record in spec) and
+%% `private_data_types` (exported alias for a third-party record) rules.
+-opaque column() :: #column{}.
 
--spec to_marshalled_maps([#column{}], [row()]) -> [term()].
+-export_type([
+    row/0,
+    transform_fun/0,
+    column/0
+]).
+
+-spec to_marshalled_maps([column()], [row()]) -> [term()].
 to_marshalled_maps(Columns, Rows) ->
     to_marshalled_maps(Columns, Rows, fun marshall_object/1).
 
--spec to_marshalled_maps([#column{}], [row()], transform_fun()) -> [term()].
+-spec to_marshalled_maps([column()], [row()], transform_fun()) -> [term()].
 to_marshalled_maps(Columns, Rows, TransformRowFun) ->
     ColNumbers = erlang:length(Columns),
     Seq = lists:seq(1, ColNumbers),

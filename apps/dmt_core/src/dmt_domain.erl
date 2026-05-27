@@ -57,6 +57,14 @@
 -type struct_info() :: {struct, struct_flavour(), [struct_field_info()]}.
 -type schema_error() :: {error, {unknown_domain_object_tag, atom()}}.
 
+-export_type([
+    field_name/0,
+    field_type/0,
+    struct_info/0,
+    struct_field_info/0,
+    schema_error/0
+]).
+
 -spec references(domain_object()) -> [object_ref()].
 references(DomainObject) ->
     case get_data(DomainObject) of

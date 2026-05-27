@@ -16,6 +16,8 @@
 -export_type([enriched_object/0]).
 -export_type([object_type/0]).
 -export_type([object_id/0]).
+-export_type([timestamp/0]).
+-export_type([version/0]).
 
 -type object_type() :: atom().
 -type object_id() :: dmsl_domain_thrift:'Reference'().

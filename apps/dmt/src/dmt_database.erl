@@ -33,6 +33,15 @@
 -type entity_type() :: binary() | atom().
 -type edge() :: #{source_ref := dmsl_domain_thrift:'Reference'(), target_ref := dmsl_domain_thrift:'Reference'()}.
 
+-export_type([
+    worker/0,
+    version/0,
+    author_id/0,
+    entity_id/0,
+    entity_type/0,
+    edge/0
+]).
+
 -spec get_latest_version(worker()) -> {ok, version()} | {error, term()}.
 get_latest_version(Worker) ->
     Query1 =
