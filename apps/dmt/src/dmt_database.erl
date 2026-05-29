@@ -916,10 +916,9 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
     end.
 
 %% Filter nodes by type if type filter is specified
-%% NOTE: graph node maps have a different shape from `dmt_object:object()` —
-%% the `type` value comes from SQL as a `binary()`. Dialyzer can't see that
-%% from the call sites, so the `=:=` test below looks like `atom() =:= binary()`.
--dialyzer({nowarn_function, [filter_nodes_by_type/2]}).
+%% NOTE: a node's `type` is the marshalled object type tag (an atom, see
+%% `dmt_mapper:marshall_object/1`), while the incoming `FilterType` may be an
+%% atom or a binary, so we normalise both sides to a binary before comparing.
 -spec filter_nodes_by_type([map()], type_filter()) ->
     [map()].
 filter_nodes_by_type(Nodes, undefined) ->
@@ -930,7 +929,7 @@ filter_nodes_by_type(Nodes, FilterType) ->
             _ when is_binary(FilterType) -> FilterType;
             _ when is_atom(FilterType) -> atom_to_binary(FilterType, utf8)
         end,
-    [Node || Node <- Nodes, maps:get(type, Node) =:= FilterTypeBinary].
+    [Node || Node <- Nodes, atom_to_binary(maps:get(type, Node), utf8) =:= FilterTypeBinary].
 
 -spec filter_edges_by_nodes([edge()], [dmt_object:object()]) -> [edge()].
 filter_edges_by_nodes(Edges, Nodes) ->

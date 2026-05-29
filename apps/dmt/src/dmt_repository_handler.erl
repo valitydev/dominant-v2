@@ -30,12 +30,7 @@ do_handle_function('Commit', {Version, Operations, AuthorID}, _Context, _Options
                 latest_version = LatestVersion
             });
         {error, author_not_found} ->
-            woody_error:raise(business, #domain_conf_v2_AuthorNotFound{});
-        {error, migration_in_progress} ->
-            woody_error:raise(
-                system,
-                {internal, resource_unavailable, <<"Migration in progress. Please, stand by.">>}
-            )
+            woody_error:raise(business, #domain_conf_v2_AuthorNotFound{})
     end;
 do_handle_function('GetLatestVersion', _, _Context, _Options) ->
     %% Fetch the object based on VersionReference and Reference

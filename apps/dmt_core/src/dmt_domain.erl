@@ -13,6 +13,8 @@
 -define(DOMAIN, dmsl_domain_thrift).
 
 -export_type([operation_error/0]).
+-export_type([operation_conflict/0]).
+-export_type([operation_invalid/0]).
 -export_type([domain_object/0]).
 -export_type([object_ref/0]).
 

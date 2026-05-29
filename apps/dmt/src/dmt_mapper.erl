@@ -82,7 +82,10 @@ marshall_object(#{
 }) ->
     dmt_object:just_object(
         string_to_ref(ID),
-        Type,
+        %% `entity_type` is stored as the domain object's type tag; restore it
+        %% to the atom that `dmt_object:object_type()` expects (it is always a
+        %% known tag, so `binary_to_existing_atom/2` is safe).
+        binary_to_existing_atom(Type, utf8),
         Version,
         string_to_object(Data),
         CreatedAt,

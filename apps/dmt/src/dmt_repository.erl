@@ -37,11 +37,23 @@
     | {remove, dmsl_domain_conf_v2_thrift:'RemoveOp'()}.
 -type relations_changes() :: #{object_ref() => [object_ref()]}.
 -type node_map() :: #{atom() => term()}.
+%% Error shapes `commit/3` can return. These are normalised by
+%% `normalize_commit_error/1`, which maps each thrown payload to one of the
+%% alternatives below and raises on anything unexpected, so the set is closed.
+-type commit_operation_error() ::
+    {conflict,
+        {object_not_found, object_ref()}
+        | {object_needs_reference, domain_object()}
+        | {forced_id_exists, object_ref()}}
+    | {invalid, dmt_domain:operation_invalid()}.
 -type commit_error() ::
-    {conflict, term()}
-    | {operation_error, dmt_domain:operation_error() | term()}
+    {conflict, binary()}
+    | {operation_error, commit_operation_error()}
+    | {object_update_too_old, {object_ref(), dmt_object:version()}}
     | author_not_found
-    | term().
+    | version_not_found
+    | binary()
+    | dmt_database:db_error().
 -type commit_acc() :: {
     dmt_database:worker(),
     dmt_object:version(),
@@ -349,7 +361,7 @@ maybe_to_string(Value, _) -> dmt_mapper:to_string(Value).
 maybe_from_string(undefined, Default) -> Default;
 maybe_from_string(Value, _) -> dmt_mapper:from_string(Value).
 
--spec marshall_to_object_info(dmt_object:object() | dmt_object:enriched_object() | node_map()) ->
+-spec marshall_to_object_info(dmt_object:enriched_object() | node_map()) ->
     dmsl_domain_conf_v2_thrift:'VersionedObjectInfo'().
 marshall_to_object_info(Object) ->
     #domain_conf_v2_VersionedObjectInfo{
@@ -538,7 +550,15 @@ commit_operation(
     %% to allow removing referencing and referenced entities in the same commit
 
     {Type, _} = Ref,
-    {ok, #{data := Object}} = get_target_object(Worker, Ref, TargetVersion),
+    Object =
+        case get_target_object(Worker, Ref, TargetVersion) of
+            {ok, #{data := Data}} ->
+                Data;
+            {error, version_not_found} ->
+                throw({error, version_not_found});
+            {error, {object_not_found, _} = Conflict} ->
+                throw({error, {operation_error, {conflict, Conflict}}})
+        end,
     ok = update_object(Worker, Type, Ref, false, Object, NewVersion),
     {
         Worker,
@@ -631,20 +651,45 @@ commit(Version, Operations, AuthorID) ->
             end
         end
     ),
+    %% NOTE: the fun above catches every exception and returns its payload, so
+    %% it never raises; epgsql therefore always commits and never yields
+    %% `{rollback, _}`. A success yields the `{ok, ...}` 4-tuple and a domain
+    %% error yields `{error, _}`. Any other payload (e.g. a `{badmatch, _}` from
+    %% an unforeseen runtime fault) is a bug and deliberately falls through to a
+    %% `case_clause` here rather than being silently swallowed.
     case Result of
-        {ok, ResVersion, NewObjects, AuthorID} ->
+        {ok, ResVersion, NewObjects, _AuthorID} ->
             {ok, ResVersion, NewObjects};
-        {error, {error, error, _, conflict_detected, Msg, _}} ->
-            {error, {conflict, Msg}};
-        {rollback, {error, {conflict, _} = Error}} ->
-            {error, {operation_error, Error}};
-        {rollback, {error, {invalid, _} = Error}} ->
-            {error, {operation_error, Error}};
-        {error, {invalid, _} = Error} ->
-            {error, {operation_error, Error}};
-        {error, Error} ->
-            {error, Error}
+        {error, Reason} ->
+            {error, normalize_commit_error(Reason)}
     end.
+
+%% Map a raw thrown payload (see the `throw({error, _})` sites in this module)
+%% to a `commit_error()`. Unrecognised payloads indicate a bug, so we fail
+%% loudly rather than widen `commit_error()` back to an open `term()`.
+-spec normalize_commit_error(term()) -> commit_error().
+normalize_commit_error({error, error, _, conflict_detected, Msg, _}) when is_binary(Msg) ->
+    %% epgsql surfaces a unique-constraint / serialization conflict as an
+    %% `#error{}` record whose codename is `conflict_detected`.
+    {conflict, Msg};
+normalize_commit_error({operation_error, {conflict, _}} = OpError) ->
+    OpError;
+normalize_commit_error({operation_error, {invalid, _}} = OpError) ->
+    OpError;
+normalize_commit_error({invalid, _} = Invalid) ->
+    {operation_error, Invalid};
+normalize_commit_error({object_update_too_old, {_Ref, _Version}} = TooOld) ->
+    TooOld;
+normalize_commit_error(author_not_found) ->
+    author_not_found;
+normalize_commit_error(version_not_found) ->
+    version_not_found;
+normalize_commit_error(Reason) when is_binary(Reason) ->
+    Reason;
+normalize_commit_error({error, _Severity, _Code, _Codename, _Msg, _Extra} = DbError) ->
+    DbError;
+normalize_commit_error(Other) ->
+    erlang:error({unexpected_commit_error, Other}).
 
 -spec validate_no_references_to_entities(dmt_database:worker(), [object_ref()], dmt_object:version()) ->
     ok | no_return().
@@ -682,7 +727,7 @@ validate_latest_version(Worker, TargetVersion, Ref) ->
         {error, not_found} ->
             throw({error, {operation_error, {conflict, {object_not_found, Ref}}}});
         {error, Error} ->
-            throw(Error)
+            throw({error, Error})
     end.
 
 -spec validate_author_exists(dmt_database:worker(), dmt_author:author_id()) -> ok | no_return().
