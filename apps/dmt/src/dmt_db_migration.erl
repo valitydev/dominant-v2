@@ -3,6 +3,8 @@
 %% API exports
 -export([process/1]).
 
+-type direction() :: up | down.
+
 %%====================================================================
 %% API functions
 %%====================================================================
@@ -242,7 +244,7 @@ dot_env(Args) ->
         {env, DotEnv} -> DotEnv
     end.
 
--spec report_migrations(up | down, [{Version :: string(), ok | {error, term()}}]) -> ok.
+-spec report_migrations(direction(), [{Version :: string(), ok | {error, term()}}]) -> ok.
 report_migrations(_, L) when length(L) == 0 ->
     logger:warning("No migrations were run");
 report_migrations(up, Results) ->
@@ -254,14 +256,14 @@ report_migrations(down, Results) ->
 
 -define(DRIVER, epgsql).
 
--spec record_migration(up | down, epgsql:connection(), string()) ->
+-spec record_migration(direction(), epgsql:connection(), string()) ->
     epgsql_cmd_equery:response().
 record_migration(up, Conn, V) ->
     epgsql:equery(Conn, "INSERT INTO __migrations (id) VALUES ($1)", [V]);
 record_migration(down, Conn, V) ->
     epgsql:equery(Conn, "DELETE FROM __migrations WHERE id = $1", [V]).
 
--spec apply_migrations(up | down, [{string(), term()}], epgsql:connection()) ->
+-spec apply_migrations(direction(), [{string(), term()}], epgsql:connection()) ->
     [{string(), ok | {error, term()}}].
 apply_migrations(Type, Migrations, Conn) ->
     Results = lists:foldl(
@@ -279,7 +281,7 @@ apply_migrations(Type, Migrations, Conn) ->
     ),
     lists:reverse(Results).
 
--spec apply_migration(up | down, {string(), term()}, epgsql:connection()) ->
+-spec apply_migration(direction(), {string(), term()}, epgsql:connection()) ->
     ok | {error, term()}.
 apply_migration(Type, {Version, Migration}, Conn) ->
     case eql:get_query(Type, Migration) of

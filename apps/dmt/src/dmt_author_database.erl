@@ -13,22 +13,8 @@
     search/3
 ]).
 
--type worker() :: atom() | pid().
--type author_id() :: dmt_author:author_id().
--type author() :: dmt_author:author().
--type email() :: dmt_author:email().
--type name() :: dmt_author:name().
-
--export_type([
-    worker/0,
-    author_id/0,
-    author/0,
-    email/0,
-    name/0
-]).
-
--spec insert(worker(), name(), email()) ->
-    {ok, author_id()} | {ok, {already_exists, author_id()}} | {error, unknown}.
+-spec insert(dmt_database:worker(), dmt_author:name(), dmt_author:email()) ->
+    {ok, dmt_author:author_id()} | {ok, {already_exists, dmt_author:author_id()}} | {error, unknown}.
 insert(Worker, Name, Email) ->
     Sql = """
     INSERT INTO author (name, email)
@@ -48,7 +34,8 @@ insert(Worker, Name, Email) ->
             {error, unknown}
     end.
 
--spec get(worker(), author_id()) -> {ok, author()} | {error, author_not_found | term()}.
+-spec get(dmt_database:worker(), dmt_author:author_id()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -57,7 +44,8 @@ get(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
--spec get_(worker(), author_id()) -> {ok, author()} | {error, author_not_found | term()}.
+-spec get_(dmt_database:worker(), dmt_author:author_id()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get_(Worker, AuthorID) ->
     Sql = """
     SELECT id, name, email
@@ -78,7 +66,8 @@ get_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
--spec get_by_email(worker(), email()) -> {ok, author()} | {error, author_not_found | term()}.
+-spec get_by_email(dmt_database:worker(), dmt_author:email()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get_by_email(Worker, Email) ->
     Sql = """
     SELECT id, name, email
@@ -99,7 +88,8 @@ get_by_email(Worker, Email) ->
             {error, Reason}
     end.
 
--spec delete(worker(), author_id()) -> ok | {error, author_not_found | term()}.
+-spec delete(dmt_database:worker(), dmt_author:author_id()) ->
+    ok | {error, author_not_found | dmt_database:db_error()}.
 delete(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -108,7 +98,8 @@ delete(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
--spec delete_(worker(), author_id()) -> ok | {error, author_not_found | term()}.
+-spec delete_(dmt_database:worker(), dmt_author:author_id()) ->
+    ok | {error, author_not_found | dmt_database:db_error()}.
 delete_(Worker, AuthorID) ->
     Sql = """
     DELETE FROM author
@@ -124,8 +115,8 @@ delete_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
--spec list(worker(), pos_integer(), non_neg_integer()) ->
-    {ok, [author()]} | {error, term()}.
+-spec list(dmt_database:worker(), pos_integer(), non_neg_integer()) ->
+    {ok, [dmt_author:author()]} | {error, dmt_database:db_error()}.
 list(Worker, Limit, Offset) ->
     Sql = """
     SELECT id, name, email
@@ -149,8 +140,8 @@ list(Worker, Limit, Offset) ->
             {error, Reason}
     end.
 
--spec search(worker(), binary(), pos_integer()) ->
-    {ok, [author()]} | {error, term()}.
+-spec search(dmt_database:worker(), binary(), pos_integer()) ->
+    {ok, [dmt_author:author()]} | {error, dmt_database:db_error()}.
 search(Worker, SearchTerm, Limit) ->
     Sql = """
     SELECT id, name, email FROM author

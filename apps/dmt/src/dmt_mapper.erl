@@ -20,11 +20,15 @@
 %% satisfy elvis's `no_spec_with_records` (record in spec) and
 %% `private_data_types` (exported alias for a third-party record) rules.
 -opaque column() :: #column{}.
+%% Datetime as returned by epgsql for timestamp/timestamptz columns: the
+%% seconds component is an integer (calendar:datetime/0) or a float.
+-type datetime() :: calendar:datetime() | {calendar:date(), {0..23, 0..59, float()}}.
 
 -export_type([
     row/0,
     transform_fun/0,
-    column/0
+    column/0,
+    datetime/0
 ]).
 
 -spec to_marshalled_maps([column()], [row()]) -> [term()].
@@ -59,7 +63,7 @@ convert(timestamptz, Value) ->
 convert(_Type, Value) ->
     Value.
 
--spec datetime_to_binary(calendar:datetime() | {calendar:date(), {0..23, 0..59, float()}}) ->
+-spec datetime_to_binary(datetime()) ->
     binary().
 datetime_to_binary({Date, {Hour, Minute, Second}}) when is_float(Second) ->
     datetime_to_binary({Date, {Hour, Minute, trunc(Second)}});
