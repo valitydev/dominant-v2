@@ -39,7 +39,9 @@
 
 %% NOTE: The thrift-related types (struct_field_info, field_type, field_name)
 %% are defined in `dmsl_domain_thrift` but not exported, so we mirror them
-%% here. They are stable parts of the generated thrift surface.
+%% here. They are stable parts of the generated thrift surface. This module is
+%% the single source for these types across the project (e.g. referenced by
+%% `dmt_object_reference`).
 -type struct_flavour() :: struct | exception | union.
 -type field_name() :: atom().
 -type field_type() ::
