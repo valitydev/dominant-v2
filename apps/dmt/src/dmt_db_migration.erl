@@ -30,6 +30,7 @@ run(MigrationsDir) ->
 %% Internal functions
 %%====================================================================
 
+-spec perform(map(), string()) -> ok | {error, term()}.
 perform(DbOpts, MigrationsDir) ->
     case epg_migrator:perform(?REALM, DbOpts, [], MigrationsDir) of
         {ok, Executed} ->
@@ -39,6 +40,7 @@ perform(DbOpts, MigrationsDir) ->
             Error
     end.
 
+-spec db_opts() -> map().
 db_opts() ->
     EpgDbName =
         case application:get_env(?APP, epg_db_name) of
@@ -48,6 +50,7 @@ db_opts() ->
     {ok, Databases} = application:get_env(epg_connector, databases),
     maps:get(EpgDbName, Databases).
 
+-spec backfill_legacy_history(map()) -> ok | {error, term()}.
 backfill_legacy_history(DbOpts) ->
     case epgsql:connect(maps:put(timeout, 10000, DbOpts)) of
         {ok, Conn} ->
@@ -64,6 +67,7 @@ backfill_legacy_history(DbOpts) ->
             {error, Reason}
     end.
 
+-spec do_backfill(epgsql:connection(), map()) -> ok.
 do_backfill(C, #{database := Database}) ->
     ok = take_migration_lock(C, Database),
     case legacy_table_exists(C) of
@@ -73,11 +77,13 @@ do_backfill(C, #{database := Database}) ->
 
 %% Same lock key as epg_migrator uses, so the backfill serializes with
 %% migrator runs of other replicas starting concurrently.
+-spec take_migration_lock(epgsql:connection(), string()) -> ok.
 take_migration_lock(C, Database) ->
     LockKey = erlang:phash2(Database),
     {ok, _, _} = epgsql:equery(C, "SELECT pg_advisory_xact_lock($1)", [LockKey]),
     ok.
 
+-spec legacy_table_exists(epgsql:connection()) -> boolean().
 legacy_table_exists(C) ->
     Query = """
     SELECT EXISTS (
@@ -88,6 +94,7 @@ legacy_table_exists(C) ->
     {ok, _, [{Exists}]} = epgsql:squery(C, Query),
     Exists =:= <<"t">>.
 
+-spec copy_legacy_history(epgsql:connection()) -> ok | no_return().
 copy_legacy_history(C) ->
     ok = ensure_history_table(C),
     Query = """
@@ -107,6 +114,7 @@ copy_legacy_history(C) ->
 
 %% Same definition as epg_migrator_storage uses; created here ahead of
 %% time so legacy history can be inserted before the first perform.
+-spec ensure_history_table(epgsql:connection()) -> ok | no_return().
 ensure_history_table(C) ->
     Query = """
     CREATE TABLE IF NOT EXISTS schema_migrations (

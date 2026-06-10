@@ -17,15 +17,27 @@
 %%     search/2
 %% ]).
 
+-type author_id() :: dmsl_domain_conf_v2_thrift:'AuthorID'().
+-type author() :: dmsl_domain_conf_v2_thrift:'Author'().
+-type email() :: binary().
+-type name() :: binary().
+
+-export_type([author_id/0, author/0, email/0, name/0]).
+
+-spec insert(name(), email()) ->
+    {ok, author_id()} | {ok, {already_exists, author_id()}} | {error, unknown}.
 insert(Name, Email) ->
     dmt_author_database:insert(?POOL_NAME, Name, Email).
 
+-spec get(author_id()) -> {ok, author()} | {error, author_not_found | dmt_database:db_error()}.
 get(AuthorID) ->
     dmt_author_database:get(?POOL_NAME, AuthorID).
 
+-spec get_by_email(email()) -> {ok, author()} | {error, author_not_found | dmt_database:db_error()}.
 get_by_email(Email) ->
     dmt_author_database:get_by_email(?POOL_NAME, Email).
 
+-spec delete(author_id()) -> ok | {error, author_not_found | dmt_database:db_error()}.
 delete(AuthorID) ->
     dmt_author_database:delete(?POOL_NAME, AuthorID).
 

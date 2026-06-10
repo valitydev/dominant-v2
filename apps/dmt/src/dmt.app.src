@@ -16,7 +16,7 @@
         epgsql_pool,
         erl_health,
         woody_user_identity,
-        jsx,
+        jsone,
         uuid,
         dmt_core,
         dmt_object,

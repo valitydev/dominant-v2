@@ -25,6 +25,7 @@ call(ServiceName, Function, Args, Context) ->
             {error, {Error, ST}}
     end.
 
+-spec get_opts(atom()) -> woody_client:options().
 get_opts(ServiceName) ->
     EventHandlerOpts = genlib_app:env(dmt, scoper_event_handler_options, #{}),
     Opts0 = #{

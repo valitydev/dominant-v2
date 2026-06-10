@@ -6,6 +6,10 @@
 % We modify records in improper way in tests, so we need to suppress dialyzer warnings
 -dialyzer({nowarn_function, [test_all_invalid_objects/0, test_mixed_valid_invalid_objects/0]}).
 
+%% Eunit test functions have a fixed `() -> _` shape; suppress the missing-spec
+%% warning rather than annotate every test case individually.
+-compile([nowarn_missing_spec, nowarn_missing_spec_all]).
+
 %% Test the filter_search_results/1 function from dmt_repository module
 
 %% Test setup and teardown

@@ -16,6 +16,7 @@
 
 -define(APP, dmt).
 
+-spec start_link() -> supervisor:startlink_ret().
 start_link() ->
     supervisor:start_link({local, ?APP}, ?MODULE, []).
 
@@ -28,6 +29,7 @@ start_link() ->
 %%                  shutdown => shutdown(), % optional
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
+-spec init(term()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(_) ->
     ok = dbinit(),
     ok = setup_kafka(dmt_kafka_publisher:is_kafka_enabled()),
@@ -59,6 +61,7 @@ init(_) ->
 
     {ok, {SupFlags, ChildSpecs}}.
 
+-spec dbinit() -> ok | no_return().
 dbinit() ->
     WorkDir = get_env_var("WORK_DIR"),
     MigrationsPath = WorkDir ++ "/migrations",
@@ -74,12 +77,14 @@ dbinit() ->
 
 %% internal functions
 
+-spec get_env_var(string()) -> string() | no_return().
 get_env_var(Name) ->
     case os:getenv(Name) of
         false -> throw({os_env_required, Name});
         V -> V
     end.
 
+-spec get_repository_handlers() -> [woody:http_handler(woody:th_handler())].
 get_repository_handlers() ->
     DefaultTimeout = application_get_env(?APP, default_woody_handling_timeout, timer:seconds(30)),
     [
@@ -115,6 +120,7 @@ get_handler(author, Options) ->
         {dmt_author_handler, Options}
     }}.
 
+-spec get_service(repository | repository_client | author) -> woody:service().
 get_service(repository) ->
     {dmsl_domain_conf_v2_thrift, 'Repository'};
 get_service(repository_client) ->
@@ -132,6 +138,7 @@ get_prometheus_route() ->
     {"/metrics/[:registry]", prometheus_cowboy2_handler, []}.
 
 %% @doc Setup damsel version information from multiple sources
+-spec setup_damsel_version() -> ok.
 setup_damsel_version() ->
     DamselVersionInfo = get_damsel_version(),
     logger:warning("Damsel version info: ~p", [DamselVersionInfo]),
@@ -196,12 +203,14 @@ extract_damsel_ref_from_lock_data({_LockVersion, Deps}) when is_list(Deps) ->
 extract_damsel_ref_from_lock_data(_) ->
     error.
 
+-spec application_get_env(atom(), atom(), Default) -> term() | Default.
 application_get_env(App, Key, Default) ->
     case application:get_env(App, Key) of
         {ok, Value} -> Value;
         undefined -> Default
     end.
 
+-spec setup_kafka(boolean()) -> ok | no_return().
 setup_kafka(false) ->
     ok;
 setup_kafka(_) ->
