@@ -13,6 +13,8 @@
     search/3
 ]).
 
+-spec insert(dmt_database:worker(), dmt_author:name(), dmt_author:email()) ->
+    {ok, dmt_author:author_id()} | {ok, {already_exists, dmt_author:author_id()}} | {error, unknown}.
 insert(Worker, Name, Email) ->
     Sql = """
     INSERT INTO author (name, email)
@@ -32,6 +34,8 @@ insert(Worker, Name, Email) ->
             {error, unknown}
     end.
 
+-spec get(dmt_database:worker(), dmt_author:author_id()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -40,6 +44,8 @@ get(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
+-spec get_(dmt_database:worker(), dmt_author:author_id()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get_(Worker, AuthorID) ->
     Sql = """
     SELECT id, name, email
@@ -60,6 +66,8 @@ get_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+-spec get_by_email(dmt_database:worker(), dmt_author:email()) ->
+    {ok, dmt_author:author()} | {error, author_not_found | dmt_database:db_error()}.
 get_by_email(Worker, Email) ->
     Sql = """
     SELECT id, name, email
@@ -80,6 +88,8 @@ get_by_email(Worker, Email) ->
             {error, Reason}
     end.
 
+-spec delete(dmt_database:worker(), dmt_author:author_id()) ->
+    ok | {error, author_not_found | dmt_database:db_error()}.
 delete(Worker, AuthorID) ->
     case is_uuid(AuthorID) of
         true ->
@@ -88,6 +98,8 @@ delete(Worker, AuthorID) ->
             {error, author_not_found}
     end.
 
+-spec delete_(dmt_database:worker(), dmt_author:author_id()) ->
+    ok | {error, author_not_found | dmt_database:db_error()}.
 delete_(Worker, AuthorID) ->
     Sql = """
     DELETE FROM author
@@ -103,6 +115,8 @@ delete_(Worker, AuthorID) ->
             {error, Reason}
     end.
 
+-spec list(dmt_database:worker(), pos_integer(), non_neg_integer()) ->
+    {ok, [dmt_author:author()]} | {error, dmt_database:db_error()}.
 list(Worker, Limit, Offset) ->
     Sql = """
     SELECT id, name, email
@@ -126,6 +140,8 @@ list(Worker, Limit, Offset) ->
             {error, Reason}
     end.
 
+-spec search(dmt_database:worker(), binary(), pos_integer()) ->
+    {ok, [dmt_author:author()]} | {error, dmt_database:db_error()}.
 search(Worker, SearchTerm, Limit) ->
     Sql = """
     SELECT id, name, email FROM author
@@ -152,6 +168,7 @@ search(Worker, SearchTerm, Limit) ->
 
 %% Internal functions
 
+-spec is_uuid(binary() | string()) -> boolean().
 is_uuid(UUID) ->
     try uuid:string_to_uuid(UUID) of
         _UUID ->

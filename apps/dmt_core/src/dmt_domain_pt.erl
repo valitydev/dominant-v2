@@ -12,6 +12,7 @@ parse_transform(Forms, _Options) ->
         FormNext /= delete
     ].
 
+-spec transform(erl_syntax:syntaxTree()) -> erl_syntax:syntaxTree() | delete.
 transform(Form) ->
     case erl_syntax:type(Form) of
         function ->
@@ -22,6 +23,8 @@ transform(Form) ->
             Form
     end.
 
+-spec transform_function(atom(), arity(), erl_syntax:syntaxTree()) ->
+    erl_syntax:syntaxTree() | delete.
 transform_function(is_reference_type = Name, 1, FormWas) ->
     % NOTE
     % Replacing `dmt_domain:is_reference_type/1` with a code which does something similar to:
@@ -65,6 +68,7 @@ transform_function(is_reference_type, 2, _FormWas) ->
 transform_function(_, _, Form) ->
     Form.
 
+-spec validate_reference_struct(atom(), [tuple()]) -> ok | no_return().
 validate_reference_struct(StructName, StructInfo) ->
     Mappings = lists:foldl(
         fun({N, _Req, Type, Tag, _Default}, Acc) ->
@@ -85,5 +89,6 @@ validate_reference_struct(StructName, StructInfo) ->
             ok
     end.
 
+-spec format(io:format(), [term()]) -> unicode:chardata() | {error, term(), term()}.
 format(Fmt, Args) ->
     unicode:characters_to_nfc_list(io_lib:format(Fmt, Args)).
