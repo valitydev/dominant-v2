@@ -176,7 +176,7 @@ cleanup_db() ->
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema='public'
-            AND NOT table_name = '__migrations'
+            AND NOT table_name = 'schema_migrations'
             AND NOT table_name = 'entity_type'
             ) LOOP
             -- Execute the TRUNCATE command on each table

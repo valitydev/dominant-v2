@@ -15,7 +15,6 @@
 -export([get_damsel_version/0]).
 
 -define(APP, dmt).
--define(DEFAULT_DB, default_db).
 
 start_link() ->
     supervisor:start_link({local, ?APP}, ?MODULE, []).
@@ -62,10 +61,8 @@ init(_) ->
 
 dbinit() ->
     WorkDir = get_env_var("WORK_DIR"),
-    _ = set_database_url(),
     MigrationsPath = WorkDir ++ "/migrations",
-    Cmd = "run",
-    case dmt_db_migration:process(["-d", MigrationsPath, Cmd]) of
+    case dmt_db_migration:run(MigrationsPath) of
         ok ->
             _ = logger:warning("entity_type: ~p", [
                 epg_pool:query(default_pool, "SELECT * FROM entity_type;")
@@ -74,24 +71,6 @@ dbinit() ->
         {error, Reason} ->
             throw({migrations_error, Reason})
     end.
-
-set_database_url() ->
-    EpgDbName = application_get_env(?APP, epg_db_name, ?DEFAULT_DB),
-    #{
-        EpgDbName := #{
-            host := PgHost,
-            port := PgPort,
-            username := PgUser,
-            password := PgPassword,
-            database := DbName
-        }
-    } = application_get_env(epg_connector, databases),
-    %% DATABASE_URL=postgresql://postgres:postgres@db/dmtv2
-    PgPortStr = erlang:integer_to_list(PgPort),
-    Value =
-        "postgresql://" ++ PgUser ++ ":" ++ PgPassword ++ "@" ++ PgHost ++ ":" ++ PgPortStr ++ "/" ++
-            DbName,
-    true = os:putenv("DATABASE_URL", Value).
 
 %% internal functions
 
@@ -216,9 +195,6 @@ extract_damsel_ref_from_lock_data({_LockVersion, Deps}) when is_list(Deps) ->
     end;
 extract_damsel_ref_from_lock_data(_) ->
     error.
-
-application_get_env(App, Key) ->
-    application_get_env(App, Key, undefined).
 
 application_get_env(App, Key, Default) ->
     case application:get_env(App, Key) of
