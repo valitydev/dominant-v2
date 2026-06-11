@@ -1,31 +1,25 @@
 # dominant_v2
 
-## Migration
+## Migrations
 
-First compile migration script with
+Database migrations live in the `migrations/` directory and are applied
+automatically on service startup by
+[epg_migrator](https://hex.pm/packages/epg_migrator). Pending migrations are
+applied in lexicographical order, each run is guarded by a Postgres advisory
+lock, and applied migrations are recorded in the `schema_migrations` table.
 
-```shell
-make wc-make_psql_migration
-```
-
-Then you can use script with
-
-```shell
-bin/psql_migration -e .env
-```
+To add a migration, create a new file named
+`<unix timestamp>-<short_description>.sql` containing plain SQL:
 
 ```shell
-Usage: psql_migration [-h] [-d [<dir>]] [-e [<env>]] <command>
-
-  -h, --help  Print this help text
-  -d, --dir   Migration folder [default: migrations]
-  -e, --env   Environment file to search for DATABASE_URL [default: .env]
-  new <name>  Create a new migration
-  list        List migrations indicating which have been applied
-  run         Run all migrations
-  revert      Revert the last migration
-  reset       Resets your database by dropping the database in your
-              DATABASE_URL and then runs `setup`
-  setup       Creates the database specified in your DATABASE_URL, and
-              runs any existing migrations.
+touch "migrations/$(date +%s)-add_some_table.sql"
 ```
+
+Migrations are forward-only: to undo a change that has already been applied
+somewhere, add a new compensating migration instead of editing or deleting an
+existing one.
+
+Databases migrated by the legacy psql-migration tool (the `__migrations`
+table) are picked up automatically: the recorded history is carried over into
+`schema_migrations` on the first startup after the switchover, so already
+applied migrations are not rerun.
