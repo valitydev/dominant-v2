@@ -31,7 +31,7 @@
  {<<"ctx">>,{pkg,<<"ctx">>,<<"0.6.0">>},2},
  {<<"damsel">>,
   {git,"https://github.com/valitydev/damsel.git",
-       {ref,"e7a302a684deba1bb18a00d1056879329219d280"}},
+       {ref,"dcd668277f5a2a144dd823bb0e6c9ba7b94428cc"}},
   0},
  {<<"epg_connector">>,
   {git,"https://github.com/valitydev/epg_connector.git",
