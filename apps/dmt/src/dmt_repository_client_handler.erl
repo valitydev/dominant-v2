@@ -6,14 +6,19 @@
 
 -export([handle_function/4]).
 
+-spec handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
+-spec default_handling_timeout(woody:options()) -> timeout().
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->
     Timeout.
 
+-spec do_handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 do_handle_function('CheckoutObject', {VersionRef, ObjectRef}, _Context, _Options) ->
     %% Fetch the object based on VersionReference and Reference
     case dmt_repository:get_object(?EPGPOOL, VersionRef, ObjectRef) of

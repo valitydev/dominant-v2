@@ -5,15 +5,20 @@
 %% API
 -export([handle_function/4]).
 
+-spec handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 handle_function(Function, Args, WoodyContext0, Options) ->
     DefaultDeadline = woody_deadline:from_timeout(default_handling_timeout(Options)),
     WoodyContext = dmt_api_woody_utils:ensure_woody_deadline_set(WoodyContext0, DefaultDeadline),
     do_handle_function(Function, Args, WoodyContext, Options).
 
+-spec default_handling_timeout(woody:options()) -> timeout().
 default_handling_timeout(#{default_handling_timeout := Timeout}) ->
     Timeout.
 
 %% Implement the Create function
+-spec do_handle_function(woody:func(), woody:args(), woody_context:ctx(), woody:options()) ->
+    {ok, woody:result()} | no_return().
 do_handle_function('Create', {Params}, _Context, _Options) ->
     #domain_conf_v2_AuthorParams{email = Email, name = Name} = Params,
     case dmt_author:insert(Name, Email) of

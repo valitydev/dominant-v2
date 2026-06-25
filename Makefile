@@ -26,11 +26,7 @@ all: compile
 
 dev-image: .image.dev
 
-get-submodules:
-	git submodule init
-	git submodule update
-
-.image.dev: get-submodules Dockerfile.dev .env
+.image.dev: Dockerfile.dev .env
 	env $(DOTENV) $(DOCKERCOMPOSE_W_ENV) build $(TEST_CONTAINER_NAME)
 	$(DOCKER) image ls -q -f "reference=$(DEV_IMAGE_ID)" | head -n1 > $@
 
@@ -63,14 +59,6 @@ wdeps-%: dev-image
 	res=$$?; \
 	$(DOCKERCOMPOSE_W_ENV) down; \
 	exit $$res
-
-# Submodules tasks
-
-make_psql_migration:
-	make -C psql-migration/
-	mkdir -p bin
-	mkdir -p migrations
-	cp ./psql-migration/_build/default/bin/psql_migration ./bin
 
 # Rebar tasks
 

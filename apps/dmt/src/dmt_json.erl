@@ -28,6 +28,13 @@ encode(J) ->
 json_to_term(Json, Type) ->
     json_to_term(Json, Type, []).
 
+-type stack() :: [term()].
+-type field_spec() :: {pos_integer(), required | optional | undefined, dmt_thrift:thrift_type(), atom(), term()}.
+
+-spec json_to_term(
+    jsone:json_value(), dmt_thrift:thrift_type() | {required | optional | undefined, dmt_thrift:thrift_type()}, stack()
+) ->
+    term().
 json_to_term(Json, Type, Stack) ->
     try
         json_to_term_(Json, Type, Stack)
@@ -38,6 +45,12 @@ json_to_term(Json, Type, Stack) ->
             erlang:throw({invalid, lists:reverse(Stack), Json, Type})
     end.
 
+-spec json_to_term_(
+    jsone:json_value() | undefined,
+    dmt_thrift:thrift_type() | {required | optional | undefined, dmt_thrift:thrift_type()},
+    stack()
+) ->
+    term().
 json_to_term_(undefined, {optional, _Type}, _Stack) ->
     undefined;
 json_to_term_(undefined, {required, _Type}, _Stack) ->
@@ -122,6 +135,7 @@ json_to_term_(Json, i64, _Stack) when is_integer(Json), Json >= -(1 bsl 63), Jso
 json_to_term_(_Json, _Type, _Stack) ->
     erlang:error(badarg).
 
+-spec json_propkey_to_term(binary(), dmt_thrift:thrift_type(), stack()) -> term().
 json_propkey_to_term(P, string = Type, Stack) ->
     json_to_term_(P, Type, Stack);
 json_propkey_to_term(P, {enum, _} = Type, Stack) ->
@@ -139,6 +153,7 @@ json_propkey_to_term(P, double = Type, Stack) ->
         Stack
     ).
 
+-spec json_to_struct(jsone:json_value(), [field_spec()], atom(), stack()) -> tuple().
 json_to_struct(Json, StructDef, RecordName, Stack) when is_list(Json) ->
     list_to_tuple([
         RecordName
@@ -151,10 +166,12 @@ json_to_struct(Json, StructDef, RecordName, Stack) when is_list(Json) ->
         )
     ]).
 
+-spec json_to_union([{binary(), jsone:json_value()}], [field_spec()], stack()) -> {atom(), term()}.
 json_to_union([{FnBin, Json}], StructDef, Stack) ->
     {_N, _Req, Type, Fn, _Def} = lists:keyfind(binary_to_atom(FnBin, utf8), 4, StructDef),
     {Fn, json_to_term(Json, Type, [Fn | Stack])}.
 
+-spec json_content_to_string(binary(), binary()) -> binary().
 json_content_to_string(<<"base64">>, Content) ->
     base64:decode(Content).
 
@@ -164,6 +181,7 @@ json_content_to_string(<<"base64">>, Content) ->
 term_to_json(Term, Type) ->
     term_to_json(Term, Type, []).
 
+-spec term_to_json(term(), dmt_thrift:thrift_type(), stack()) -> jsone:json_value().
 term_to_json(Term, {list, Type}, Stack) when is_list(Term) ->
     [term_to_json(T, Type, [N | Stack]) || {N, T} <- enumerate(0, Term)];
 term_to_json(Term, {set, Type}, Stack) ->
@@ -214,10 +232,12 @@ term_to_json(Term, bool, _Stack) when is_boolean(Term) ->
 term_to_json(Term, Type, _Stack) ->
     erlang:error({badarg, Term, Type}).
 
+-spec union_to_json({atom(), term()}, [field_spec()], stack()) -> jsone:json_value().
 union_to_json({Fn, Term}, StructDef, Stack) ->
     {_N, _Req, Type, Fn, _Def} = lists:keyfind(Fn, 4, StructDef),
     [{Fn, term_to_json(Term, Type, [Fn | Stack])}].
 
+-spec struct_to_json(tuple(), [field_spec()], stack()) -> jsone:json_value().
 struct_to_json(Struct, StructDef, Stack) ->
     [_ | Fields] = tuple_to_list(Struct),
     lists:foldr(
@@ -231,9 +251,11 @@ struct_to_json(Struct, StructDef, Stack) ->
         lists:zip(Fields, StructDef)
     ).
 
+-spec term_to_json_content(binary()) -> jsone:json_value().
 term_to_json_content(Term) ->
     term_to_json_content(<<"base64">>, base64:encode(Term)).
 
+-spec term_to_json_content(binary(), binary()) -> jsone:json_value().
 term_to_json_content(CType, Term) ->
     [
         {<<"content_type">>, CType},
@@ -242,20 +264,24 @@ term_to_json_content(CType, Term) ->
 
 %%
 
+-spec enumerate(non_neg_integer(), [T]) -> [{non_neg_integer(), T}].
 enumerate(_, []) ->
     [];
 enumerate(N, [H | T]) ->
     [{N, H} | enumerate(N + 1, T)].
 
+-spec getv(term(), [{term(), term()}]) -> term() | undefined.
 getv(Key, Opts) ->
     getv(Key, Opts, undefined).
 
+-spec getv(term(), [{term(), term()}], Default) -> term() | Default.
 getv(Key, Opts, Default) ->
     case lists:keyfind(Key, 1, Opts) of
         {_, Value} -> Value;
         false -> Default
     end.
 
+-spec is_printable_string(binary()) -> boolean().
 is_printable_string(<<>>) ->
     true;
 is_printable_string(S) ->
@@ -266,6 +292,7 @@ is_printable_string(S) ->
             false
     end.
 
+-spec printable_unicode_char(integer()) -> boolean().
 printable_unicode_char(C) when is_integer(C), C >= $\040, C =< $\176 ->
     true;
 printable_unicode_char(C) when

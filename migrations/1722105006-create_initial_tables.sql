@@ -1,6 +1,4 @@
 -- migrations/1722105006-create_initial_tables.sql
--- :up
--- Up migration
 
 CREATE TABLE author (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -78,15 +76,3 @@ ALTER TEXT SEARCH CONFIGURATION multilingual
     ALTER MAPPING
     FOR word, hword, hword_part
     WITH russian_stem, english_stem;
-
--- :down
--- Down migration
-
-DROP TEXT SEARCH CONFIGURATION multilingual;
-DROP INDEX IF EXISTS entity_search_idx;
-DROP INDEX IF EXISTS idx_entity_version;
-DROP INDEX IF EXISTS idx_entity_type;
-DROP TABLE IF EXISTS entity;
-DROP TABLE IF EXISTS entity_type;
-DROP TABLE IF EXISTS version;
-DROP TABLE IF EXISTS author;
