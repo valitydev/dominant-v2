@@ -753,19 +753,8 @@ get_new_version(Worker, AuthorID) ->
 ) ->
     object_ref() | no_return().
 insert_object(Worker, Type, ID0, Version, Data0) ->
+    {ok, Data1, SearchVector} = object_to_serialized(Data0),
     ID1 = dmt_mapper:ref_to_string(ID0),
-    Data1 = dmt_mapper:object_to_string(Data0),
-    %% NOTE Turns string containing nested json into space-separated string of
-    %% words/lexems.
-    %% As example, this turns
-    %%   {
-    %%     "hello": "world",
-    %%     "test": 42
-    %%   }
-    %% into
-    %%   hello world test 42
-    SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data1)),
-
     case dmt_database:insert_object(Worker, ID1, Type, Version, Data1, SearchVector) of
         ok ->
             ID0;
@@ -807,15 +796,28 @@ get_object_field({_, _, _, ref, _}, _Data, {_Type, Ref}) ->
 get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
+-spec object_to_serialized(domain_object()) -> {ok, JsonBinary :: binary(), SearchString :: string()}.
+object_to_serialized(Data0) ->
+    Data1 = dmt_mapper:object_to_string(Data0),
+    %% NOTE Turns string containing nested json into space-separated string of
+    %% words/lexems.
+    %% As example, this turns
+    %%   {
+    %%     "hello": "world",
+    %%     "test": 42
+    %%   }
+    %% into
+    %%   hello world test 42
+    SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data1)),
+    {ok, Data1, SearchVector}.
+
 -spec update_object(
     dmt_database:worker(), dmt_database:entity_type(), object_ref(), boolean(), domain_object(), dmt_object:version()
 ) ->
     ok | no_return().
 update_object(Worker, Type, ID0, IsActive, Data0, Version) ->
-    Data1 = dmt_mapper:object_to_string(Data0),
+    {ok, Data1, SearchVector} = object_to_serialized(Data0),
     ID1 = dmt_mapper:ref_to_string(ID0),
-    SearchVector = dmt_mapper:extract_searchable_text_from_term(Data0),
-
     case
         dmt_database:update_object(
             Worker,
