@@ -2,7 +2,7 @@
 
 -export([perform/2]).
 
--define(BATCH_SIZE, 100).
+-define(BATCH_SIZE, 500).
 
 perform(Conn, _MigrationOpts) ->
     ObjectsCount = count_objects(Conn),
@@ -40,16 +40,30 @@ form_search_vector({ID, Version, _Type, Data}) ->
     SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data)),
     [ID, Version, SearchVector].
 
+insert_objects_into_buffer(_Conn, []) ->
+    ok;
 insert_objects_into_buffer(Conn, Objects) ->
-    case
-        epgsql:execute_batch(
-            """
-            INSERT INTO tmp_entity_search_vector (id, version, search_vector)
-            VALUES ($1, $2, to_tsvector('multilingual', $3))
-            """,
-            Objects
+    QueryHead = """
+    INSERT INTO tmp_entity_search_vector (id, version, search_vector)
+    VALUES
+
+    """,
+    Values = lists:join(
+        $,,
+        lists:map(
+            fun({I, [ID, Version, SearchVector]}) ->
+                PH = [ph(I, 1), ph(I, 2), ["to_tsvector('multilingual',", ph(I, 3), ")"]],
+                [$(, lists:join($,, PH), $)]
+            end,
+            lists:zip(lists:seq(1, length(Objects)), Objects)
         )
-    of
+    ),
+    Params = lists:append(Objects),
+    case epgsql:equery(Conn, [QueryHead | Values], Params) of
         {error, Error} -> erlang:throw(Error);
         _ -> ok
     end.
+
+%% Placeholder helper
+ph(I, N) ->
+    [$$, integer_to_binary((I - 1) * 3 + N)].
