@@ -5,18 +5,56 @@
 -define(BATCH_SIZE, 500).
 
 perform(Conn, _MigrationOpts) ->
+    ok = create_tmp_table(Conn),
     ObjectsCount = count_objects(Conn),
     BatchesCount = round(math:ceil(ObjectsCount / ?BATCH_SIZE)),
-    lists:foreach(
+    ok = lists:foreach(
         fun(N) ->
             Objects0 = collect_objects(Conn, N * ?BATCH_SIZE, ?BATCH_SIZE),
             Objects1 = lists:map(fun form_search_vector/1, Objects0),
             insert_objects_into_buffer(Conn, Objects1)
         end,
         lists:seq(0, BatchesCount - 1)
-    ).
+    ),
+    ok = update_entities(Conn),
+    ok = drop_tmp_table(Conn).
 
 %%
+
+create_tmp_table(Conn) ->
+    Query = """
+    CREATE TABLE tmp_entity_search_vector (
+        id TEXT NOT NULL,
+        version BIGINT NOT NULL REFERENCES version(version),
+        search_vector tsvector,
+        PRIMARY KEY (id, version)
+    )
+    """,
+    case epgsql:squery(Conn, Query) of
+        {error, Error} -> erlang:throw(Error);
+        _ -> ok
+    end.
+
+update_entities(Conn) ->
+    Query = """
+    UPDATE entity
+    SET search_vector = tmp.search_vector
+    FROM (SELECT id, version, search_vector FROM  tmp_entity_search_vector) AS tmp
+    WHERE entity.id = tmp.id AND entity.version = tmp.version
+    """,
+    case epgsql:squery(Conn, Query) of
+        {error, Error} -> erlang:throw(Error);
+        _ -> ok
+    end.
+
+drop_tmp_table(Conn) ->
+    Query = """
+    DROP TABLE tmp_entity_search_vector
+    """,
+    case epgsql:squery(Conn, Query) of
+        {error, Error} -> erlang:throw(Error);
+        _ -> ok
+    end.
 
 count_objects(Conn) ->
     case epgsql:squery(Conn, "SELECT COUNT(*) FROM entity") of

@@ -67,10 +67,10 @@ dbinit() ->
     MigrationsPath = WorkDir ++ "/migrations",
     case dmt_db_migration:run(MigrationsPath) of
         ok ->
-            _ = logger:warning("entity_type: ~p", [
-                epg_pool:query(default_pool, "SELECT * FROM entity_type;")
-            ]),
             ok;
+        %% TODO Pass through stacktrace to make migration debug easier.
+        %% Also consider reraise option in migrator transaction and use separate
+        %% transactions per migration.
         {error, Reason} ->
             throw({migrations_error, Reason})
     end.
