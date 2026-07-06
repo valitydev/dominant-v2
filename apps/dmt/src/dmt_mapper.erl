@@ -138,6 +138,8 @@ to_text_search_vector(RedundantRootKey, Str) ->
     Json1 = unwrap_redundant_json_nesting(Json0),
     extract_searchable_text_from_term(Json1).
 
+%% @doc Constructs text-search query for full-text search with lexeme's prefix
+%% matching and OR binding via semicolon (";") character.
 -spec to_text_search_query(binary()) -> binary().
 to_text_search_query(Query0) ->
     {ok, NoSpecialRE} = re:compile(~"['\"&|!()\\\\]", [unicode, ucp]),
@@ -156,6 +158,9 @@ to_text_search_query(Query0) ->
     end,
     Query1 = genlib_string:to_lower(Query0),
     Query2 = lists:foldl(F, [], binary:split(Query1, <<$;>>, [global, trim_all])),
+    %% NOTE Parentheses can be used to enforce grouping of these operators. In
+    %% the absence of parentheses, ! (NOT) binds most tightly, <-> (FOLLOWED BY)
+    %% next most tightly, then & (AND), with | (OR) binding the least tightly.
     binary:join(lists:reverse(Query2), ~" | ").
 
 -spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
