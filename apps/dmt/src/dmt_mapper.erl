@@ -10,7 +10,8 @@
 -export([string_to_ref/1]).
 -export([object_to_string/1]).
 -export([string_to_object/1]).
--export([to_search_vector/2]).
+-export([to_text_search_vector/2]).
+-export([to_text_search_query/1]).
 -export([to_string/1]).
 -export([from_string/1]).
 
@@ -111,8 +112,8 @@ object_to_string({_Type, _} = Data) ->
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
--spec to_search_vector(binary(), binary()) -> string().
-to_search_vector(RedundantRootKey, Str) ->
+-spec to_text_search_vector(binary(), binary()) -> string().
+to_text_search_vector(RedundantRootKey, Str) ->
     %% NOTE Turns string containing nested json into space-separated string of
     %% words/lexems.
     %% As example, this turns
@@ -136,6 +137,26 @@ to_search_vector(RedundantRootKey, Str) ->
         end,
     Json1 = unwrap_redundant_json_nesting(Json0),
     extract_searchable_text_from_term(Json1).
+
+-spec to_text_search_query(binary()) -> binary().
+to_text_search_query(Query0) ->
+    {ok, NoSpecialRE} = re:compile(~"['\"&|!()\\\\]", [unicode, ucp]),
+    {ok, OnlyWordsRE} = re:compile(~"[^\\p{L}\\p{N}\\s\\-]", [unicode, ucp]),
+    F = fun(QueryPart0, Acc) ->
+        QueryPart1 = re:replace(QueryPart0, NoSpecialRE, ~"", [global]),
+        QueryPart2 = re:replace(QueryPart1, OnlyWordsRE, ~" ", [global]),
+        QueryPart3 = iolist_to_binary(QueryPart2),
+        case split_and_trim_into_keywords(QueryPart3) of
+            [] ->
+                Acc;
+            Keywords0 ->
+                Keywords1 = lists:map(fun(KW) -> <<KW/binary, ":*">> end, Keywords0),
+                [binary:join(Keywords1, ~" & ") | Acc]
+        end
+    end,
+    Query1 = genlib_string:to_lower(Query0),
+    Query2 = lists:foldl(F, [], binary:split(Query1, <<$;>>, [global, trim_all])),
+    binary:join(lists:reverse(Query2), ~" | ").
 
 -spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
 thrift_term_to_string_(Term, ThriftType) ->
@@ -224,6 +245,22 @@ unwrap_redundant_json_nesting(#{~"ref" := _, ~"data" := Data}) ->
 unwrap_redundant_json_nesting(Json0) ->
     Json0.
 
+-spec split_and_trim_into_keywords(binary()) -> [binary()].
+split_and_trim_into_keywords(Bin) ->
+    lists:reverse(split_and_trim_into_keywords(Bin, <<>>, [])).
+
+-spec split_and_trim_into_keywords(binary(), binary(), [binary()]) -> [binary()].
+split_and_trim_into_keywords(<<>>, <<>>, Acc) ->
+    Acc;
+split_and_trim_into_keywords(<<>>, Keyword, Acc) ->
+    [Keyword | Acc];
+split_and_trim_into_keywords(<<$\s, Bin/binary>>, <<>>, Acc) ->
+    split_and_trim_into_keywords(Bin, <<>>, Acc);
+split_and_trim_into_keywords(<<$\s, Bin/binary>>, Keyword, Acc) ->
+    split_and_trim_into_keywords(Bin, <<>>, [Keyword | Acc]);
+split_and_trim_into_keywords(<<H:8, Bin/binary>>, Keyword, Acc) ->
+    split_and_trim_into_keywords(Bin, <<Keyword/binary, H:8>>, Acc).
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -261,14 +298,14 @@ stringify_object_test_() ->
         ?_assertEqual(Object, string_to_object(object_to_string(Object)))
     ].
 
--spec to_search_vector_test_() -> _.
-to_search_vector_test_() ->
+-spec to_text_search_vector_test_() -> _.
+to_text_search_vector_test_() ->
     %% NOTE Since JSON is decoded as map, ordering in output string is not
     %% guaranteed to be the same w/ different Erlang versions.
     [
         ?_assertEqual(
             "hello world test 42",
-            to_search_vector(
+            to_text_search_vector(
                 ~"my-object",
                 ~"""
                 {
@@ -287,7 +324,7 @@ to_search_vector_test_() ->
         ),
         ?_assertEqual(
             "my-object data hello world test 42 ref id my-id",
-            to_search_vector(
+            to_text_search_vector(
                 ~"other-root-key",
                 ~"""
                 {
@@ -306,7 +343,7 @@ to_search_vector_test_() ->
         ),
         ?_assertEqual(
             "hello world test 42",
-            to_search_vector(
+            to_text_search_vector(
                 ~"my-object",
                 ~"""
                 {
@@ -320,7 +357,7 @@ to_search_vector_test_() ->
         ),
         ?_assertEqual(
             "",
-            to_search_vector(
+            to_text_search_vector(
                 ~"my-object",
                 ~"""
                 {}
@@ -329,7 +366,7 @@ to_search_vector_test_() ->
         ),
         ?_assertEqual(
             "string",
-            to_search_vector(
+            to_text_search_vector(
                 ~"my-object",
                 ~"""
                 "string"
@@ -338,12 +375,27 @@ to_search_vector_test_() ->
         ),
         ?_assertEqual(
             "",
-            to_search_vector(
+            to_text_search_vector(
                 ~"my-object",
                 ~"""
                 null
                 """
             )
+        )
+    ].
+
+-spec to_text_search_query_test_() -> _.
+to_text_search_query_test_() ->
+    [
+        ?_assertEqual(~"test:*", to_text_search_query(~"test")),
+        ?_assertEqual(~"hello:* & world:*", to_text_search_query(~"hello world")),
+        ?_assertEqual(
+            ~"this:* & and:* & that:* | something:* & else:*",
+            to_text_search_query(~"this and that; something else")
+        ),
+        ?_assertEqual(
+            ~"weird-request:* & 42:* & special:* & symbols:*",
+            to_text_search_query(~"wEiRd-(rEQuesT)=!%{42[+\\/   spEcIAL@#sym&bols")
         )
     ].
 

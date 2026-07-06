@@ -80,7 +80,7 @@ collect_objects(Conn, Offset, Limit) ->
     end.
 
 form_search_vector({ID, Version, Type, Data}) ->
-    SearchVector = dmt_mapper:to_search_vector(Type, Data),
+    SearchVector = dmt_mapper:to_text_search_vector(Type, Data),
     [ID, Version, SearchVector].
 
 insert_objects_into_buffer(_Conn, []) ->

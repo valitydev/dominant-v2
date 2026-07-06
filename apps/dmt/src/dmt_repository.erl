@@ -799,7 +799,7 @@ get_object_field({_, _, _, data, _}, Data, _Ref) ->
 -spec object_to_serialized(domain_object()) -> {ok, JsonBinary :: binary(), SearchString :: string()}.
 object_to_serialized({Type, _} = Data0) ->
     Data1 = dmt_mapper:object_to_string(Data0),
-    SearchVector = dmt_mapper:to_search_vector(atom_to_binary(Type), Data1),
+    SearchVector = dmt_mapper:to_text_search_vector(atom_to_binary(Type), Data1),
     {ok, Data1, SearchVector}.
 
 -spec update_object(
