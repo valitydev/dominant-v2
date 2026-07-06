@@ -2,6 +2,7 @@
 
 -export([perform/2]).
 
+-define(TMP_TABLE, "tmp_entity_search_vector").
 -define(BATCH_SIZE, 500).
 
 perform(Conn, _MigrationOpts) ->
@@ -22,35 +23,39 @@ perform(Conn, _MigrationOpts) ->
 %%
 
 create_tmp_table(Conn) ->
-    Query = """
-    CREATE TABLE tmp_entity_search_vector (
-        id TEXT NOT NULL,
-        version BIGINT NOT NULL REFERENCES version(version),
-        search_vector tsvector,
-        PRIMARY KEY (id, version)
-    )
-    """,
+    Query = io_lib:format(
+        """
+        CREATE TABLE ~s (
+            id TEXT NOT NULL,
+            version BIGINT NOT NULL REFERENCES version(version),
+            search_vector tsvector,
+            PRIMARY KEY (id, version)
+        )
+        """,
+        [?TMP_TABLE]
+    ),
     case epgsql:squery(Conn, Query) of
         {error, Error} -> erlang:throw(Error);
         _ -> ok
     end.
 
 update_entities(Conn) ->
-    Query = """
-    UPDATE entity
-    SET search_vector = tmp.search_vector
-    FROM (SELECT id, version, search_vector FROM  tmp_entity_search_vector) AS tmp
-    WHERE entity.id = tmp.id AND entity.version = tmp.version
-    """,
+    Query = io_lib:format(
+        """
+        UPDATE entity
+        SET search_vector = tmp.search_vector
+        FROM (SELECT id, version, search_vector FROM ~s) AS tmp
+        WHERE entity.id = tmp.id AND entity.version = tmp.version
+        """,
+        [?TMP_TABLE]
+    ),
     case epgsql:squery(Conn, Query) of
         {error, Error} -> erlang:throw(Error);
         _ -> ok
     end.
 
 drop_tmp_table(Conn) ->
-    Query = """
-    DROP TABLE tmp_entity_search_vector
-    """,
+    Query = io_lib:format("DROP TABLE ~s", [?TMP_TABLE]),
     case epgsql:squery(Conn, Query) of
         {error, Error} -> erlang:throw(Error);
         _ -> ok
@@ -74,18 +79,14 @@ collect_objects(Conn, Offset, Limit) ->
         {error, Error} -> erlang:throw(Error)
     end.
 
-form_search_vector({ID, Version, _Type, Data}) ->
-    SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data)),
+form_search_vector({ID, Version, Type, Data}) ->
+    SearchVector = dmt_mapper:to_search_vector(Type, Data),
     [ID, Version, SearchVector].
 
 insert_objects_into_buffer(_Conn, []) ->
     ok;
 insert_objects_into_buffer(Conn, Objects) ->
-    QueryHead = """
-    INSERT INTO tmp_entity_search_vector (id, version, search_vector)
-    VALUES
-
-    """,
+    QueryHead = io_lib:format("INSERT INTO ~s (id, version, search_vector) VALUES ", [?TMP_TABLE]),
     Values = lists:join(
         $,,
         lists:map(

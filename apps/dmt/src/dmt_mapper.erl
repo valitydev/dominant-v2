@@ -10,9 +10,9 @@
 -export([string_to_ref/1]).
 -export([object_to_string/1]).
 -export([string_to_object/1]).
+-export([to_search_vector/2]).
 -export([to_string/1]).
 -export([from_string/1]).
--export([extract_searchable_text_from_term/1]).
 
 -type row() :: tuple().
 -type transform_fun() :: fun((map()) -> term()).
@@ -111,6 +111,32 @@ object_to_string({_Type, _} = Data) ->
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
+-spec to_search_vector(binary(), binary()) -> string().
+to_search_vector(RedundantRootKey, Str) ->
+    %% NOTE Turns string containing nested json into space-separated string of
+    %% words/lexems.
+    %% As example, this turns
+    %%   {
+    %%     "my-object": {
+    %%       "ref": {
+    %%         "id": "my-id"
+    %%       },
+    %%       "data": {
+    %%         "hello": "world",
+    %%         "test": 42
+    %%       }
+    %%     }
+    %%   }
+    %% into
+    %%   hello world test 42
+    Json0 =
+        case jsx:decode(Str) of
+            #{RedundantRootKey := Inner} -> Inner;
+            Inner -> Inner
+        end,
+    Json1 = unwrap_redundant_json_nesting(Json0),
+    extract_searchable_text_from_term(Json1).
+
 -spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
 thrift_term_to_string_(Term, ThriftType) ->
     dmt_json:encode(dmt_json:term_to_json(Term, ThriftType)).
@@ -192,6 +218,12 @@ extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).
 
+-spec unwrap_redundant_json_nesting(map()) -> map().
+unwrap_redundant_json_nesting(#{~"ref" := _, ~"data" := Data}) ->
+    unwrap_redundant_json_nesting(Data);
+unwrap_redundant_json_nesting(Json0) ->
+    Json0.
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -227,6 +259,92 @@ stringify_object_test_() ->
         ?_assertEqual(String, object_to_string(Object)),
         ?_assertEqual(Object, string_to_object(String)),
         ?_assertEqual(Object, string_to_object(object_to_string(Object)))
+    ].
+
+-spec to_search_vector_test_() -> _.
+to_search_vector_test_() ->
+    %% NOTE Since JSON is decoded as map, ordering in output string is not
+    %% guaranteed to be the same w/ different Erlang versions.
+    [
+        ?_assertEqual(
+            "hello world test 42",
+            to_search_vector(
+                ~"my-object",
+                ~"""
+                {
+                  "my-object": {
+                    "ref": {
+                      "id": "my-id"
+                    },
+                    "data": {
+                      "hello": "world",
+                      "test": 42
+                    }
+                  }
+                }
+                """
+            )
+        ),
+        ?_assertEqual(
+            "my-object data hello world test 42 ref id my-id",
+            to_search_vector(
+                ~"other-root-key",
+                ~"""
+                {
+                  "my-object": {
+                    "ref": {
+                      "id": "my-id"
+                    },
+                    "data": {
+                      "hello": "world",
+                      "test": 42
+                    }
+                  }
+                }
+                """
+            )
+        ),
+        ?_assertEqual(
+            "hello world test 42",
+            to_search_vector(
+                ~"my-object",
+                ~"""
+                {
+                  "my-object": {
+                    "hello": "world",
+                    "test": 42
+                  }
+                }
+                """
+            )
+        ),
+        ?_assertEqual(
+            "",
+            to_search_vector(
+                ~"my-object",
+                ~"""
+                {}
+                """
+            )
+        ),
+        ?_assertEqual(
+            "string",
+            to_search_vector(
+                ~"my-object",
+                ~"""
+                "string"
+                """
+            )
+        ),
+        ?_assertEqual(
+            "",
+            to_search_vector(
+                ~"my-object",
+                ~"""
+                null
+                """
+            )
+        )
     ].
 
 -endif.

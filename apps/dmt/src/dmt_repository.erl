@@ -797,18 +797,9 @@ get_object_field({_, _, _, data, _}, Data, _Ref) ->
     Data.
 
 -spec object_to_serialized(domain_object()) -> {ok, JsonBinary :: binary(), SearchString :: string()}.
-object_to_serialized(Data0) ->
+object_to_serialized({Type, _} = Data0) ->
     Data1 = dmt_mapper:object_to_string(Data0),
-    %% NOTE Turns string containing nested json into space-separated string of
-    %% words/lexems.
-    %% As example, this turns
-    %%   {
-    %%     "hello": "world",
-    %%     "test": 42
-    %%   }
-    %% into
-    %%   hello world test 42
-    SearchVector = dmt_mapper:extract_searchable_text_from_term(jsx:decode(Data1)),
+    SearchVector = dmt_mapper:to_search_vector(atom_to_binary(Type), Data1),
     {ok, Data1, SearchVector}.
 
 -spec update_object(
