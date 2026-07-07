@@ -14,6 +14,8 @@ services:
       args:
         OTP_VERSION: $OTP_VERSION
         THRIFT_VERSION: $THRIFT_VERSION
+        USER_UID: $USER_UID
+        USER_GID: $USER_GID
     volumes:
       - .:$PWD
     hostname: dmt.default

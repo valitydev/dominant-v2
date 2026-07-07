@@ -11,6 +11,12 @@ RUN wget -q -O- "https://github.com/valitydev/thrift/releases/download/${THRIFT_
 
 RUN apt-get update && apt-get install -y cmake
 
+# Setup user for matching permissions in mounted volumes
+ARG USER_UID
+ARG USER_GID
+RUN useradd -ms /bin/bash dev
+USER dev
+
 # Set env
 ENV CHARSET=UTF-8
 ENV LANG=C.UTF-8

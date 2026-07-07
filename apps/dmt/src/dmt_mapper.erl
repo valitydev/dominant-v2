@@ -158,7 +158,6 @@ to_text_search_query(Query0) ->
                 [binary:join(Keywords1, ~" & ") | Acc]
         end
     end,
-    %% Query1 = genlib_string:to_lower(Query0),
     Query1 = to_unaccented_lowercase(Query0),
     Query2 = lists:foldl(QueryProcessorFun, [], binary:split(Query1, <<$;>>, [global, trim_all])),
     %% NOTE Parentheses can be used to enforce grouping of these operators. In
