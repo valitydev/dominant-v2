@@ -112,8 +112,8 @@ object_to_string({_Type, _} = Data) ->
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
--spec to_text_search_vector(binary(), binary()) -> string().
-to_text_search_vector(RedundantRootKey, Str) ->
+-spec to_text_search_vector(binary(), binary()) -> binary().
+to_text_search_vector(RedundantRootKey, Bin) ->
     %% NOTE Turns string containing nested json into space-separated string of
     %% words/lexems.
     %% As example, this turns
@@ -131,12 +131,13 @@ to_text_search_vector(RedundantRootKey, Str) ->
     %% into
     %%   hello world test 42
     Json0 =
-        case jsx:decode(Str) of
+        case jsx:decode(Bin) of
             #{RedundantRootKey := Inner} -> Inner;
             Inner -> Inner
         end,
     Json1 = unwrap_redundant_json_nesting(Json0),
-    extract_searchable_text_from_term(Json1).
+    Str = extract_searchable_text_from_term(Json1),
+    to_unaccented_lowercase(unicode:characters_to_binary(Str)).
 
 %% @doc Constructs text-search query for full-text search with lexeme's prefix
 %% matching and OR binding via semicolon (";") character.
@@ -144,7 +145,8 @@ to_text_search_vector(RedundantRootKey, Str) ->
 to_text_search_query(Query0) ->
     {ok, NoSpecialRE} = re:compile(~"['\"&|!()\\\\]", [unicode, ucp]),
     {ok, OnlyWordsRE} = re:compile(~"[^\\p{L}\\p{N}\\s\\-]", [unicode, ucp]),
-    F = fun(QueryPart0, Acc) ->
+    KeywordSuffixFun = fun(KW) -> <<KW/binary, ":*">> end,
+    QueryProcessorFun = fun(QueryPart0, Acc) ->
         QueryPart1 = re:replace(QueryPart0, NoSpecialRE, ~"", [global]),
         QueryPart2 = re:replace(QueryPart1, OnlyWordsRE, ~" ", [global]),
         QueryPart3 = iolist_to_binary(QueryPart2),
@@ -152,12 +154,13 @@ to_text_search_query(Query0) ->
             [] ->
                 Acc;
             Keywords0 ->
-                Keywords1 = lists:map(fun(KW) -> <<KW/binary, ":*">> end, Keywords0),
+                Keywords1 = lists:map(KeywordSuffixFun, Keywords0),
                 [binary:join(Keywords1, ~" & ") | Acc]
         end
     end,
-    Query1 = genlib_string:to_lower(Query0),
-    Query2 = lists:foldl(F, [], binary:split(Query1, <<$;>>, [global, trim_all])),
+    %% Query1 = genlib_string:to_lower(Query0),
+    Query1 = to_unaccented_lowercase(Query0),
+    Query2 = lists:foldl(QueryProcessorFun, [], binary:split(Query1, <<$;>>, [global, trim_all])),
     %% NOTE Parentheses can be used to enforce grouping of these operators. In
     %% the absence of parentheses, ! (NOT) binds most tightly, <-> (FOLLOWED BY)
     %% next most tightly, then & (AND), with | (OR) binding the least tightly.
@@ -266,6 +269,19 @@ split_and_trim_into_keywords(<<$\s, Bin/binary>>, Keyword, Acc) ->
 split_and_trim_into_keywords(<<H:8, Bin/binary>>, Keyword, Acc) ->
     split_and_trim_into_keywords(Bin, <<Keyword/binary, H:8>>, Acc).
 
+-spec to_unaccented_lowercase(binary()) -> binary().
+to_unaccented_lowercase(Str0) ->
+    {ok, Re} = re:compile("\\p{Mn}", [unicode]),
+    Str1 = throw_if_bad_binary(unicode:characters_to_nfd_binary(Str0)),
+    Str2 = re:replace(Str1, Re, "", [global]),
+    Str3 = throw_if_bad_binary(unicode:characters_to_nfc_binary(Str2)),
+    throw_if_bad_binary(unicode:characters_to_binary(string:lowercase(Str3))).
+
+-spec throw_if_bad_binary(binary() | {error, _, _}) -> binary() | no_return().
+throw_if_bad_binary({error, _, _}) -> erlang:throw(bad_binary);
+throw_if_bad_binary({incomplete, _, _}) -> erlang:throw(bad_binary);
+throw_if_bad_binary(V) -> V.
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -309,7 +325,25 @@ to_text_search_vector_test_() ->
     %% guaranteed to be the same w/ different Erlang versions.
     [
         ?_assertEqual(
-            "hello world test 42",
+            ~"key значение с кириллицеи и акцентом е",
+            to_text_search_vector(
+                ~"my-object",
+                ~"""
+                {
+                  "my-object": {
+                    "ref": {
+                      "id": "my-id"
+                    },
+                    "data": {
+                      "KEY": "Значение с кириллицей и акцентом Ё"
+                    }
+                  }
+                }
+                """
+            )
+        ),
+        ?_assertEqual(
+            ~"hello world test 42",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -328,7 +362,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            "my-object data hello world test 42 ref id my-id",
+            ~"my-object data hello world test 42 ref id my-id",
             to_text_search_vector(
                 ~"other-root-key",
                 ~"""
@@ -347,7 +381,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            "hello world test 42",
+            ~"hello world test 42",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -361,7 +395,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            "",
+            ~"",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -370,7 +404,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            "string",
+            ~"string",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -379,7 +413,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            "",
+            ~"",
             to_text_search_vector(
                 ~"my-object",
                 ~"""

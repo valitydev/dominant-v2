@@ -90,7 +90,7 @@ insert_objects_into_buffer(Conn, Objects) ->
     Values = lists:join(
         $,,
         lists:map(
-            fun({I, [ID, Version, SearchVector]}) ->
+            fun({I, [_ID, _Version, _SearchVector]}) ->
                 PH = [ph(I, 1), ph(I, 2), ["to_tsvector('multilingual',", ph(I, 3), ")"]],
                 [$(, lists:join($,, PH), $)]
             end,

@@ -32,7 +32,7 @@ run(MigrationsDir) ->
 
 -spec perform(map(), string()) -> ok | {error, term()}.
 perform(DbOpts, MigrationsDir) ->
-    case epg_migrator:perform(?REALM, DbOpts, [], MigrationsDir) of
+    case epg_migrator:perform(?REALM, DbOpts, [reraise], MigrationsDir) of
         {ok, Executed} ->
             _ = logger:info("Applied migrations: ~p", [Executed]),
             ok;

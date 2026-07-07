@@ -683,7 +683,7 @@ search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
             _ = logger:error("Error fetching search Params: ~p", [AllParams]),
             {ok, {[], undefined}}
     end;
-search_objects(Worker, Query, Version, Type, Limit, Offset) ->
+search_objects(Worker, Query0, Version, Type, Limit, Offset) ->
     % Use a pattern where the condition is always true when Type is NULL
     TypeValue =
         case Type of
@@ -713,22 +713,23 @@ search_objects(Worker, Query, Version, Type, Limit, Offset) ->
            e.created_at
     FROM entity e
     INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+    WHERE e.search_vector @@ to_tsquery('multilingual', $1)
     AND e.version <= $2
     AND ($3 = 'NULL' OR e.entity_type = $3)
     AND las.is_active = TRUE
-    ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
+    ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, to_tsquery('multilingual', $1)) DESC
     LIMIT $4 OFFSET $5
     """,
 
-    AllParams = [Query, Version, TypeValue, Limit, Offset],
+    Query1 = dmt_mapper:to_text_search_query(Query0),
+    AllParams = [Query1, Version, TypeValue, Limit, Offset],
 
     % Execute the query
     case epg_pool:query(Worker, Request, AllParams) of
         {ok, Columns, Rows} ->
             Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
             NewOffset0 = Offset + Limit,
-            HasMoreResults = has_more_search_results(Worker, Query, Version, TypeValue, NewOffset0),
+            HasMoreResults = has_more_search_results(Worker, Query1, Version, TypeValue, NewOffset0),
             NewOffset1 =
                 case HasMoreResults of
                     true -> NewOffset0;
@@ -795,7 +796,7 @@ has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
     )
     SELECT 1 FROM entity e
     INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+    WHERE e.search_vector @@ to_tsquery('multilingual', $1)
     AND e.version <= $2
     AND ($3 = 'NULL' OR e.entity_type = $3)
     AND las.is_active = TRUE
@@ -1209,7 +1210,7 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
 ) ->
     {ok, {[dmt_object:object()], [edge()]}} | {error, db_error()}.
 search_related_graph(
-    Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
+    Worker, Query0, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
 ) ->
     TypeValue =
         case SearchedType of
@@ -1218,7 +1219,7 @@ search_related_graph(
         end,
 
     SearchQuery =
-        case Query of
+        case Query0 of
             ~"*" ->
                 """
                 WITH LatestVersionAtRequestedTime AS (
@@ -1256,18 +1257,21 @@ search_related_graph(
                 SELECT DISTINCT ON (e.id) e.id
                 FROM entity e
                 INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-                WHERE e.search_vector @@ plainto_tsquery('multilingual', $1)
+                WHERE e.search_vector @@ to_tsquery('multilingual', $1)
                 AND e.version <= $2
                 AND ($3 = 'NULL' OR e.entity_type = $3)
                 AND las.is_active = TRUE
-                ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, plainto_tsquery('multilingual', $1)) DESC
+                ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, to_tsquery('multilingual', $1)) DESC
                 """
         end,
 
     SearchParams =
-        case Query of
-            ~"*" -> [Version, TypeValue];
-            _ -> [Query, Version, TypeValue]
+        case Query0 of
+            ~"*" ->
+                [Version, TypeValue];
+            _ ->
+                Query1 = dmt_mapper:to_text_search_query(Query0),
+                [Query1, Version, TypeValue]
         end,
 
     case epg_pool:query(Worker, SearchQuery, SearchParams) of

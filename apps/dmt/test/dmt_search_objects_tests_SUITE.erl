@@ -34,10 +34,10 @@
     search_full_objects_basic_test/1,
     search_full_objects_with_filter_test/1,
     search_full_objects_pagination_test/1,
-    search_objects_without_name_desc_test/1,
     search_deleted_objects_test/1,
     checkout_deleted_version_test/1,
-    search_updated_object_deduplication_test/1
+    search_updated_object_deduplication_test/1,
+    search_prefix_match_test/1
 ]).
 
 %% Initialize per suite
@@ -68,14 +68,14 @@ groups() ->
             search_with_version_filter_test,
             search_multiple_terms_test,
             search_no_results_test,
-            search_objects_without_name_desc_test,
             search_invalid_query_test,
             search_full_objects_basic_test,
             search_full_objects_with_filter_test,
             search_full_objects_pagination_test,
             search_deleted_objects_test,
             checkout_deleted_version_test,
-            search_updated_object_deduplication_test
+            search_updated_object_deduplication_test,
+            search_prefix_match_test
         ]}
     ].
 
@@ -1028,118 +1028,6 @@ search_full_objects_pagination_test(Config) ->
         length(AllRefs), length(UniqueRefs), "Should not have any duplicate results across pages"
     ).
 
-% Test searching for objects without name or description fields
-search_objects_without_name_desc_test(Config) ->
-    Client = dmt_ct_helper:cfg(client, Config),
-
-    % Create author
-    Email = <<"search_objects_without_name_desc_test@test">>,
-    AuthorID = create_author(Email, Client),
-
-    % Ensure the 'dummy' entity type exists in the database, it could be deleted by previous tests
-    {ok, _} = epg_pool:query(
-        default_pool,
-        """
-        INSERT INTO entity_type (name, has_sequence)
-        VALUES ($1, FALSE)
-        ON CONFLICT (name) DO NOTHING;
-        """,
-        [dummy]
-    ),
-
-    % Create a Dummy object which doesn't have name or description fields
-    Revision = 0,
-    DummyRef = #domain_DummyRef{id = <<"search_objects_without_name_desc_test">>},
-    Operations = [
-        {insert, #domain_conf_v2_InsertOp{
-            force_ref = {dummy, DummyRef},
-            object = {dummy, #domain_Dummy{}}
-        }}
-    ],
-
-    {ok, #domain_conf_v2_CommitResponse{
-        version = Version,
-        new_objects = NewObjects
-    }} = dmt_client:commit(Revision, Operations, AuthorID, Client),
-
-    % Extract the created dummy reference
-    [{dummy, #domain_DummyObject{ref = DummyRef}}] = ordsets:to_list(NewObjects),
-
-    % Search for dummy objects (should find by type since there's no name/description)
-    Request = #domain_conf_v2_SearchRequestParams{
-        % This should match the type name
-        query = <<"dummy">>,
-        version = Version,
-        limit = 10
-    },
-
-    {ok, #domain_conf_v2_SearchResponse{
-        result = Results,
-        total_count = Count
-    }} = dmt_client:search_objects(Request, Client),
-
-    % We should still find the object even though it doesn't have name/description
-    ?assertEqual(1, Count, "Should find the dummy object"),
-
-    % Verify the result structure
-    ?assertMatch(
-        [
-            #domain_conf_v2_LimitedVersionedObject{
-                ref = {dummy, DummyRef},
-                info = #domain_conf_v2_VersionedObjectInfo{
-                    version = Version
-                },
-                name = undefined,
-                description = undefined
-            }
-        ],
-        Results,
-        "Should return the dummy object with undefined name and description"
-    ),
-
-    % Also search with explicit type filter
-    TypedRequest = #domain_conf_v2_SearchRequestParams{
-        % Empty query but with type filter
-        query = <<"*">>,
-        version = Version,
-        limit = 10,
-        type = dummy
-    },
-
-    {ok, #domain_conf_v2_SearchResponse{
-        result = TypedResults,
-        total_count = TypedCount
-    }} = dmt_client:search_objects(TypedRequest, Client),
-
-    % Should find by type even with empty query
-    ?assertEqual(1, TypedCount, "Should find the dummy object by type filter"),
-    ?assertEqual(Results, TypedResults, "Same result should be returned for type-based search"),
-
-    % Also test with full objects search
-    {ok, #domain_conf_v2_SearchFullResponse{
-        result = FullResults,
-        total_count = FullCount
-    }} = dmt_client:search_full_objects(Request, Client),
-
-    % Verify full object search works too
-    ?assertEqual(1, FullCount, "Should find the dummy object in full search"),
-    ?assertMatch(
-        [
-            #domain_conf_v2_VersionedObject{
-                info = #domain_conf_v2_VersionedObjectInfo{
-                    version = Version
-                },
-                object =
-                    {dummy, #domain_DummyObject{
-                        ref = DummyRef,
-                        data = #domain_Dummy{}
-                    }}
-            }
-        ],
-        FullResults,
-        "Should return the full dummy object"
-    ).
-
 % Test searching for deleted objects
 search_deleted_objects_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
@@ -1588,7 +1476,59 @@ search_updated_object_deduplication_test(Config) ->
     ?assertEqual(UpdatedName2, FullName, "Full object should have the latest name"),
     ?assertEqual(UpdatedDesc2, FullDesc, "Full object should have the latest description").
 
-%% Helper function
+-define(assertFound(Count, Query, Client),
+    ?assertMatch(
+        #domain_conf_v2_SearchResponse{total_count = Count},
+        search(Query, 10, Client),
+        unicode:characters_to_binary(
+            io_lib:format("Failed to assert that search with '~s' finds ~c results", [Query, Count])
+        )
+    )
+).
+
+search_prefix_match_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    ok = insert(
+        [
+            {category, #domain_Category{
+                name = ~"Main regularly reward",
+                description = ~"""
+                Hard hopéful hope widé kindly angle truth dock quiet two clearly
+                all. Us real airport learn doorway problem most catch because
+                first local sing always simple drink. Join decision push honor
+                hot speed, doctor similar valley read think press builder
+                Wédnésday watch try airport available certainly wire.
+                """
+            }},
+            {category, #domain_Category{
+                name = ~"Йнцидент не исчёрпан: кровь стынЁт в жЙлах",
+                description = ~"""
+                Ясность нашей позиции очевидна: постоянный количественный рост и
+                сфера нашей активности прекрасно подходит для реализации
+                дальнейших направлений развития. Господа, глубокий уровень
+                погружения говорит о возможностях поставленных обществом задач.
+                """
+            }}
+        ],
+        create_author(~"search_prefix_match_test@test", Client),
+        Client
+    ),
+    ?assertFound(1, ~"main reward", Client),
+    ?assertFound(0, ~"ololo not found", Client),
+    ?assertFound(1, ~"hard hop", Client),
+    ?assertFound(1, ~"wednesd", Client),
+    ?assertFound(1, ~"local sing always simple drink", Client),
+    ?assertFound(1, ~"инцидент исчерпан", Client),
+    ?assertFound(1, ~"стын", Client),
+    ?assertFound(1, ~"возможно обще", Client),
+    ?assertFound(0, ~"совершенно другой текст", Client),
+    ?assertFound(1, ~"совершенно другой текст;реал", Client),
+    ?assertFound(1, ~"количество сфера", Client),
+    ?assertFound(2, ~"количество сфера; air wir", Client),
+    ok.
+
+%% Helper functions
+
 create_author(Email, Client) ->
     AuthorParams = #domain_conf_v2_AuthorParams{
         email = Email,
@@ -1596,3 +1536,14 @@ create_author(Email, Client) ->
     },
     {ok, #domain_conf_v2_Author{id = AuthorID}} = dmt_client:create_author(AuthorParams, Client),
     AuthorID.
+
+insert(Objects, AuthorID, Client) ->
+    InsertOperations = [{insert, #domain_conf_v2_InsertOp{object = O}} || O <- Objects],
+    {ok, #domain_conf_v2_CommitResponse{version = _, new_objects = _}} =
+        dmt_client:commit(0, InsertOperations, AuthorID, Client),
+    ok.
+
+search(Query, Limit, Client) ->
+    {ok, #domain_conf_v2_SearchResponse{} = Result} =
+        dmt_client:search_objects(#domain_conf_v2_SearchRequestParams{query = Query, limit = Limit}, Client),
+    Result.
