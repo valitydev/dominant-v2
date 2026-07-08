@@ -1488,7 +1488,7 @@ search_updated_object_deduplication_test(Config) ->
 
 search_prefix_match_test(Config) ->
     Client = dmt_ct_helper:cfg(client, Config),
-    ok = insert(
+    NewObjects = insert(
         [
             {category, #domain_Category{
                 name = ~"Main regularly reward",
@@ -1525,6 +1525,11 @@ search_prefix_match_test(Config) ->
     ?assertFound(1, ~"совершенно другой текст;реал", Client),
     ?assertFound(1, ~"количество сфера", Client),
     ?assertFound(2, ~"количество сфера; air wir", Client),
+    %% Objects are also searchable by their type name and by their ref ID.
+    ?assertFound(2, ~"category", Client),
+    ?assertFound(2, ~"categ", Client),
+    [{category, #domain_CategoryObject{ref = #domain_CategoryRef{id = CategoryID}}} | _] = NewObjects,
+    ?assertFound(1, integer_to_binary(CategoryID), Client),
     ok.
 
 %% Helper functions
@@ -1539,9 +1544,9 @@ create_author(Email, Client) ->
 
 insert(Objects, AuthorID, Client) ->
     InsertOperations = [{insert, #domain_conf_v2_InsertOp{object = O}} || O <- Objects],
-    {ok, #domain_conf_v2_CommitResponse{version = _, new_objects = _}} =
+    {ok, #domain_conf_v2_CommitResponse{new_objects = NewObjects}} =
         dmt_client:commit(0, InsertOperations, AuthorID, Client),
-    ok.
+    ordsets:to_list(NewObjects).
 
 search(Query, Limit, Client) ->
     {ok, #domain_conf_v2_SearchResponse{} = Result} =

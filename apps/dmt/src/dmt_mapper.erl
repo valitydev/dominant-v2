@@ -113,10 +113,14 @@ string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
 -spec to_text_search_vector(binary(), binary()) -> binary().
-to_text_search_vector(RedundantRootKey, Bin) ->
-    %% NOTE Turns string containing nested json into space-separated string of
-    %% words/lexems.
-    %% As example, this turns
+to_text_search_vector(TypeName, Bin) ->
+    %% NOTE Turns object type name plus string containing nested json into
+    %% space-separated string of words/lexems. Structural wrapper keys — the
+    %% root type key and the "ref"/"data" envelope — are not indexed, but the
+    %% type name itself and the contents of both ref and data are, so that an
+    %% object remains searchable by its type, its reference (e.g. its ID) and
+    %% its data.
+    %% As example, this turns ~"my-object" and
     %%   {
     %%     "my-object": {
     %%       "ref": {
@@ -129,15 +133,21 @@ to_text_search_vector(RedundantRootKey, Bin) ->
     %%     }
     %%   }
     %% into
-    %%   hello world test 42
-    Json0 =
+    %%   my-object id my-id hello world test 42
+    Json =
         case jsx:decode(Bin) of
-            #{RedundantRootKey := Inner} -> Inner;
+            #{TypeName := Inner} -> Inner;
             Inner -> Inner
         end,
-    Json1 = unwrap_redundant_json_nesting(Json0),
-    Str = extract_searchable_text_from_term(Json1),
-    to_unaccented_lowercase(unicode:characters_to_binary(Str)).
+    Fragments =
+        case Json of
+            #{~"ref" := Ref, ~"data" := Data} ->
+                [extract_searchable_text_from_term(Ref), extract_searchable_text_from_term(Data)];
+            _ ->
+                [extract_searchable_text_from_term(Json)]
+        end,
+    TextList = [S || S <- [unicode:characters_to_list(TypeName) | Fragments], S =/= ""],
+    to_unaccented_lowercase(unicode:characters_to_binary(string:join(TextList, " "))).
 
 %% @doc Constructs text-search query for full-text search with lexeme's prefix
 %% matching and OR binding via semicolon (";") character.
@@ -251,12 +261,6 @@ extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).
 
--spec unwrap_redundant_json_nesting(jsx:json_term()) -> jsx:json_term().
-unwrap_redundant_json_nesting(#{~"ref" := _, ~"data" := Data}) ->
-    unwrap_redundant_json_nesting(Data);
-unwrap_redundant_json_nesting(Json0) ->
-    Json0.
-
 -spec split_and_trim_into_keywords(binary()) -> [binary()].
 split_and_trim_into_keywords(Bin) ->
     lists:reverse(split_and_trim_into_keywords(Bin, <<>>, [])).
@@ -334,7 +338,7 @@ sorted_words(Bin) ->
 to_text_search_vector_test_() ->
     [
         ?_assertEqual(
-            ~"key значение с кириллицеи и акцентом е",
+            ~"my-object id my-id key значение с кириллицеи и акцентом е",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -352,7 +356,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            sorted_words(~"hello world test 42"),
+            sorted_words(~"my-object id my-id hello world test 42"),
             sorted_words(
                 to_text_search_vector(
                     ~"my-object",
@@ -372,8 +376,10 @@ to_text_search_vector_test_() ->
                 )
             )
         ),
+        %% Root key not matching the type name: whole document is indexed
+        %% as-is (wrapper keys included), type name still prepended.
         ?_assertEqual(
-            sorted_words(~"my-object data hello world test 42 ref id my-id"),
+            sorted_words(~"other-root-key my-object data hello world test 42 ref id my-id"),
             sorted_words(
                 to_text_search_vector(
                     ~"other-root-key",
@@ -394,7 +400,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            sorted_words(~"hello world test 42"),
+            sorted_words(~"my-object hello world test 42"),
             sorted_words(
                 to_text_search_vector(
                     ~"my-object",
@@ -409,8 +415,9 @@ to_text_search_vector_test_() ->
                 )
             )
         ),
+        %% Objects without any searchable data remain findable by type name.
         ?_assertEqual(
-            ~"",
+            ~"my-object",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -419,7 +426,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            ~"string",
+            ~"my-object string",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -428,7 +435,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            ~"",
+            ~"my-object",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
