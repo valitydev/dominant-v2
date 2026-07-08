@@ -1481,7 +1481,7 @@ search_updated_object_deduplication_test(Config) ->
         #domain_conf_v2_SearchResponse{total_count = Count},
         search(Query, 10, Client),
         unicode:characters_to_binary(
-            io_lib:format("Failed to assert that search with '~s' finds ~c results", [Query, Count])
+            io_lib:format("Failed to assert that search with '~s' finds ~b results", [Query, Count])
         )
     )
 ).

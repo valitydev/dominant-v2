@@ -17,6 +17,7 @@
         erl_health,
         woody_user_identity,
         jsone,
+        jsx,
         uuid,
         dmt_core,
         dmt_object,
