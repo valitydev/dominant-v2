@@ -23,11 +23,15 @@ perform(Conn, _MigrationOpts) ->
 %%
 
 create_tmp_table(Conn) ->
+    %% NOTE TEMP table: dropped automatically with the session, so a failed
+    %% migration run can never leave a stale table behind that would make the
+    %% next run fail at CREATE TABLE. Temporary tables cannot carry foreign
+    %% keys to permanent tables, hence no REFERENCES on version.
     Query = io_lib:format(
         """
-        CREATE TABLE ~s (
+        CREATE TEMP TABLE ~s (
             id TEXT NOT NULL,
-            version BIGINT NOT NULL REFERENCES version(version),
+            version BIGINT NOT NULL,
             search_vector tsvector,
             PRIMARY KEY (id, version)
         )
@@ -80,8 +84,22 @@ collect_objects(Conn, Offset, Limit) ->
     end.
 
 form_search_vector({ID, Version, Type, Data}) ->
-    SearchVector = dmt_mapper:to_text_search_vector(Type, Data),
-    [ID, Version, SearchVector].
+    try
+        SearchVector = dmt_mapper:to_text_search_vector(Type, Data),
+        [ID, Version, SearchVector]
+    catch
+        Class:Reason ->
+            %% One bad row aborts the whole migration; report which one so a
+            %% production backfill failure is diagnosable.
+            erlang:throw(
+                {search_vector_formation_failed, #{
+                    id => ID,
+                    version => Version,
+                    class => Class,
+                    reason => Reason
+                }}
+            )
+    end.
 
 insert_objects_into_buffer(_Conn, []) ->
     ok;
