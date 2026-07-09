@@ -10,9 +10,10 @@
 -export([string_to_ref/1]).
 -export([object_to_string/1]).
 -export([string_to_object/1]).
+-export([to_text_search_vector/2]).
+-export([to_text_search_query/1]).
 -export([to_string/1]).
 -export([from_string/1]).
--export([extract_searchable_text_from_term/1]).
 
 -type row() :: tuple().
 -type transform_fun() :: fun((map()) -> term()).
@@ -111,6 +112,74 @@ object_to_string({_Type, _} = Data) ->
 string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
+-spec to_text_search_vector(binary(), binary()) -> binary().
+to_text_search_vector(TypeName, Bin) ->
+    %% NOTE Turns object type name plus string containing nested json into
+    %% space-separated string of words/lexems. Structural wrapper keys — the
+    %% root type key and the "ref"/"data" envelope — are not indexed, but the
+    %% type name itself and the contents of both ref and data are, so that an
+    %% object remains searchable by its type, its reference (e.g. its ID) and
+    %% its data.
+    %% As example, this turns ~"my-object" and
+    %%   {
+    %%     "my-object": {
+    %%       "ref": {
+    %%         "id": "my-id"
+    %%       },
+    %%       "data": {
+    %%         "hello": "world",
+    %%         "test": 42
+    %%       }
+    %%     }
+    %%   }
+    %% into
+    %%   my-object id my-id hello world test 42
+    Json =
+        case jsx:decode(Bin) of
+            #{TypeName := Inner} -> Inner;
+            Inner -> Inner
+        end,
+    Fragments =
+        case Json of
+            #{~"ref" := Ref, ~"data" := Data} ->
+                [extract_searchable_text_from_term(Ref), extract_searchable_text_from_term(Data)];
+            _ ->
+                [extract_searchable_text_from_term(Json)]
+        end,
+    TextList = [S || S <- [unicode:characters_to_list(TypeName) | Fragments], S =/= ""],
+    to_unaccented_lowercase(unicode:characters_to_binary(string:join(TextList, " "))).
+
+%% @doc Constructs text-search query for full-text search with lexeme's prefix
+%% matching and OR binding via semicolon (";") character.
+-spec to_text_search_query(binary()) -> binary().
+to_text_search_query(Query0) ->
+    {ok, NoSpecialRE} = re:compile(~"['\"&|!()\\\\]", [unicode, ucp]),
+    %% NOTE Whitespace is not excepted from replacement: every non-word
+    %% character (tabs and newlines included) must become a plain space,
+    %% since keywords are later split on the space character only and any
+    %% other whitespace embedded in a keyword is a tsquery syntax error.
+    {ok, OnlyWordsRE} = re:compile(~"[^\\p{L}\\p{N}\\-]", [unicode, ucp]),
+    KeywordSuffixFun = fun(KW) -> <<KW/binary, ":*">> end,
+    QueryProcessorFun = fun(QueryPart0, Acc) ->
+        QueryPart1 = re:replace(QueryPart0, NoSpecialRE, ~"", [global]),
+        QueryPart2 = re:replace(QueryPart1, OnlyWordsRE, ~" ", [global]),
+        QueryPart3 = iolist_to_binary(QueryPart2),
+        case split_and_trim_into_keywords(QueryPart3) of
+            [] ->
+                Acc;
+            Keywords0 ->
+                Keywords1 = lists:map(KeywordSuffixFun, Keywords0),
+                [binary:join(Keywords1, ~" & ") | Acc]
+        end
+    end,
+    %% Query1 = genlib_string:to_lower(Query0),
+    Query1 = to_unaccented_lowercase(Query0),
+    Query2 = lists:foldl(QueryProcessorFun, [], binary:split(Query1, <<$;>>, [global, trim_all])),
+    %% NOTE Parentheses can be used to enforce grouping of these operators. In
+    %% the absence of parentheses, ! (NOT) binds most tightly, <-> (FOLLOWED BY)
+    %% next most tightly, then & (AND), with | (OR) binding the least tightly.
+    binary:join(lists:reverse(Query2), ~" | ").
+
 -spec thrift_term_to_string_(term(), dmt_thrift:thrift_type()) -> binary().
 thrift_term_to_string_(Term, ThriftType) ->
     dmt_json:encode(dmt_json:term_to_json(Term, ThriftType)).
@@ -192,6 +261,35 @@ extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).
 
+-spec split_and_trim_into_keywords(binary()) -> [binary()].
+split_and_trim_into_keywords(Bin) ->
+    lists:reverse(split_and_trim_into_keywords(Bin, <<>>, [])).
+
+-spec split_and_trim_into_keywords(binary(), binary(), [binary()]) -> [binary()].
+split_and_trim_into_keywords(<<>>, <<>>, Acc) ->
+    Acc;
+split_and_trim_into_keywords(<<>>, Keyword, Acc) ->
+    [Keyword | Acc];
+split_and_trim_into_keywords(<<$\s, Bin/binary>>, <<>>, Acc) ->
+    split_and_trim_into_keywords(Bin, <<>>, Acc);
+split_and_trim_into_keywords(<<$\s, Bin/binary>>, Keyword, Acc) ->
+    split_and_trim_into_keywords(Bin, <<>>, [Keyword | Acc]);
+split_and_trim_into_keywords(<<H:8, Bin/binary>>, Keyword, Acc) ->
+    split_and_trim_into_keywords(Bin, <<Keyword/binary, H:8>>, Acc).
+
+-spec to_unaccented_lowercase(binary()) -> binary().
+to_unaccented_lowercase(Str0) ->
+    {ok, Re} = re:compile("\\p{Mn}", [unicode]),
+    Str1 = throw_if_bad_binary(unicode:characters_to_nfd_binary(Str0)),
+    Str2 = re:replace(Str1, Re, "", [global]),
+    Str3 = throw_if_bad_binary(unicode:characters_to_nfc_binary(Str2)),
+    throw_if_bad_binary(unicode:characters_to_binary(string:lowercase(Str3))).
+
+-spec throw_if_bad_binary(binary() | {error, _, _} | {incomplete, _, _}) -> binary() | no_return().
+throw_if_bad_binary({error, _, _}) -> erlang:throw(bad_binary);
+throw_if_bad_binary({incomplete, _, _}) -> erlang:throw(bad_binary);
+throw_if_bad_binary(V) -> V.
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -227,6 +325,150 @@ stringify_object_test_() ->
         ?_assertEqual(String, object_to_string(Object)),
         ?_assertEqual(Object, string_to_object(String)),
         ?_assertEqual(Object, string_to_object(object_to_string(Object)))
+    ].
+
+%% NOTE Since JSON is decoded as map, ordering in output string is not
+%% guaranteed to be the same w/ different Erlang versions, so multi-key
+%% expectations are compared as sorted word sets.
+-spec sorted_words(binary()) -> [binary()].
+sorted_words(Bin) ->
+    lists:sort(binary:split(Bin, ~" ", [global, trim_all])).
+
+-spec to_text_search_vector_test_() -> _.
+to_text_search_vector_test_() ->
+    [
+        ?_assertEqual(
+            ~"my-object id my-id key значение с кириллицеи и акцентом е",
+            to_text_search_vector(
+                ~"my-object",
+                ~"""
+                {
+                  "my-object": {
+                    "ref": {
+                      "id": "my-id"
+                    },
+                    "data": {
+                      "KEY": "Значение с кириллицей и акцентом Ё"
+                    }
+                  }
+                }
+                """
+            )
+        ),
+        ?_assertEqual(
+            sorted_words(~"my-object id my-id hello world test 42"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"my-object",
+                    ~"""
+                    {
+                      "my-object": {
+                        "ref": {
+                          "id": "my-id"
+                        },
+                        "data": {
+                          "hello": "world",
+                          "test": 42
+                        }
+                      }
+                    }
+                    """
+                )
+            )
+        ),
+        %% Root key not matching the type name: whole document is indexed
+        %% as-is (wrapper keys included), type name still prepended.
+        ?_assertEqual(
+            sorted_words(~"other-root-key my-object data hello world test 42 ref id my-id"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"other-root-key",
+                    ~"""
+                    {
+                      "my-object": {
+                        "ref": {
+                          "id": "my-id"
+                        },
+                        "data": {
+                          "hello": "world",
+                          "test": 42
+                        }
+                      }
+                    }
+                    """
+                )
+            )
+        ),
+        ?_assertEqual(
+            sorted_words(~"my-object hello world test 42"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"my-object",
+                    ~"""
+                    {
+                      "my-object": {
+                        "hello": "world",
+                        "test": 42
+                      }
+                    }
+                    """
+                )
+            )
+        ),
+        %% Objects without any searchable data remain findable by type name.
+        ?_assertEqual(
+            ~"my-object",
+            to_text_search_vector(
+                ~"my-object",
+                ~"""
+                {}
+                """
+            )
+        ),
+        ?_assertEqual(
+            ~"my-object string",
+            to_text_search_vector(
+                ~"my-object",
+                ~"""
+                "string"
+                """
+            )
+        ),
+        ?_assertEqual(
+            ~"my-object",
+            to_text_search_vector(
+                ~"my-object",
+                ~"""
+                null
+                """
+            )
+        )
+    ].
+
+-spec to_text_search_query_test_() -> _.
+to_text_search_query_test_() ->
+    [
+        ?_assertEqual(~"test:*", to_text_search_query(~"test")),
+        ?_assertEqual(~"hello:* & world:*", to_text_search_query(~"hello world")),
+        ?_assertEqual(
+            ~"this:* & and:* & that:* | something:* & else:*",
+            to_text_search_query(~"this and that; something else")
+        ),
+        ?_assertEqual(
+            ~"weird-request:* & 42:* & special:* & symbols:*",
+            to_text_search_query(~"wEiRd-(rEQuesT)=!%{42[+\\/   spEcIAL@#sym&bols")
+        ),
+        %% Tabs, newlines and other whitespace must act as keyword separators,
+        %% otherwise they end up embedded in a lexeme and break to_tsquery.
+        ?_assertEqual(~"hello:* & world:*", to_text_search_query(~"hello\tworld")),
+        ?_assertEqual(
+            ~"hello:* & world:* & again:*",
+            to_text_search_query(~"hello\nworld\r\nagain")
+        ),
+        %% Query sanitized down to nothing yields an empty tsquery string,
+        %% which Postgres accepts and matches no rows.
+        ?_assertEqual(~"", to_text_search_query(~"!!!")),
+        ?_assertEqual(~"", to_text_search_query(~"();; !"))
     ].
 
 -endif.
