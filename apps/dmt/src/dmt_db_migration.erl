@@ -32,10 +32,7 @@ run(MigrationsDir) ->
 
 -spec perform(map(), string()) -> ok | {error, term()}.
 perform(DbOpts, MigrationsDir) ->
-    %% NOTE Migration opts reach only the migration module's perform/2, not
-    %% epg_migrator's transaction, so a `reraise` flag here would be a no-op:
-    %% failures always surface as {error, Reason} (stacktrace is lost).
-    case epg_migrator:perform(?REALM, DbOpts, [], MigrationsDir) of
+    case epg_migrator:perform(?REALM, DbOpts, [reraise], MigrationsDir) of
         {ok, Executed} ->
             _ = logger:info("Applied migrations: ~p", [Executed]),
             ok;
