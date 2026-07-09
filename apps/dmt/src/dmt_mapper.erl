@@ -113,10 +113,14 @@ string_to_object(Str) ->
     string_to_thrift_term_(Str, ?OBJECT_TYPE).
 
 -spec to_text_search_vector(binary(), binary()) -> binary().
-to_text_search_vector(RedundantRootKey, Bin) ->
-    %% NOTE Turns string containing nested json into space-separated string of
-    %% words/lexems.
-    %% As example, this turns
+to_text_search_vector(TypeName, Bin) ->
+    %% NOTE Turns object type name plus string containing nested json into
+    %% space-separated string of words/lexems. Structural wrapper keys — the
+    %% root type key and the "ref"/"data" envelope — are not indexed, but the
+    %% type name itself and the contents of both ref and data are, so that an
+    %% object remains searchable by its type, its reference (e.g. its ID) and
+    %% its data.
+    %% As example, this turns ~"my-object" and
     %%   {
     %%     "my-object": {
     %%       "ref": {
@@ -129,22 +133,32 @@ to_text_search_vector(RedundantRootKey, Bin) ->
     %%     }
     %%   }
     %% into
-    %%   hello world test 42
-    Json0 =
+    %%   my-object id my-id hello world test 42
+    Json =
         case jsx:decode(Bin) of
-            #{RedundantRootKey := Inner} -> Inner;
+            #{TypeName := Inner} -> Inner;
             Inner -> Inner
         end,
-    Json1 = unwrap_redundant_json_nesting(Json0),
-    Str = extract_searchable_text_from_term(Json1),
-    to_unaccented_lowercase(unicode:characters_to_binary(Str)).
+    Fragments =
+        case Json of
+            #{~"ref" := Ref, ~"data" := Data} ->
+                [extract_searchable_text_from_term(Ref), extract_searchable_text_from_term(Data)];
+            _ ->
+                [extract_searchable_text_from_term(Json)]
+        end,
+    TextList = [S || S <- [unicode:characters_to_list(TypeName) | Fragments], S =/= ""],
+    to_unaccented_lowercase(unicode:characters_to_binary(string:join(TextList, " "))).
 
 %% @doc Constructs text-search query for full-text search with lexeme's prefix
 %% matching and OR binding via semicolon (";") character.
 -spec to_text_search_query(binary()) -> binary().
 to_text_search_query(Query0) ->
     {ok, NoSpecialRE} = re:compile(~"['\"&|!()\\\\]", [unicode, ucp]),
-    {ok, OnlyWordsRE} = re:compile(~"[^\\p{L}\\p{N}\\s\\-]", [unicode, ucp]),
+    %% NOTE Whitespace is not excepted from replacement: every non-word
+    %% character (tabs and newlines included) must become a plain space,
+    %% since keywords are later split on the space character only and any
+    %% other whitespace embedded in a keyword is a tsquery syntax error.
+    {ok, OnlyWordsRE} = re:compile(~"[^\\p{L}\\p{N}\\-]", [unicode, ucp]),
     KeywordSuffixFun = fun(KW) -> <<KW/binary, ":*">> end,
     QueryProcessorFun = fun(QueryPart0, Acc) ->
         QueryPart1 = re:replace(QueryPart0, NoSpecialRE, ~"", [global]),
@@ -247,12 +261,6 @@ extract_searchable_text_from_term(Term) ->
     TextList = extract_text(Term, []),
     join_text_list(TextList).
 
--spec unwrap_redundant_json_nesting(map()) -> map().
-unwrap_redundant_json_nesting(#{~"ref" := _, ~"data" := Data}) ->
-    unwrap_redundant_json_nesting(Data);
-unwrap_redundant_json_nesting(Json0) ->
-    Json0.
-
 -spec split_and_trim_into_keywords(binary()) -> [binary()].
 split_and_trim_into_keywords(Bin) ->
     lists:reverse(split_and_trim_into_keywords(Bin, <<>>, [])).
@@ -277,7 +285,7 @@ to_unaccented_lowercase(Str0) ->
     Str3 = throw_if_bad_binary(unicode:characters_to_nfc_binary(Str2)),
     throw_if_bad_binary(unicode:characters_to_binary(string:lowercase(Str3))).
 
--spec throw_if_bad_binary(binary() | {error, _, _}) -> binary() | no_return().
+-spec throw_if_bad_binary(binary() | {error, _, _} | {incomplete, _, _}) -> binary() | no_return().
 throw_if_bad_binary({error, _, _}) -> erlang:throw(bad_binary);
 throw_if_bad_binary({incomplete, _, _}) -> erlang:throw(bad_binary);
 throw_if_bad_binary(V) -> V.
@@ -319,13 +327,18 @@ stringify_object_test_() ->
         ?_assertEqual(Object, string_to_object(object_to_string(Object)))
     ].
 
+%% NOTE Since JSON is decoded as map, ordering in output string is not
+%% guaranteed to be the same w/ different Erlang versions, so multi-key
+%% expectations are compared as sorted word sets.
+-spec sorted_words(binary()) -> [binary()].
+sorted_words(Bin) ->
+    lists:sort(binary:split(Bin, ~" ", [global, trim_all])).
+
 -spec to_text_search_vector_test_() -> _.
 to_text_search_vector_test_() ->
-    %% NOTE Since JSON is decoded as map, ordering in output string is not
-    %% guaranteed to be the same w/ different Erlang versions.
     [
         ?_assertEqual(
-            ~"key значение с кириллицеи и акцентом е",
+            ~"my-object id my-id key значение с кириллицеи и акцентом е",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -343,59 +356,68 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            ~"hello world test 42",
-            to_text_search_vector(
-                ~"my-object",
-                ~"""
-                {
-                  "my-object": {
-                    "ref": {
-                      "id": "my-id"
-                    },
-                    "data": {
-                      "hello": "world",
-                      "test": 42
+            sorted_words(~"my-object id my-id hello world test 42"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"my-object",
+                    ~"""
+                    {
+                      "my-object": {
+                        "ref": {
+                          "id": "my-id"
+                        },
+                        "data": {
+                          "hello": "world",
+                          "test": 42
+                        }
+                      }
                     }
-                  }
-                }
-                """
+                    """
+                )
             )
         ),
+        %% Root key not matching the type name: whole document is indexed
+        %% as-is (wrapper keys included), type name still prepended.
         ?_assertEqual(
-            ~"my-object data hello world test 42 ref id my-id",
-            to_text_search_vector(
-                ~"other-root-key",
-                ~"""
-                {
-                  "my-object": {
-                    "ref": {
-                      "id": "my-id"
-                    },
-                    "data": {
-                      "hello": "world",
-                      "test": 42
+            sorted_words(~"other-root-key my-object data hello world test 42 ref id my-id"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"other-root-key",
+                    ~"""
+                    {
+                      "my-object": {
+                        "ref": {
+                          "id": "my-id"
+                        },
+                        "data": {
+                          "hello": "world",
+                          "test": 42
+                        }
+                      }
                     }
-                  }
-                }
-                """
+                    """
+                )
             )
         ),
         ?_assertEqual(
-            ~"hello world test 42",
-            to_text_search_vector(
-                ~"my-object",
-                ~"""
-                {
-                  "my-object": {
-                    "hello": "world",
-                    "test": 42
-                  }
-                }
-                """
+            sorted_words(~"my-object hello world test 42"),
+            sorted_words(
+                to_text_search_vector(
+                    ~"my-object",
+                    ~"""
+                    {
+                      "my-object": {
+                        "hello": "world",
+                        "test": 42
+                      }
+                    }
+                    """
+                )
             )
         ),
+        %% Objects without any searchable data remain findable by type name.
         ?_assertEqual(
-            ~"",
+            ~"my-object",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -404,7 +426,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            ~"string",
+            ~"my-object string",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -413,7 +435,7 @@ to_text_search_vector_test_() ->
             )
         ),
         ?_assertEqual(
-            ~"",
+            ~"my-object",
             to_text_search_vector(
                 ~"my-object",
                 ~"""
@@ -435,7 +457,18 @@ to_text_search_query_test_() ->
         ?_assertEqual(
             ~"weird-request:* & 42:* & special:* & symbols:*",
             to_text_search_query(~"wEiRd-(rEQuesT)=!%{42[+\\/   spEcIAL@#sym&bols")
-        )
+        ),
+        %% Tabs, newlines and other whitespace must act as keyword separators,
+        %% otherwise they end up embedded in a lexeme and break to_tsquery.
+        ?_assertEqual(~"hello:* & world:*", to_text_search_query(~"hello\tworld")),
+        ?_assertEqual(
+            ~"hello:* & world:* & again:*",
+            to_text_search_query(~"hello\nworld\r\nagain")
+        ),
+        %% Query sanitized down to nothing yields an empty tsquery string,
+        %% which Postgres accepts and matches no rows.
+        ?_assertEqual(~"", to_text_search_query(~"!!!")),
+        ?_assertEqual(~"", to_text_search_query(~"();; !"))
     ].
 
 -endif.
