@@ -13,8 +13,8 @@ DOTENV := $(shell grep -v '^\#' .env)
 # Development images
 DEV_IMAGE_TAG = $(TEST_CONTAINER_NAME)-dev
 DEV_IMAGE_ID = $(file < .image.dev)
-USER_UID=$(shell id -u)
-USER_GID=$(shell id -g)
+USER_UID:=$(shell id -u)
+USER_GID:=$(shell id -g)
 
 DOCKER ?= docker
 DOCKERCOMPOSE ?= docker compose

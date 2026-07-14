@@ -12,9 +12,10 @@ RUN wget -q -O- "https://github.com/valitydev/thrift/releases/download/${THRIFT_
 RUN apt-get update && apt-get install -y cmake
 
 # Setup user for matching permissions in mounted volumes
-ARG USER_UID
-ARG USER_GID
-RUN useradd -ms /bin/bash dev
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd -g ${USER_GID} dev && \
+    useradd -m -s /bin/bash -u ${USER_UID} -g ${USER_GID} dev
 USER dev
 
 # Set env
