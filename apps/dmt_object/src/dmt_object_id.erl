@@ -29,7 +29,8 @@
     party_config
     | shop_config
     | wallet_config
-    | partner.
+    | partner
+    | external_party_routes.
 
 -type numerical_ref() ::
     dmsl_domain_thrift:'CategoryRef'()
@@ -54,7 +55,8 @@
     dmsl_domain_thrift:'PartyConfigRef'()
     | dmsl_domain_thrift:'ShopConfigRef'()
     | dmsl_domain_thrift:'WalletConfigRef'()
-    | dmsl_domain_thrift:'PartnerRef'().
+    | dmsl_domain_thrift:'PartnerRef'()
+    | dmsl_domain_thrift:'ExternalPartyRoutesRef'().
 
 -export_type([numerical_object_type/0, uuid_object_type/0, numerical_ref/0, uuid_ref/0]).
 
@@ -107,5 +109,7 @@ get_uuid_object_id(wallet_config, ID) ->
     #domain_WalletConfigRef{id = ID};
 get_uuid_object_id(partner, ID) ->
     #domain_PartnerRef{id = ID};
+get_uuid_object_id(external_party_routes, ID) ->
+    #domain_ExternalPartyRoutesRef{id = ID};
 get_uuid_object_id(Type, _ID) ->
     throw({not_supported, Type}).
