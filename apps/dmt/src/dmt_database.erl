@@ -887,7 +887,7 @@ get_related_graph(
 ) ->
     case get_related_graph_edges(Worker, ObjectRef, Version, Depth, IncludeInbound, IncludeOutbound) of
         {ok, {EntityIds, Edges}} ->
-            logger:error("EntityIds: ~p, Edges: ~p", [EntityIds, Edges]),
+            logger:debug("EntityIds: ~p, Edges: ~p", [EntityIds, Edges]),
             get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef);
         {error, Reason} ->
             logger:error("Error in graph edge traversal for ~p: ~p", [ObjectRef, Reason]),
@@ -909,7 +909,7 @@ get_objects_and_filter(Worker, EntityIds, Version, TypeFilter, Edges, ObjectRef)
         {ok, AllNodes} ->
             FilteredNodes = filter_nodes_by_type(AllNodes, TypeFilter),
             FilteredEdges = filter_edges_by_nodes(Edges, FilteredNodes),
-            logger:error("FilteredNodes: ~p, FilteredEdges: ~p", [FilteredNodes, FilteredEdges]),
+            logger:debug("FilteredNodes: ~p, FilteredEdges: ~p", [FilteredNodes, FilteredEdges]),
             {ok, {FilteredNodes, FilteredEdges}};
         {error, Reason} ->
             logger:error("Error fetching objects for graph ~p: ~p", [ObjectRef, Reason]),
@@ -934,10 +934,10 @@ filter_nodes_by_type(Nodes, FilterType) ->
 
 -spec filter_edges_by_nodes([edge()], [dmt_object:object()]) -> [edge()].
 filter_edges_by_nodes(Edges, Nodes) ->
-    logger:error("filter_edges_by_nodes Edges: ~p, Nodes: ~p", [Edges, Nodes]),
+    logger:debug("filter_edges_by_nodes Edges: ~p, Nodes: ~p", [Edges, Nodes]),
     lists:filter(
         fun(#{source_ref := SourceRef, target_ref := TargetRef}) ->
-            logger:error("Filter SourceRef: ~p, TargetRef: ~p", [SourceRef, TargetRef]),
+            logger:debug("Filter SourceRef: ~p, TargetRef: ~p", [SourceRef, TargetRef]),
             lists:any(
                 fun(#{id := NodeId}) ->
                     NodeId =:= SourceRef

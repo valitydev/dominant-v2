@@ -30,7 +30,7 @@ insert(Worker, Name, Email) ->
         {ok, 1, _Columns, [{ID, false}]} ->
             {ok, {already_exists, ID}};
         {error, Error} ->
-            logger:error("Insert Author error Name: ~p Email ~p Error ~p", [Name, Email, Error]),
+            logger:debug("Insert Author error Name: ~p Email ~p Error ~p", [Name, Email, Error]),
             {error, unknown}
     end.
 

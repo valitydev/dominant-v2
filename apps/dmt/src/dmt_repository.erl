@@ -707,7 +707,7 @@ validate_no_references_to_entities(Worker, RemovedObjectsReferences, Version) ->
 -spec validate_no_references_to_entity(dmt_database:worker(), object_ref(), dmt_object:version()) -> ok | no_return().
 validate_no_references_to_entity(Worker, Ref, Version) ->
     Ref1 = dmt_mapper:ref_to_string(Ref),
-    _ = logger:warning("Validating no references to entity ~p at version ~p", [Ref, Version]),
+    _ = logger:debug("Validating no references to entity ~p at version ~p", [Ref, Version]),
     case dmt_database:get_referenced_by(Worker, Ref1, Version) of
         {ok, []} ->
             ok;
@@ -759,7 +759,7 @@ insert_object(Worker, Type, ID0, Version, Data0) ->
         ok ->
             ID0;
         {error, Reason} ->
-            logger:error(
+            logger:debug(
                 "insert_object Type: ~p, ID: ~p, Version: ~p, Data: ~p, SearchVector: ~p",
                 [Type, ID0, Version, Data1, SearchVector]
             ),
