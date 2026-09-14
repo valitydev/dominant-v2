@@ -8,9 +8,6 @@ on:
   pull_request:
     branches: ['**']
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
   build-image:
     uses: valitydev/action-deploy-docker/.github/workflows/build-image.yml@v3
