@@ -8,14 +8,13 @@ on:
   pull_request:
     branches: ['**']
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
-  build-push:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: valitydev/action-deploy-docker@v2
-        with:
-          registry-username: ${{ github.actor }}
-          registry-access-token: ${{ secrets.GITHUB_TOKEN }}
+  build-image:
+    uses: valitydev/action-deploy-docker/.github/workflows/build-image.yml@v3
+    permissions:
+      contents: read
+      packages: write
+    with:
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-access-token: ${{ secrets.GITHUB_TOKEN }}
