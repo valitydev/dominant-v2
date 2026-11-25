@@ -620,200 +620,79 @@ has_more_all_objects_history(Worker, Offset) ->
             false
     end.
 
+%% NOTE Search runs against the state of the domain at the requested version:
+%% exactly one row per object (the latest one at or before that version), and
+%% only if the object is active there. Every search predicate must be applied
+%% to those rows only. Matching against all historical rows and picking the
+%% newest match afterwards would surface previous versions of objects that
+%% don't match anymore in their current state.
+-define(SEARCH_CURRENT_ENTITIES_CTE, """
+WITH current_entity AS (
+    SELECT DISTINCT ON (id) id, entity_type, version, data, search_vector, is_active, created_at
+    FROM entity
+    WHERE version <= $1
+    ORDER BY id, version DESC
+)
+""").
+
 -spec search_objects(
     worker(), binary(), dmt_object:version(), type_filter(), limit(), offset()
 ) ->
     {ok, {[dmt_object:object()], offset() | undefined}}.
-search_objects(Worker, <<"*">>, Version, Type, Limit, Offset) ->
-    % Use a pattern where the condition is always true when Type is NULL
-    TypeValue =
-        case Type of
-            undefined -> <<"NULL">>;
-            _ -> Type
-        end,
+search_objects(Worker, Query, Version, Type, Limit, Offset) ->
+    {Conditions, ConditionParams} = search_conditions(Query, Type, 2),
+    ParamsCount = 1 + length(ConditionParams),
+    Request = iolist_to_binary([
+        ?SEARCH_CURRENT_ENTITIES_CTE,
+        " SELECT e.id, e.entity_type, e.version, e.data, e.is_active, e.created_at",
+        " FROM current_entity e WHERE ",
+        Conditions,
+        " ORDER BY e.id",
+        io_lib:format(" LIMIT $~B OFFSET $~B", [ParamsCount + 1, ParamsCount + 2])
+    ]),
+    %% NOTE One extra row is fetched to learn whether there are more results
+    AllParams = [Version | ConditionParams] ++ [Limit + 1, Offset],
 
-    Request = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity at or before the requested version
-        SELECT id, MAX(version) AS max_version_at_time
-        FROM entity
-        WHERE version <= $1
-        GROUP BY id
-    ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.id, e.is_active
-        FROM entity e
-        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-    )
-    SELECT DISTINCT ON (e.id) e.id,
-           e.entity_type,
-           e.version,
-           e.data,
-           e.is_active,
-           e.created_at
-    FROM entity e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.version <= $1
-    AND ($2 = 'NULL' OR e.entity_type = $2)
-    AND las.is_active = TRUE
-    ORDER BY e.id, e.version DESC
-    LIMIT $3 OFFSET $4
-    """,
-
-    AllParams = [Version, TypeValue, Limit, Offset],
-
-    % Execute the query
     case epg_pool:query(Worker, Request, AllParams) of
+        {ok, Columns, Rows} when length(Rows) > Limit ->
+            Objects = dmt_mapper:to_marshalled_maps(Columns, lists:sublist(Rows, Limit)),
+            {ok, {Objects, Offset + Limit}};
         {ok, Columns, Rows} ->
-            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
-            NewOffset0 = Offset + Limit,
-            HasMoreResults = has_more_search_results(
-                Worker, <<"*">>, Version, TypeValue, NewOffset0
-            ),
-            NewOffset1 =
-                case HasMoreResults of
-                    true -> NewOffset0;
-                    false -> undefined
-                end,
-
-            {ok, {Objects, NewOffset1}};
-        {error, Reason} ->
-            _ = logger:error("Error fetching search results: ~p", [Reason]),
-            _ = logger:error("Error fetching search Params: ~p", [AllParams]),
-            {ok, {[], undefined}}
-    end;
-search_objects(Worker, Query0, Version, Type, Limit, Offset) ->
-    % Use a pattern where the condition is always true when Type is NULL
-    TypeValue =
-        case Type of
-            undefined -> <<"NULL">>;
-            _ -> Type
-        end,
-
-    Request = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity at or before the requested version
-        SELECT id, MAX(version) AS max_version_at_time
-        FROM entity
-        WHERE version <= $2
-        GROUP BY id
-    ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.id, e.is_active
-        FROM entity e
-        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-    )
-    SELECT DISTINCT ON (e.id) e.id,
-           e.entity_type,
-           e.version,
-           e.data,
-           e.is_active,
-           e.created_at
-    FROM entity e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.search_vector @@ to_tsquery('multilingual', $1)
-    AND e.version <= $2
-    AND ($3 = 'NULL' OR e.entity_type = $3)
-    AND las.is_active = TRUE
-    ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, to_tsquery('multilingual', $1)) DESC
-    LIMIT $4 OFFSET $5
-    """,
-
-    Query1 = dmt_mapper:to_text_search_query(Query0),
-    AllParams = [Query1, Version, TypeValue, Limit, Offset],
-
-    % Execute the query
-    case epg_pool:query(Worker, Request, AllParams) of
-        {ok, Columns, Rows} ->
-            Objects = dmt_mapper:to_marshalled_maps(Columns, Rows),
-            NewOffset0 = Offset + Limit,
-            HasMoreResults = has_more_search_results(Worker, Query1, Version, TypeValue, NewOffset0),
-            NewOffset1 =
-                case HasMoreResults of
-                    true -> NewOffset0;
-                    false -> undefined
-                end,
-
-            {ok, {Objects, NewOffset1}};
+            {ok, {dmt_mapper:to_marshalled_maps(Columns, Rows), undefined}};
         {error, Reason} ->
             _ = logger:error("Error fetching search results: ~p", [Reason]),
             _ = logger:error("Error fetching search Params: ~p", [AllParams]),
             {ok, {[], undefined}}
     end.
 
-% Helper function to check if there are more search results
--spec has_more_search_results(worker(), binary(), dmt_object:version(), entity_type(), offset()) -> boolean().
-has_more_search_results(Worker, <<"*">>, Version, TypeValue, Offset) ->
-    CheckMoreQuery = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity at or before the requested version
-        SELECT id, MAX(version) AS max_version_at_time
-        FROM entity
-        WHERE version <= $1
-        GROUP BY id
+%% @doc Builds WHERE conditions (and their parameters, numbered starting from
+%% `FirstParam`) which select objects matching search query and type filter
+%% out of `current_entity` rows aliased as `e`.
+-spec search_conditions(binary(), type_filter(), pos_integer()) -> {iodata(), [term()]}.
+search_conditions(Query, Type, FirstParam) ->
+    {Conditions, Params, _NextParam} = lists:foldl(
+        fun
+            (undefined, Acc) ->
+                Acc;
+            ({ConditionFormat, Param}, {ConditionsAcc, ParamsAcc, N}) ->
+                {[io_lib:format(ConditionFormat, [N]) | ConditionsAcc], [Param | ParamsAcc], N + 1}
+        end,
+        {[], [], FirstParam},
+        [search_type_condition(Type), search_query_condition(Query)]
     ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.id, e.is_active
-        FROM entity e
-        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-    )
-    SELECT 1 FROM entity e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.version <= $1
-    AND ($2 = 'NULL' OR e.entity_type = $2)
-    AND las.is_active = TRUE
-    LIMIT 1 OFFSET $3
-    """,
+    {lists:join(" AND ", ["e.is_active = TRUE" | lists:reverse(Conditions)]), lists:reverse(Params)}.
 
-    case epg_pool:query(Worker, CheckMoreQuery, [Version, TypeValue, Offset]) of
-        % At least one more result exists
-        {ok, _, [_]} ->
-            true;
-        % No more results or error
-        {ok, _, []} ->
-            false;
-        {error, Reason} ->
-            _ = logger:error("Error checking for more search results: ~p", [Reason]),
-            false
-    end;
-has_more_search_results(Worker, Query, Version, TypeValue, Offset) ->
-    CheckMoreQuery = """
-    WITH LatestVersionAtRequestedTime AS (
-        -- Find the latest version for each entity at or before the requested version
-        SELECT id, MAX(version) AS max_version_at_time
-        FROM entity
-        WHERE version <= $2
-        GROUP BY id
-    ),
-    ActiveStatusAtRequestedTime AS (
-        -- Get the is_active status at the requested time
-        SELECT e.id, e.is_active
-        FROM entity e
-        INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-    )
-    SELECT 1 FROM entity e
-    INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-    WHERE e.search_vector @@ to_tsquery('multilingual', $1)
-    AND e.version <= $2
-    AND ($3 = 'NULL' OR e.entity_type = $3)
-    AND las.is_active = TRUE
-    LIMIT 1 OFFSET $4
-    """,
+-spec search_type_condition(type_filter()) -> {io:format(), term()} | undefined.
+search_type_condition(undefined) ->
+    undefined;
+search_type_condition(Type) ->
+    {"e.entity_type = $~B", Type}.
 
-    case epg_pool:query(Worker, CheckMoreQuery, [Query, Version, TypeValue, Offset]) of
-        % At least one more result exists
-        {ok, _, [_]} ->
-            true;
-        % No more results or error
-        {ok, _, []} ->
-            false;
-        {error, Reason} ->
-            _ = logger:error("Error checking for more search results: ~p", [Reason]),
-            false
-    end.
+-spec search_query_condition(binary()) -> {io:format(), term()} | undefined.
+search_query_condition(<<"*">>) ->
+    undefined;
+search_query_condition(Query) ->
+    {"e.search_vector @@ to_tsquery('multilingual', $~B)", dmt_mapper:to_text_search_query(Query)}.
 
 -spec check_entity_type_exists(worker(), entity_type()) ->
     ok | {error, object_type_not_found}.
@@ -1210,69 +1089,15 @@ get_multiple_related_graph_edges(Worker, ObjectRefStrings, Version, Depth, Inclu
 ) ->
     {ok, {[dmt_object:object()], [edge()]}} | {error, db_error()}.
 search_related_graph(
-    Worker, Query0, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
+    Worker, Query, SearchedType, Version, Depth, IncludeInbound, IncludeOutbound, ReturnedType
 ) ->
-    TypeValue =
-        case SearchedType of
-            undefined -> <<"NULL">>;
-            _ -> SearchedType
-        end,
-
-    SearchQuery =
-        case Query0 of
-            ~"*" ->
-                """
-                WITH LatestVersionAtRequestedTime AS (
-                    SELECT id, MAX(version) AS max_version_at_time
-                    FROM entity
-                    WHERE version <= $2
-                    GROUP BY id
-                ),
-                ActiveStatusAtRequestedTime AS (
-                    SELECT e.id, e.is_active
-                    FROM entity e
-                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-                )
-                SELECT DISTINCT ON (e.id) e.id
-                FROM entity e
-                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-                WHERE e.version <= $2
-                AND ($3 = 'NULL' OR e.entity_type = $3)
-                AND las.is_active = TRUE
-                ORDER BY e.id, e.version DESC
-                """;
-            _ ->
-                """
-                WITH LatestVersionAtRequestedTime AS (
-                    SELECT id, MAX(version) AS max_version_at_time
-                    FROM entity
-                    WHERE version <= $2
-                    GROUP BY id
-                ),
-                ActiveStatusAtRequestedTime AS (
-                    SELECT e.id, e.is_active
-                    FROM entity e
-                    INNER JOIN LatestVersionAtRequestedTime lv ON e.id = lv.id AND e.version = lv.max_version_at_time
-                )
-                SELECT DISTINCT ON (e.id) e.id
-                FROM entity e
-                INNER JOIN ActiveStatusAtRequestedTime las ON e.id = las.id
-                WHERE e.search_vector @@ to_tsquery('multilingual', $1)
-                AND e.version <= $2
-                AND ($3 = 'NULL' OR e.entity_type = $3)
-                AND las.is_active = TRUE
-                ORDER BY e.id, e.version DESC, ts_rank(e.search_vector, to_tsquery('multilingual', $1)) DESC
-                """
-        end,
-
-    SearchParams =
-        case Query0 of
-            ~"*" ->
-                [Version, TypeValue];
-            _ ->
-                Query1 = dmt_mapper:to_text_search_query(Query0),
-                [Query1, Version, TypeValue]
-        end,
+    {Conditions, ConditionParams} = search_conditions(Query, SearchedType, 2),
+    SearchQuery = iolist_to_binary([
+        ?SEARCH_CURRENT_ENTITIES_CTE,
+        " SELECT e.id FROM current_entity e WHERE ",
+        Conditions
+    ]),
+    SearchParams = [Version | ConditionParams],
 
     case epg_pool:query(Worker, SearchQuery, SearchParams) of
         {ok, _Columns, Rows} ->

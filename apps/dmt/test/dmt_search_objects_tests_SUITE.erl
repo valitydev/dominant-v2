@@ -37,7 +37,9 @@
     search_deleted_objects_test/1,
     checkout_deleted_version_test/1,
     search_updated_object_deduplication_test/1,
-    search_prefix_match_test/1
+    search_prefix_match_test/1,
+    search_renamed_object_no_stale_match_test/1,
+    search_updated_objects_pagination_test/1
 ]).
 
 %% Initialize per suite
@@ -75,7 +77,9 @@ groups() ->
             search_deleted_objects_test,
             checkout_deleted_version_test,
             search_updated_object_deduplication_test,
-            search_prefix_match_test
+            search_prefix_match_test,
+            search_renamed_object_no_stale_match_test,
+            search_updated_objects_pagination_test
         ]}
     ].
 
@@ -1531,6 +1535,119 @@ search_prefix_match_test(Config) ->
     [{category, #domain_CategoryObject{ref = #domain_CategoryRef{id = CategoryID}}} | _] = NewObjects,
     ?assertFound(1, integer_to_binary(CategoryID), Client),
     ok.
+
+%% An object that no longer matches the query in its current state must not be
+%% found through one of its previous versions.
+search_renamed_object_no_stale_match_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    AuthorID = create_author(<<"search_renamed_object_no_stale_match_test@test">>, Client),
+
+    {ok, #domain_conf_v2_CommitResponse{version = Version1, new_objects = NewObjects}} =
+        dmt_client:commit(
+            0,
+            [
+                {insert, #domain_conf_v2_InsertOp{
+                    object =
+                        {category, #domain_Category{
+                            name = <<"oldfangled name">>,
+                            description = <<"renamable">>
+                        }}
+                }}
+            ],
+            AuthorID,
+            Client
+        ),
+    [{category, #domain_CategoryObject{ref = CategoryRef}}] = ordsets:to_list(NewObjects),
+
+    {ok, #domain_conf_v2_CommitResponse{version = Version2}} =
+        dmt_client:commit(
+            Version1,
+            [
+                {update, #domain_conf_v2_UpdateOp{
+                    object =
+                        {category, #domain_CategoryObject{
+                            ref = CategoryRef,
+                            data = #domain_Category{
+                                name = <<"newfangled name">>,
+                                description = <<"renamable">>
+                            }
+                        }}
+                }}
+            ],
+            AuthorID,
+            Client
+        ),
+
+    SearchAt = fun(Query, Version) ->
+        Request = #domain_conf_v2_SearchRequestParams{query = Query, version = Version, limit = 10},
+        {ok, #domain_conf_v2_SearchResponse{result = Result}} =
+            dmt_client:search_objects(Request, Client),
+        {ok, #domain_conf_v2_SearchFullResponse{result = FullResult}} =
+            dmt_client:search_full_objects(Request, Client),
+        ?assertEqual(length(Result), length(FullResult)),
+        [V || #domain_conf_v2_LimitedVersionedObject{info = #domain_conf_v2_VersionedObjectInfo{version = V}} <- Result]
+    end,
+
+    %% Old name is gone from the latest version, explicit or implied
+    ?assertEqual([], SearchAt(~"oldfangled", undefined)),
+    ?assertEqual([], SearchAt(~"oldfangled", Version2)),
+    %% ...but is still there at the version it existed in
+    ?assertEqual([Version1], SearchAt(~"oldfangled", Version1)),
+    %% New name is found only since it was introduced
+    ?assertEqual([Version2], SearchAt(~"newfangled", undefined)),
+    ?assertEqual([Version2], SearchAt(~"newfangled", Version2)),
+    ?assertEqual([], SearchAt(~"newfangled", Version1)),
+    %% Unchanged field always resolves to the state at the requested version
+    ?assertEqual([Version2], SearchAt(~"renamable", undefined)),
+    ?assertEqual([Version1], SearchAt(~"renamable", Version1)),
+    ?assertEqual([Version2], SearchAt(~"*", undefined)),
+    ?assertEqual([Version1], SearchAt(~"*", Version1)).
+
+%% Previous versions of objects must not be counted as "more results".
+search_updated_objects_pagination_test(Config) ->
+    Client = dmt_ct_helper:cfg(client, Config),
+    AuthorID = create_author(<<"search_updated_objects_pagination_test@test">>, Client),
+
+    Category = fun(N) ->
+        #domain_Category{name = <<"pageable">>, description = <<"revision ", (integer_to_binary(N))/binary>>}
+    end,
+    {ok, #domain_conf_v2_CommitResponse{version = Version1, new_objects = NewObjects}} =
+        dmt_client:commit(
+            0,
+            [{insert, #domain_conf_v2_InsertOp{object = {category, Category(0)}}} || _ <- [1, 2]],
+            AuthorID,
+            Client
+        ),
+    Refs = [Ref || {category, #domain_CategoryObject{ref = Ref}} <- ordsets:to_list(NewObjects)],
+    _ = lists:foldl(
+        fun(N, Version) ->
+            {ok, #domain_conf_v2_CommitResponse{version = NextVersion}} =
+                dmt_client:commit(
+                    Version,
+                    [
+                        {update, #domain_conf_v2_UpdateOp{
+                            object = {category, #domain_CategoryObject{ref = Ref, data = Category(N)}}
+                        }}
+                     || Ref <- Refs
+                    ],
+                    AuthorID,
+                    Client
+                ),
+            NextVersion
+        end,
+        Version1,
+        [1, 2, 3]
+    ),
+
+    lists:foreach(
+        fun(Query) ->
+            #domain_conf_v2_SearchResponse{result = Result, continuation_token = Token} =
+                search(Query, 2, Client),
+            ?assertEqual(2, length(Result), Query),
+            ?assertEqual(undefined, Token, Query)
+        end,
+        [~"pageable", ~"*"]
+    ).
 
 %% Helper functions
 
